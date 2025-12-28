@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from src.utils.logger import log
+from src.visualization.training_visualizer import TrainingVisualizer
 
 
 class SampleQualityChecker:
@@ -90,6 +91,9 @@ class SampleQualityChecker:
         
         # 7. 日期检查
         self.check_dates()
+        
+        # 8. 生成可视化图表
+        self.generate_visualizations()
         
         # 生成总结
         self.generate_summary()
@@ -361,6 +365,37 @@ class SampleQualityChecker:
             log.warning("评级: 中等 ⭐⭐⭐")
         else:
             log.error("评级: 需要改进 ⭐⭐")
+    
+    def generate_visualizations(self):
+        """生成样本质量可视化图表"""
+        if self.df_samples is None:
+            return
+        
+        try:
+            log.info("\n" + "="*80)
+            log.info("生成样本质量可视化图表")
+            log.info("="*80)
+            
+            # 确定输出目录
+            output_dir = PROJECT_ROOT / 'data' / 'training' / 'charts'
+            visualizer = TrainingVisualizer(output_dir=str(output_dir))
+            
+            # 生成可视化
+            visualizer.visualize_sample_quality(
+                self.df_samples,
+                save_prefix="sample_quality_check"
+            )
+            
+            # 生成索引页面
+            visualizer.generate_index_page(model_name="sample_quality_check")
+            
+            log.success(f"✓ 可视化图表已生成到: {output_dir}")
+            log.info(f"📊 查看图表: open {output_dir}/index.html")
+            
+        except Exception as e:
+            log.warning(f"生成可视化图表时出错: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
@@ -369,9 +404,9 @@ def main():
     log.info("正样本数据质量核查工具")
     log.info("="*80)
     
-    # 文件路径
-    samples_file = PROJECT_ROOT / 'data' / 'processed' / 'positive_samples.csv'
-    features_file = PROJECT_ROOT / 'data' / 'processed' / 'feature_data_34d.csv'
+    # 文件路径（使用新的目录结构）
+    samples_file = PROJECT_ROOT / 'data' / 'training' / 'samples' / 'positive_samples.csv'
+    features_file = PROJECT_ROOT / 'data' / 'training' / 'features' / 'feature_data_34d.csv'
     
     # 检查文件是否存在
     if not samples_file.exists():

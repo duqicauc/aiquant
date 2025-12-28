@@ -5,8 +5,8 @@
 将最新预测结果移动到历史目录，并清理旧文件
 
 使用方法:
-python scripts/archive_predictions.py --model left_breakout --date 20251225
-python scripts/archive_predictions.py --model left_breakout --auto  # 自动归档所有模型的最新结果
+python scripts/archive_predictions.py --model <model_name> --date 20251225
+python scripts/archive_predictions.py --auto  # 自动归档所有模型的最新结果
 python scripts/archive_predictions.py --clean --keep-days 7  # 清理7天前的旧文件
 """
 import sys
@@ -112,7 +112,7 @@ def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='预测结果归档工具')
     parser.add_argument('--model', type=str, default=None,
-                       help='模型名称（如 left_breakout）')
+                       help='模型名称')
     parser.add_argument('--date', type=str, default=None,
                        help='预测日期（YYYYMMDD格式，默认今天）')
     parser.add_argument('--auto', action='store_true',

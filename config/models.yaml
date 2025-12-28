@@ -4,8 +4,7 @@
 # 每个模型都有独立的配置，包括样本准备、训练、评测等参数
 
 # 注意：实际使用的模型：
-# 1. xgboost_timeseries - 由 scripts/score_current_stocks.py 使用（效果最好）
-# 2. left_breakout - 左侧起爆点模型，完整实现（不在 models.yaml 中配置）
+# 1. breakout_launch_scorer - 由 scripts/score_current_stocks.py 使用（效果最好）
 models: {}
 
 # 预测配置（所有模型共用）

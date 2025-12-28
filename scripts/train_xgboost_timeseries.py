@@ -28,6 +28,8 @@ from sklearn.metrics import (
 )
 import xgboost as xgb
 from src.utils.logger import log
+from src.utils.human_intervention import HumanInterventionChecker, require_human_confirmation
+from src.visualization.training_visualizer import TrainingVisualizer
 
 
 def load_and_prepare_data(neg_version='v2'):
@@ -396,6 +398,67 @@ def train_model(X_train, y_train, X_test, y_test):
     return model, metrics, y_prob
 
 
+def generate_training_visualizations(model, X_train, df_features, train_dates, test_dates, neg_version):
+    """生成训练过程可视化图表"""
+    try:
+        log.info("="*80)
+        log.info("生成训练可视化图表")
+        log.info("="*80)
+        
+        visualizer = TrainingVisualizer(
+            output_dir=f"data/training/charts"
+        )
+        
+        # 1. 样本质量可视化（正样本）
+        try:
+            df_positive_samples = pd.read_csv('data/training/samples/positive_samples.csv')
+            visualizer.visualize_sample_quality(
+                df_positive_samples,
+                save_prefix="positive_sample_quality"
+            )
+        except Exception as e:
+            log.warning(f"生成正样本质量可视化时出错: {e}")
+        
+        # 负样本
+        try:
+            if neg_version == 'v2':
+                neg_file = 'data/training/samples/negative_samples_v2.csv'
+            else:
+                neg_file = 'data/training/samples/negative_samples.csv'
+            
+            if os.path.exists(neg_file):
+                df_negative_samples = pd.read_csv(neg_file)
+                visualizer.visualize_sample_quality(
+                    df_negative_samples,
+                    save_prefix="negative_sample_quality"
+                )
+        except Exception as e:
+            log.warning(f"生成负样本质量可视化时出错: {e}")
+        
+        # 2. 因子重要性可视化
+        feature_importance = pd.DataFrame({
+            'feature': X_train.columns,
+            'importance': model.feature_importances_
+        })
+        
+        visualizer.visualize_feature_importance(
+            feature_importance,
+            model_name=f"xgboost_timeseries_{neg_version}",
+            top_n=20
+        )
+        
+        # 3. 生成索引页面
+        visualizer.generate_index_page(model_name=f"xgboost_timeseries_{neg_version}")
+        
+        log.success("✓ 可视化图表生成完成")
+        log.info(f"📊 查看图表: open data/training/charts/index.html")
+        
+    except Exception as e:
+        log.warning(f"生成可视化图表时出错: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def save_model(model, metrics, neg_version, train_dates, test_dates):
     """保存模型和结果"""
     log.info("\n" + "="*80)
@@ -449,11 +512,27 @@ def main():
     log.info("")
     
     try:
+        # 👤 人工介入检查：特征选择
+        checker = HumanInterventionChecker()
+        feature_check = checker.check_feature_selection()
+        checker.print_intervention_reminder("特征选择", feature_check)
+        
         # 1. 加载数据
         df = load_and_prepare_data(neg_version=NEG_VERSION)
         
         # 2. 特征工程（保留时间信息）
         df_features = extract_features_with_time(df)
+        
+        # 👤 人工介入提醒：特征提取完成
+        log.warning("\n" + "="*80)
+        log.warning("👤 人工介入提醒：特征提取完成")
+        log.warning("="*80)
+        log.warning(f"当前特征数量: {len(df_features.columns) - 3} 个（不含sample_id, label, t1_date）")
+        log.warning("请确认：")
+        log.warning("  1. 特征是否足够？是否需要添加基本面特征或其他技术指标？")
+        log.warning("  2. 特征是否避免了未来函数？")
+        log.warning("  3. 特征重要性将在训练后显示，请关注")
+        log.warning("="*80)
         
         # 3. 时间序列划分
         X_train, X_test, y_train, y_test, train_dates, test_dates = timeseries_split(
@@ -462,6 +541,37 @@ def main():
         
         # 4. 训练模型
         model, metrics, y_prob = train_model(X_train, y_train, X_test, y_test)
+        
+        # 4.5. 生成可视化图表
+        generate_training_visualizations(
+            model, X_train, df_features, train_dates, test_dates, NEG_VERSION
+        )
+        
+        # 👤 人工介入检查：训练结果
+        log.warning("\n" + "="*80)
+        log.warning("👤 人工介入检查：训练结果")
+        log.warning("="*80)
+        
+        # 检查指标是否达标
+        warnings = []
+        if metrics['auc'] < 0.7:
+            warnings.append(f"⚠️  AUC = {metrics['auc']:.3f} < 0.7，模型性能可能不佳")
+        if metrics['accuracy'] < 0.75:
+            warnings.append(f"⚠️  准确率 = {metrics['accuracy']:.2%} < 75%，模型性能可能不佳")
+        if metrics['f1_score'] < 0.7:
+            warnings.append(f"⚠️  F1分数 = {metrics['f1_score']:.2%} < 70%，可能存在过拟合或欠拟合")
+        
+        if warnings:
+            for warning in warnings:
+                log.warning(warning)
+            log.warning("\n建议：")
+            log.warning("  - 检查特征选择，考虑添加更多有效特征")
+            log.warning("  - 调整超参数（n_estimators, max_depth, learning_rate等）")
+            log.warning("  - 检查数据质量，确保正负样本质量")
+            log.warning("  - 考虑尝试其他算法（LightGBM, CatBoost等）")
+        else:
+            log.success("✓ 模型性能指标正常")
+        log.warning("="*80)
         
         # 5. 保存模型
         save_model(model, metrics, NEG_VERSION, train_dates, test_dates)

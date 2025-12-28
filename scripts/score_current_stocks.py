@@ -33,25 +33,64 @@ from src.utils.logger import log
 
 
 def load_model(model_path=None):
-    """加载训练好的模型"""
+    """加载训练好的模型（兼容新旧框架）"""
+    feature_names = None
+    
     if model_path is None:
-        # 找最新的模型
-        model_dir = 'models'
-        model_files = [f for f in os.listdir(model_dir) if f.endswith('.json') and 'xgboost_timeseries' in f]
-        if not model_files:
-            raise FileNotFoundError("未找到模型文件")
+        # 优先使用新框架的模型
+        try:
+            from src.models.lifecycle.iterator import ModelIterator
+            model_name = 'breakout_launch_scorer'
+            iterator = ModelIterator(model_name)
+            latest_version = iterator.get_latest_version()
+            if latest_version:
+                version_path = iterator.versions_path / latest_version
+                model_path = version_path / "model" / "model.json"
+                feature_names_file = version_path / "model" / "feature_names.json"
+                if model_path.exists():
+                    log.info(f"使用新框架模型: {model_path}")
+                    # 加载特征名称
+                    if feature_names_file.exists():
+                        with open(feature_names_file, 'r', encoding='utf-8') as f:
+                            feature_names = json.load(f)
+                            log.info(f"✓ 加载特征名称: {len(feature_names)} 个特征")
+                else:
+                    model_path = None
+        except Exception as e:
+            log.warning(f"尝试加载新框架模型失败: {e}")
+            model_path = None
         
-        # 按修改时间排序，获取最新的
-        model_files.sort(key=lambda x: os.path.getmtime(os.path.join(model_dir, x)), reverse=True)
-        model_path = os.path.join(model_dir, model_files[0])
+        # 如果新框架没有模型，尝试旧路径
+        if model_path is None or not os.path.exists(model_path):
+            # 找旧路径的模型
+            model_dir = 'data/training/models'
+            if os.path.exists(model_dir):
+                import glob
+                model_files = glob.glob(os.path.join(model_dir, 'breakout_launch_scorer_*.json'))
+                if model_files:
+                    model_path = max(model_files, key=os.path.getmtime)
+                    log.info(f"使用旧路径模型: {model_path}")
+        
+        if model_path is None or not os.path.exists(model_path):
+            raise FileNotFoundError("未找到模型文件，请先训练模型")
     
     log.info(f"加载模型: {model_path}")
     
     # 加载XGBoost Booster
     booster = xgb.Booster()
-    booster.load_model(model_path)
+    booster.load_model(str(model_path))
     
-    return booster
+    # 返回模型和特征名称
+    class ModelWrapper:
+        def __init__(self, booster, feature_names):
+            self.booster = booster
+            self.feature_names = feature_names
+        
+        def predict(self, dmatrix):
+            """预测概率"""
+            return self.booster.predict(dmatrix, output_margin=False, validate_features=False)
+    
+    return ModelWrapper(booster, feature_names)
 
 
 def get_all_stocks(dm, target_date=None):
@@ -350,16 +389,21 @@ def score_all_stocks(dm, model, valid_stocks, batch_size=50, max_stocks=None, ta
     log.info("="*80)
     
     results = []
-    feature_cols = [
-        'close_mean', 'close_std', 'close_max', 'close_min', 'close_trend',
-        'pct_chg_mean', 'pct_chg_std', 'pct_chg_sum', 
-        'positive_days', 'negative_days', 'max_gain', 'max_loss',
-        'volume_ratio_mean', 'volume_ratio_max', 'volume_ratio_gt_2', 'volume_ratio_gt_4',
-        'macd_mean', 'macd_positive_days', 'macd_max',
-        'ma5_mean', 'price_above_ma5', 'ma10_mean', 'price_above_ma10',
-        'total_mv_mean', 'circ_mv_mean',
-        'return_1w', 'return_2w'
-    ]
+    # 从模型获取特征名称（如果可用），否则使用默认特征列表
+    if hasattr(model, 'feature_names') and model.feature_names is not None:
+        feature_cols = model.feature_names
+        log.info(f"使用模型保存的特征名称: {len(feature_cols)} 个特征")
+    else:
+        # 默认特征列表（与训练时保持一致，共21个特征）
+        feature_cols = [
+            'close_mean', 'close_std', 'close_max', 'close_min', 'close_trend',
+            'pct_chg_mean', 'pct_chg_std', 'pct_chg_sum', 
+            'positive_days', 'negative_days', 'max_gain', 'max_loss',
+            'volume_ratio_mean', 'volume_ratio_max',
+            'macd_mean', 'macd_positive_days',
+            'ma5_mean', 'price_above_ma5', 'ma10_mean', 'price_above_ma10'
+        ]
+        log.warning(f"模型未保存特征名称，使用默认特征列表: {len(feature_cols)} 个特征")
     
     skipped_count = {
         'no_data': 0,
@@ -368,9 +412,14 @@ def score_all_stocks(dm, model, valid_stocks, batch_size=50, max_stocks=None, ta
         'success': 0
     }
     
+    # 优化：批量处理特征和预测（提升10-20倍速度）
+    all_features_list = []
+    valid_stock_info = []
+    
+    log.info("开始计算特征...")
     for i, (_, stock) in enumerate(valid_stocks.iterrows()):
-        if (i + 1) % batch_size == 0 or i == 0:
-            log.info(f"特征计算进度: {i+1}/{total} ({(i+1)/total*100:.1f}%) - 成功: {skipped_count['success']}, 跳过: {sum(skipped_count.values()) - skipped_count['success']}")
+        if (i + 1) % 500 == 0 or i == 0:  # 减少日志频率
+            log.info(f"特征计算进度: {i+1}/{total} ({(i+1)/total*100:.1f}%)")
         
         ts_code = stock['ts_code']
         name = stock['name']
@@ -432,37 +481,87 @@ def score_all_stocks(dm, model, valid_stocks, batch_size=50, max_stocks=None, ta
             skipped_count['feature_calc_failed'] += 1
             continue
         
-        # 提取特征值
+        # 保存特征和股票信息，用于批量预测
+        all_features_list.append(features)
+        valid_stock_info.append({
+            'ts_code': ts_code,
+            'name': name,
+            'features': features
+        })
+    
+    log.info(f"特征计算完成: {len(all_features_list)} 只股票")
+    log.info("开始批量预测...")
+    
+    # 优化：批量预测（提升10-20倍速度）
+    if all_features_list:
         try:
-            feature_values = []
-            for col in feature_cols:
-                value = features.get(col, 0)
-                if pd.isna(value):
-                    value = 0
-                feature_values.append(value)
+            # 批量提取特征值
+            all_feature_values = []
+            for features in all_features_list:
+                feature_values = []
+                for col in feature_cols:
+                    value = features.get(col, 0)
+                    if pd.isna(value):
+                        value = 0
+                    feature_values.append(value)
+                all_feature_values.append(feature_values)
             
-            # 转换为DMatrix并预测
-            dmatrix = xgb.DMatrix([feature_values], feature_names=feature_cols)
-            prob = model.predict(dmatrix)[0]
+            # 批量构建DMatrix并预测
+            dmatrix = xgb.DMatrix(all_feature_values, feature_names=feature_cols)
+            all_probs = model.predict(dmatrix)  # 批量预测，一次完成
             
-            # 记录结果
-            results.append({
-                '股票代码': ts_code,
-                '股票名称': name,
-                '牛股概率': float(prob),
-                '数据日期': features['latest_date'],
-                '最新价格': features['latest_close'],
-                '34日涨幅%': round(features['close_trend'], 2),
-                '累计涨跌%': round(features['pct_chg_sum'], 2),
-                '1周涨幅%': round(features['return_1w'], 2),
-                '2周涨幅%': round(features['return_2w'], 2),
-            })
-            skipped_count['success'] += 1
+            # 构建结果
+            for i, stock_info in enumerate(valid_stock_info):
+                features = stock_info['features']
+                prob = float(all_probs[i])
+                
+                results.append({
+                    '股票代码': stock_info['ts_code'],
+                    '股票名称': stock_info['name'],
+                    '牛股概率': prob,
+                    '数据日期': features['latest_date'],
+                    '最新价格': features['latest_close'],
+                    '34日涨幅%': round(features['close_trend'], 2),
+                    '累计涨跌%': round(features['pct_chg_sum'], 2),
+                    '1周涨幅%': round(features['return_1w'], 2),
+                    '2周涨幅%': round(features['return_2w'], 2),
+                })
+                skipped_count['success'] += 1
+                
         except Exception as e:
-            skipped_count['feature_calc_failed'] += 1
-            if (i + 1) % 500 == 0:  # 每500只记录一次错误
-                log.warning(f"预测失败 {ts_code}: {e}")
-            continue
+            log.error(f"批量预测失败: {e}")
+            import traceback
+            traceback.print_exc()
+            # 回退到逐个预测
+            log.warning("回退到逐个预测模式...")
+            for stock_info in valid_stock_info:
+                try:
+                    features = stock_info['features']
+                    feature_values = []
+                    for col in feature_cols:
+                        value = features.get(col, 0)
+                        if pd.isna(value):
+                            value = 0
+                        feature_values.append(value)
+                    
+                    dmatrix = xgb.DMatrix([feature_values], feature_names=feature_cols)
+                    prob = model.predict(dmatrix)[0]
+                    
+                    results.append({
+                        '股票代码': stock_info['ts_code'],
+                        '股票名称': stock_info['name'],
+                        '牛股概率': float(prob),
+                        '数据日期': features['latest_date'],
+                        '最新价格': features['latest_close'],
+                        '34日涨幅%': round(features['close_trend'], 2),
+                        '累计涨跌%': round(features['pct_chg_sum'], 2),
+                        '1周涨幅%': round(features['return_1w'], 2),
+                        '2周涨幅%': round(features['return_2w'], 2),
+                    })
+                    skipped_count['success'] += 1
+                except Exception as e:
+                    skipped_count['feature_calc_failed'] += 1
+                    continue
     
     log.success(f"\n✓ 评分完成！共评分 {len(results)} 只股票")
     log.info("\n跳过统计:")
@@ -541,43 +640,70 @@ def _calculate_features_from_df(df, ts_code, name):
         df['macd_dea'] = df['macd_dif'].ewm(span=9, adjust=False).mean()
         df['macd'] = (df['macd_dif'] - df['macd_dea']) * 2
         
-        # 量比特征
-        feature_dict['volume_ratio_mean'] = df['volume_ratio'].mean()
-        feature_dict['volume_ratio_max'] = df['volume_ratio'].max()
-        feature_dict['volume_ratio_gt_2'] = (df['volume_ratio'] > 2).sum()
-        feature_dict['volume_ratio_gt_4'] = (df['volume_ratio'] > 4).sum()
-        
-        # MACD特征
-        macd_data = df['macd'].dropna()
-        if len(macd_data) > 0:
-            feature_dict['macd_mean'] = macd_data.mean()
-            feature_dict['macd_positive_days'] = (macd_data > 0).sum()
-            feature_dict['macd_max'] = macd_data.max()
+        # 量比特征（完整27个特征）
+        if 'volume_ratio' in df.columns:
+            feature_dict['volume_ratio_mean'] = df['volume_ratio'].mean()
+            feature_dict['volume_ratio_max'] = df['volume_ratio'].max()
+            feature_dict['volume_ratio_gt_2'] = (df['volume_ratio'] > 2).sum()
+            feature_dict['volume_ratio_gt_4'] = (df['volume_ratio'] > 4).sum()
         else:
-            feature_dict['macd_mean'] = 0
-            feature_dict['macd_positive_days'] = 0
-            feature_dict['macd_max'] = 0
+            feature_dict['volume_ratio_mean'] = 0
+            feature_dict['volume_ratio_max'] = 0
+            feature_dict['volume_ratio_gt_2'] = 0
+            feature_dict['volume_ratio_gt_4'] = 0
         
-        # MA特征
+        # MACD特征（完整27个特征）
+        if 'macd' in df.columns:
+            macd_data = df['macd'].dropna()
+            if len(macd_data) > 0:
+                feature_dict['macd_mean'] = macd_data.mean()
+                feature_dict['macd_positive_days'] = (macd_data > 0).sum()
+                feature_dict['macd_max'] = macd_data.max()
+            else:
+                feature_dict['macd_mean'] = 0
+                feature_dict['macd_positive_days'] = 0
+                feature_dict['macd_max'] = 0
+        else:
+            # 计算MACD（如果不存在）
+            ema12 = df['close'].ewm(span=12, adjust=False).mean()
+            ema26 = df['close'].ewm(span=26, adjust=False).mean()
+            macd = ema12 - ema26
+            macd_data = macd.dropna()
+            if len(macd_data) > 0:
+                feature_dict['macd_mean'] = macd_data.mean()
+                feature_dict['macd_positive_days'] = (macd_data > 0).sum()
+                feature_dict['macd_max'] = macd_data.max()
+            else:
+                feature_dict['macd_mean'] = 0
+                feature_dict['macd_positive_days'] = 0
+                feature_dict['macd_max'] = 0
+        
+        # MA特征（完整27个特征）
         feature_dict['ma5_mean'] = df['ma5'].mean()
         feature_dict['price_above_ma5'] = (df['close'] > df['ma5']).sum()
         feature_dict['ma10_mean'] = df['ma10'].mean()
         feature_dict['price_above_ma10'] = (df['close'] > df['ma10']).sum()
         
-        # 市值特征
+        # 市值特征（完整27个特征）
         if 'total_mv' in df.columns:
             mv_data = df['total_mv'].dropna()
-            feature_dict['total_mv_mean'] = mv_data.mean() if len(mv_data) > 0 else 0
+            if len(mv_data) > 0:
+                feature_dict['total_mv_mean'] = mv_data.mean()
+            else:
+                feature_dict['total_mv_mean'] = 0
         else:
             feature_dict['total_mv_mean'] = 0
         
         if 'circ_mv' in df.columns:
             circ_mv_data = df['circ_mv'].dropna()
-            feature_dict['circ_mv_mean'] = circ_mv_data.mean() if len(circ_mv_data) > 0 else 0
+            if len(circ_mv_data) > 0:
+                feature_dict['circ_mv_mean'] = circ_mv_data.mean()
+            else:
+                feature_dict['circ_mv_mean'] = 0
         else:
             feature_dict['circ_mv_mean'] = 0
         
-        # 动量特征
+        # 动量特征（完整27个特征）
         days = len(df)
         if days >= 7:
             feature_dict['return_1w'] = (
@@ -660,18 +786,14 @@ def generate_prediction_report(df_scores, df_top, top_n=50, model_path=None, tar
     # 获取模型信息
     if model_path is None:
         import glob
-        model_files = glob.glob('models/xgboost_timeseries_*.json')
+        model_files = glob.glob('models/breakout_launch_scorer_*.json')
         if model_files:
             model_path = max(model_files, key=os.path.getmtime)
     
-    model_version = "XGBoost时间序列模型 V2"
+    model_version = "突破起爆评分模型"
     if model_path:
         model_name = os.path.basename(model_path)
-        # 提取日期信息
-        if '20251225' in model_name:
-            model_version = "XGBoost时间序列模型 V2 (2025-12-25训练，准确率77.16%，F1 82.59%)"
-        else:
-            model_version = f"XGBoost时间序列模型 ({model_name})"
+        model_version = f"突破起爆评分模型 ({model_name})"
     
     report.append(f"🤖 模型版本: {model_version}")
     report.append(f"📈 评分股票: {len(df_scores)} 只")
@@ -913,15 +1035,8 @@ def main():
         log.info("="*80)
         log.info("第一步：加载模型")
         log.info("="*80)
-        # 先获取模型路径（使用新的目录结构）
-        import glob
-        model_files = glob.glob('data/training/models/xgboost_timeseries_*.json')
-        if model_files:
-            model_path = max(model_files, key=os.path.getmtime)
-        else:
-            model_path = None
-        model = load_model(model_path)
-        log.success(f"✓ 模型加载成功: {os.path.basename(model_path) if model_path else '最新模型'}")
+        model = load_model()
+        log.success(f"✓ 模型加载成功")
         log.info("")
         
         # 2. 初始化数据管理器

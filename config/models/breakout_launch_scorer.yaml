@@ -1,0 +1,96 @@
+# ============================================================================
+# 突破起爆评分模型配置文件
+# ============================================================================
+# 基于技术指标识别股票起爆点，预测未来3周强势上涨概率的XGBoost选股模型
+
+# 模型基本信息
+model:
+  name: breakout_launch_scorer
+  display_name: 突破起爆评分模型
+  description: 基于技术指标识别股票起爆点，预测未来3周强势上涨概率的XGBoost选股模型
+  type: xgboost
+  version: v1.0.0
+  status: development  # development, testing, staging, production
+
+# 数据配置
+data:
+  sample_preparation:
+    start_date: "20000101"      # 使用2000年以来的数据
+    end_date: null              # null = 今天
+    
+    # 正样本条件（三周连阳）
+    positive_criteria:
+      consecutive_weeks: 3       # 连续阳线周数
+      total_return_threshold: 50 # 总涨幅阈值(%)
+      max_return_threshold: 70   # 最高涨幅阈值(%)
+      min_listing_days: 180      # 最小上市天数
+    
+    # 负样本条件
+    negative_criteria:
+      method: "same_period_other_stocks"  # 同期其他股票法
+      sample_ratio: 1.0          # 负样本/正样本比例
+  
+  # 特征配置
+  feature_extraction:
+    lookback_days: 34            # 回看天数
+    extractors:
+      - technical.ma            # 移动平均线
+      - technical.macd         # MACD指标
+      - technical.rsi          # RSI指标
+      - market.volume           # 成交量指标
+      - price.trend             # 价格趋势
+
+# 模型参数
+model_params:
+  objective: binary:logistic
+  eval_metric: logloss
+  n_estimators: 100
+  learning_rate: 0.1
+  max_depth: 5
+  subsample: 0.8
+  colsample_bytree: 0.8
+  min_child_weight: 3
+  gamma: 0.1
+  reg_alpha: 0.1
+  reg_lambda: 1.0
+  random_state: 42
+  n_jobs: -1
+
+# 训练配置
+training:
+  validation_split: 0.2
+  time_series_split: true       # 使用时间序列划分（避免未来函数）
+  train_end_date: null          # null = 自动划分（80%训练，20%测试）
+  test_start_date: null          # null = 自动划分
+  early_stopping: false
+  n_splits: 5
+
+# 预测配置
+prediction:
+  top_n: 50                     # 推荐股票数量
+  min_probability: 0.0          # 最小概率阈值
+  exclusion_rules:
+    exclude_st: true            # 排除ST股票
+    exclude_new_listed: true    # 排除新股
+    min_listing_days: 180
+    exclude_suspended: true     # 排除停牌
+  financial_filter:
+    enabled: false              # 是否启用财务筛选（score_current_stocks.py中已移除）
+    revenue_threshold: 3.0      # 营收阈值（亿元）
+    profit_years: 3             # 连续盈利年数
+    net_assets_positive: true    # 净资产必须>0
+    initial_candidates: 150     # 初选候选数量
+
+# 评测配置
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - auc
+  backtest:
+    enabled: true
+    start_date: 20230101
+    end_date: null              # null = 今天
+

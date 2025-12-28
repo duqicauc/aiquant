@@ -32,6 +32,9 @@ aiquant/
 │   │   │   └── prediction_report_*.txt
 │   │   ├── metadata/      # 预测元数据（用于准确率分析）
 │   │   │   └── prediction_metadata_*.json
+│   │   ├── annotations/   # 人工标注数据
+│   │   │   ├── YYYYMMDD_人工标注.xlsx
+│   │   │   └── README.md
 │   │   ├── analysis/      # 准确率分析结果
 │   │   │   ├── accuracy_*.csv
 │   │   │   ├── accuracy_report_*.txt
@@ -127,7 +130,8 @@ aiquant/
 
 - **results/**: 每次预测的详细结果（原始输出，带时间戳）
 - **metadata/**: 预测元数据（推荐股票列表，用于后续准确率分析）
-- **analysis/**: 准确率分析结果（基于 metadata 分析实际表现）
+- **annotations/**: 人工标注数据（用于评估模型准确率）
+- **analysis/**: 准确率分析结果（基于 metadata 和 annotations 分析实际表现）
 - **history/**: 历史预测归档（按日期组织，从 results/ 复制）
 
 **目录关系**:
@@ -136,7 +140,9 @@ aiquant/
                 ↓
          history/（归档）
                 ↓
-         analysis/（准确率分析，基于 metadata）
+         annotations/（人工标注）
+                ↓
+         analysis/（准确率分析，基于 metadata + annotations）
 ```
 
 详细说明请参考：[预测目录关系说明](PREDICTION_DIRECTORY_RELATIONSHIP.md)

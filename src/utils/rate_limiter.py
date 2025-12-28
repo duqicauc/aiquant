@@ -33,10 +33,20 @@ class RateLimiter:
         
         log.info(f"限流器已初始化: {calls_per_minute}次/分钟 (最小间隔{self.min_interval:.2f}秒)")
     
-    def wait_if_needed(self):
-        """如果需要，等待直到可以进行下一次调用"""
+    def wait_if_needed(self, disable: bool = False):
+        """
+        如果需要，等待直到可以进行下一次调用
+        
+        Args:
+            disable: 是否禁用限流（不等待，直接记录调用时间）
+        """
         with self.lock:
             now = time.time()
+            
+            # 如果禁用限流，只记录调用时间，不等待
+            if disable:
+                self.call_times.append(now)
+                return
             
             # 清理60秒之前的记录
             while self.call_times and now - self.call_times[0] > 60:
@@ -145,7 +155,7 @@ class TushareRateLimiter:
     
     def __call__(self, func):
         """装饰器"""
-        return self.limiter(func)
+        return self.default_limiter(func)
 
 
 # 全局限流器实例
@@ -187,39 +197,70 @@ def get_api_limiter(api_name: str = None) -> RateLimiter:
     return limiter.get_limiter(api_name)
 
 
-def rate_limited(api_name: str = None):
+def rate_limited(api_name: str = None, disable: bool = False):
     """
     限流装饰器
 
     Args:
         api_name: 接口名称，用于选择对应的限流器
+        disable: 是否禁用限流（不主动限流，遇到限流错误时自动重试）
 
     使用示例：
     @rate_limited()  # 使用默认限流器
     def fetch_data():
         ...
 
-    @rate_limited('stk_factor')  # 使用stk_factor专用限流器
+    @rate_limited('stk_factor', disable=True)  # 禁用限流，遇到限流错误时自动重试
     def fetch_stk_factor():
         ...
     """
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            limiter = get_api_limiter(api_name)
-            limiter.wait_if_needed()
+            if not disable:
+                limiter = get_api_limiter(api_name)
+                limiter.wait_if_needed(disable=False)
             return func(*args, **kwargs)
         return wrapper
     return decorator
 
 
-def retry_on_error(max_retries: int = 3, base_delay: float = 1.0):
+def is_rate_limit_error(exception: Exception) -> bool:
+    """
+    判断是否是限流错误
+    
+    Args:
+        exception: 异常对象
+        
+    Returns:
+        是否是限流错误
+    """
+    error_str = str(exception).lower()
+    # 常见的限流错误关键词
+    rate_limit_keywords = [
+        'rate limit',
+        'rate_limit',
+        'too many requests',
+        '429',
+        '请求过于频繁',
+        '访问频率超限',
+        '频率限制',
+        '限流',
+        'throttle',
+        'quota exceeded',
+        'quota limit'
+    ]
+    return any(keyword in error_str for keyword in rate_limit_keywords)
+
+
+def retry_on_error(max_retries: int = 3, base_delay: float = 1.0, retry_on_rate_limit: bool = True):
     """
     重试装饰器（指数退避）
     
     Args:
-        max_retries: 最大重试次数
+        max_retries: 最大重试次数（限流错误也遵循此限制）
         base_delay: 基础延迟时间（秒）
+        retry_on_rate_limit: 遇到限流错误时是否重试（最多max_retries次，不是无限重试）
     
     使用示例：
     @retry_on_error(max_retries=5, base_delay=1.0)
@@ -236,14 +277,26 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0):
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
+                    is_rate_limit = is_rate_limit_error(e)
                     
                     if attempt < max_retries:
-                        delay = base_delay * (2 ** attempt)  # 指数退避
-                        error_msg = str(e)[:200] if str(e) else type(e).__name__
-                        log.warning(
-                            f"{func.__name__} 调用失败 (第{attempt+1}次)，"
-                            f"{delay:.1f}秒后重试: {error_msg}"
-                        )
+                        # 限流错误：适当延迟后重试（最多max_retries次）
+                        if is_rate_limit and retry_on_rate_limit:
+                            # 限流错误使用稍长的延迟，但不超过60秒
+                            delay = min(base_delay * (2 ** min(attempt, 5)), 60.0)
+                            error_msg = str(e)[:200] if str(e) else type(e).__name__
+                            log.warning(
+                                f"{func.__name__} 遇到限流错误 (第{attempt+1}次)，"
+                                f"{delay:.1f}秒后重试: {error_msg}"
+                            )
+                        else:
+                            # 其他错误：正常指数退避
+                            delay = base_delay * (2 ** attempt)
+                            error_msg = str(e)[:200] if str(e) else type(e).__name__
+                            log.warning(
+                                f"{func.__name__} 调用失败 (第{attempt+1}次)，"
+                                f"{delay:.1f}秒后重试: {error_msg}"
+                            )
                         time.sleep(delay)
                     else:
                         error_msg = str(e)[:200] if str(e) else type(e).__name__
@@ -259,28 +312,35 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0):
 
 
 # 组合装饰器：限流 + 重试
-def safe_api_call(api_name: str = None, max_retries: int = 3, base_delay: float = 1.0):
+def safe_api_call(api_name: str = None, max_retries: int = 3, base_delay: float = 1.0, 
+                  retry_on_rate_limit: bool = True, disable_rate_limit: bool = False):
     """
     安全的API调用装饰器（限流 + 重试）
 
     Args:
         api_name: 接口名称，用于选择对应的限流器
-        max_retries: 最大重试次数
+        max_retries: 最大重试次数（-1表示无限重试，仅用于限流错误）
         base_delay: 基础延迟时间
+        retry_on_rate_limit: 遇到限流错误时是否无限重试
+        disable_rate_limit: 是否禁用主动限流（遇到限流错误时自动重试）
 
     使用示例：
     @safe_api_call(max_retries=5)
     def fetch_data():
         ...
 
-    @safe_api_call('stk_factor', max_retries=5)
+    @safe_api_call('stk_factor', max_retries=5, disable_rate_limit=True)
     def fetch_stk_factor():
         ...
     """
     def decorator(func):
-        # 先应用重试，再应用限流
-        func = retry_on_error(max_retries, base_delay)(func)
-        func = rate_limited(api_name)(func)
+        # 先应用重试，再应用限流（如果不禁用）
+        func = retry_on_error(max_retries, base_delay, retry_on_rate_limit)(func)
+        if not disable_rate_limit:
+            func = rate_limited(api_name, disable=False)(func)
+        else:
+            # 禁用限流，但仍然应用装饰器（只是不等待）
+            func = rate_limited(api_name, disable=True)(func)
         return func
     return decorator
 

@@ -89,15 +89,19 @@ class TestDataFeedManager:
         
         # 确保返回的数据包含trade_date列
         dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-        mock_daily_with_date = pd.DataFrame({
-            'trade_date': dates.strftime('%Y%m%d'),
-            'open': np.random.uniform(10, 20, 30),
-            'high': np.random.uniform(15, 25, 30),
-            'low': np.random.uniform(8, 18, 30),
-            'close': np.random.uniform(10, 20, 30),
-            'vol': np.random.uniform(1000000, 10000000, 30),
-        })
-        mock_data_manager.get_daily_data.return_value = mock_daily_with_date
+        
+        def create_mock_data():
+            return pd.DataFrame({
+                'trade_date': dates.strftime('%Y%m%d'),
+                'open': np.random.uniform(10, 20, 30),
+                'high': np.random.uniform(15, 25, 30),
+                'low': np.random.uniform(8, 18, 30),
+                'close': np.random.uniform(10, 20, 30),
+                'vol': np.random.uniform(1000000, 10000000, 30),
+            })
+        
+        # 每次调用都返回新的数据（包含trade_date）
+        mock_data_manager.get_daily_data.side_effect = lambda *args, **kwargs: create_mock_data()
         
         feeds = data_feed_manager.get_multiple_feeds(
             stock_codes=stock_codes,

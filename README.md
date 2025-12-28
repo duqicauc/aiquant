@@ -534,42 +534,36 @@ data/
 
 ## 📚 文档导航
 
+> 📖 **完整文档索引**: 查看 [docs/README.md](docs/README.md) 获取所有文档的详细分类和索引
+
 ### 快速入门
-- [START_HERE.md](START_HERE.md) - 项目入口
-- [QUICK_START_GUIDE.md](docs/QUICK_START_GUIDE.md) - 5分钟上手
+- [快速开始指南](docs/QUICK_START_GUIDE.md) - 5分钟上手
+- [使用指南](docs/USAGE_GUIDE.md) - 系统使用说明
 
 ### 核心工作流
-- [COMPLETE_WORKFLOW.md](docs/COMPLETE_WORKFLOW.md) - 完整流程
-- [SAMPLE_PREPARATION_GUIDE.md](docs/SAMPLE_PREPARATION_GUIDE.md) - 样本准备
-- [MODEL_TRAINING_GUIDE.md](docs/MODEL_TRAINING_GUIDE.md) - 模型训练
+- [完整工作流程](docs/COMPLETE_WORKFLOW.md) - 从数据准备到模型训练
+- [样本准备指南](docs/SAMPLE_PREPARATION_GUIDE.md) - 正负样本数据准备
+- [模型训练指南](docs/MODEL_TRAINING_GUIDE.md) - 模型训练流程
 
-### 功能详解
-- [NEGATIVE_SAMPLE_COMPARISON.md](docs/NEGATIVE_SAMPLE_COMPARISON.md) - 负样本方案对比
-- [MODEL_COMPARISON.md](docs/MODEL_COMPARISON.md) - XGBoost vs LSTM
-- [STOCK_SELECTION_MODEL.md](docs/STOCK_SELECTION_MODEL.md) - 选股模型原理
-
-### 质量保证
-- [DATA_QUALITY_WORKFLOW.md](docs/DATA_QUALITY_WORKFLOW.md) - 质量工作流
-- [QUALITY_CHECK_GUIDE.md](docs/QUALITY_CHECK_GUIDE.md) - 质量检查指南
-- [AVOID_FUTURE_FUNCTION.md](docs/AVOID_FUTURE_FUNCTION.md) - 未来函数陷阱
-
-### 新功能
-- [AUTOMATION_DESIGN.md](docs/AUTOMATION_DESIGN.md) - 自动化系统设计
-- [AUTOMATION_QUICKSTART.md](docs/AUTOMATION_QUICKSTART.md) - 自动化快速入门
-- [NETWORK_MONITOR_GUIDE.md](docs/NETWORK_MONITOR_GUIDE.md) - 网络监控指南
-- [DATA_BACKUP_GUIDE.md](DATA_BACKUP_GUIDE.md) - 数据备份指南
-- [FINANCIAL_FILTER_GUIDE.md](docs/FINANCIAL_FILTER_GUIDE.md) - 财务筛选指南
+### 功能指南
+- [财务筛选指南](docs/FINANCIAL_FILTER_GUIDE.md) - 财务数据筛选
+- [股票体检指南](docs/STOCK_HEALTH_CHECK_GUIDE.md) - 单股票健康检查
+- [质量检查指南](docs/QUALITY_CHECK_GUIDE.md) - 数据质量检查
+- [可视化指南](docs/VISUALIZATION_GUIDE.md) - 数据可视化
 
 ### 技术参考
-- [API_REFERENCE.md](docs/API_REFERENCE.md) - API文档
-- [TUSHARE_PRO_FEATURES.md](docs/TUSHARE_PRO_FEATURES.md) - Tushare Pro功能
-- [ARCHITECTURE_OPTIMIZATION.md](docs/ARCHITECTURE_OPTIMIZATION.md) - 架构优化
-- [PROJECT_DESIGN.md](docs/PROJECT_DESIGN.md) - 项目设计
+- [API参考文档](docs/API_REFERENCE.md) - 完整API接口说明
+- [选股模型原理](docs/STOCK_SELECTION_MODEL.md) - 模型原理详解
+- [避免未来函数](docs/AVOID_FUTURE_FUNCTION.md) - 时间序列划分
+- [缓存与限流](docs/CACHE_AND_RATE_LIMIT.md) - 数据缓存机制
+- [Tushare Pro功能](docs/TUSHARE_PRO_FEATURES.md) - Tushare高级功能
 
-### 运维
-- [RUN_GUIDE.md](RUN_GUIDE.md) - 运行指南
-- [COMMAND_CHEATSHEET.md](COMMAND_CHEATSHEET.md) - 命令速查
-- [CACHE_AND_RATE_LIMIT.md](docs/CACHE_AND_RATE_LIMIT.md) - 缓存与限流
+### 更多文档
+查看 [docs/README.md](docs/README.md) 获取完整文档列表，包括：
+- 模型对比分析
+- 优化方案文档
+- 项目结构说明
+- 故障排除指南
 
 ---
 

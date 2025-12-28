@@ -284,6 +284,18 @@ class PositiveSampleScreener:
         if days_since_list < 180:
             return None
         
+        # 条件5: 检查T1日期是否停牌
+        t1_date_str = t1_date.strftime('%Y%m%d')
+        try:
+            suspend_info = self.dm.get_suspend_info(trade_date=t1_date_str, suspend_type='S')
+            if not suspend_info.empty:
+                suspended_stocks = suspend_info['ts_code'].tolist()
+                if ts_code in suspended_stocks:
+                    return None  # T1日期停牌，不符合条件
+        except Exception as e:
+            # 如果查询停牌信息失败，记录警告但不影响筛选
+            log.warning(f"查询停牌信息失败 {ts_code} {t1_date_str}: {e}")
+        
         # 符合所有条件，返回样本信息
         return {
             'ts_code': ts_code,

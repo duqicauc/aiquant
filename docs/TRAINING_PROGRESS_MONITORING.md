@@ -80,7 +80,7 @@ PYEOF
 - **大小**: 持续增长中
 
 ### 训练专用日志
-- **路径**: `logs/train_left_breakout_*.log`
+- **路径**: `logs/train_*.log`
 - **内容**: 训练脚本的专用输出
 - **格式**: 按时间戳命名
 
@@ -146,7 +146,7 @@ tail -1000 logs/aiquant.log | grep "处理样本" | tail -1
 tail -100 logs/aiquant.log | grep -E "ERROR|Exception"
 
 # 查看进程是否运行
-ps aux | grep train_left_breakout | grep -v grep
+ps aux | grep train | grep -v grep
 ```
 
 ---
@@ -160,13 +160,13 @@ ps aux | grep train_left_breakout | grep -v grep
 
 ### 阶段转换输出
 ```
-2025-12-27 15:41:00 | INFO | left_model:extract_features:82 | 特征提取完成，共 4272 个样本，50 个特征
-2025-12-27 15:41:01 | INFO | train_left_breakout_model:main:130 | 🎯 训练模型...
+2025-12-27 15:41:00 | INFO | model:extract_features:82 | 特征提取完成，共 4272 个样本，50 个特征
+2025-12-27 15:41:01 | INFO | train_model:main:130 | 🎯 训练模型...
 ```
 
 ### 完成输出
 ```
-2025-12-27 16:30:00 | INFO | train_left_breakout_model:main:203 | 🎉 左侧潜力牛股模型训练完成！
+2025-12-27 16:30:00 | INFO | train_model:main:203 | 🎉 模型训练完成！
 ```
 
 ---

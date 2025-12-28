@@ -115,5 +115,4 @@ class ModelRegistry:
 
 # 注意：实际使用的模型：
 # 1. xgboost_timeseries - 由 scripts/score_current_stocks.py 使用（效果最好）
-# 2. left_breakout - 左侧起爆点模型，完整实现（不在 ModelRegistry 中注册）
 

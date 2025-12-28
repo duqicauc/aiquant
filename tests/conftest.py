@@ -52,6 +52,8 @@ try:
     mock_tushare = type(sys)('tushare')
     mock_tushare.pro = type(sys)('tushare.pro')
     mock_tushare.pro_api = Mock()
+    # 添加set_token方法
+    mock_tushare.set_token = Mock(return_value=None)
     sys.modules['tushare'] = mock_tushare
     sys.modules['tushare.pro'] = mock_tushare.pro
 except Exception:
@@ -220,3 +222,140 @@ def mock_config():
     config.LOG_LEVEL = 'INFO'
     config.LOG_FORMAT = '{time} | {level} | {message}'
     return config
+
+
+@pytest.fixture
+def sample_model_data():
+    """示例模型数据（用于模型测试）"""
+    return {
+        'features': ['feature1', 'feature2', 'feature3'],
+        'target': [0, 1, 0, 1, 0],
+        'weights': [1.0, 1.0, 1.0, 1.0, 1.0]
+    }
+
+
+@pytest.fixture
+def mock_model():
+    """模拟模型对象"""
+    mock_model = Mock()
+    mock_model.predict.return_value = np.array([0.7, 0.8, 0.6])
+    mock_model.predict_proba.return_value = np.array([[0.3, 0.7], [0.2, 0.8], [0.4, 0.6]])
+    return mock_model
+
+
+@pytest.fixture
+def sample_prediction_result():
+    """示例预测结果"""
+    return pd.DataFrame({
+        'ts_code': ['000001.SZ', '600000.SH', '000002.SZ'],
+        'prediction': [0.85, 0.72, 0.68],
+        'confidence': [0.9, 0.8, 0.75],
+        'date': ['20240101', '20240101', '20240101']
+    })
+
+
+@pytest.fixture
+def clean_temp_dir(temp_dir):
+    """清理临时目录的fixture"""
+    import shutil
+    # 清理临时目录
+    for item in temp_dir.iterdir():
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
+    yield temp_dir
+    # 测试后清理
+    for item in temp_dir.iterdir():
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
+
+
+@pytest.fixture
+def mock_xgboost_model():
+    """模拟XGBoost模型"""
+    import xgboost as xgb
+    # 创建简单的XGBoost模型用于测试
+    X = np.random.rand(100, 5)
+    y = np.random.randint(0, 2, 100)
+    model = xgb.XGBClassifier(n_estimators=10, random_state=42)
+    model.fit(X, y)
+    return model
+
+
+@pytest.fixture
+def sample_time_series_data():
+    """示例时间序列数据"""
+    dates = pd.date_range(start='2024-01-01', periods=100, freq='D')
+    return pd.DataFrame({
+        'date': dates,
+        'value': np.random.randn(100).cumsum(),
+        'volume': np.random.randint(1000, 10000, 100)
+    })
+
+
+@pytest.fixture
+def mock_cache_db(temp_dir):
+    """模拟缓存数据库路径"""
+    return temp_dir / "test_cache.db"
+
+
+@pytest.fixture
+def sample_technical_indicators():
+    """示例技术指标数据"""
+    dates = pd.date_range(end=datetime.now(), periods=60, freq='D')
+    prices = np.random.uniform(10, 20, 60)
+    return pd.DataFrame({
+        'trade_date': dates.strftime('%Y%m%d'),
+        'close': prices,
+        'ma5': pd.Series(prices).rolling(5).mean(),
+        'ma10': pd.Series(prices).rolling(10).mean(),
+        'ma20': pd.Series(prices).rolling(20).mean(),
+        'macd': np.random.uniform(-1, 1, 60),
+        'rsi': np.random.uniform(30, 70, 60),
+    })
+
+
+# ============================================================================
+# 测试辅助函数
+# ============================================================================
+
+def assert_dataframe_equal(df1, df2, check_dtype=False, check_index=False):
+    """断言两个DataFrame相等（忽略顺序）"""
+    import pandas.testing as pdt
+    try:
+        pdt.assert_frame_equal(
+            df1.sort_values(by=df1.columns[0]).reset_index(drop=True),
+            df2.sort_values(by=df2.columns[0]).reset_index(drop=True),
+            check_dtype=check_dtype,
+            check_index=check_index
+        )
+    except AssertionError as e:
+        pytest.fail(f"DataFrames不相等: {e}")
+
+
+def create_test_stock_data(ts_code='000001.SZ', days=60):
+    """创建测试用的股票数据"""
+    dates = pd.date_range(end=datetime.now(), periods=days, freq='D')
+    return pd.DataFrame({
+        'trade_date': dates.strftime('%Y%m%d'),
+        'ts_code': ts_code,
+        'open': np.random.uniform(10, 20, days),
+        'high': np.random.uniform(15, 25, days),
+        'low': np.random.uniform(8, 18, days),
+        'close': np.random.uniform(10, 20, days),
+        'vol': np.random.uniform(1000000, 10000000, days),
+        'amount': np.random.uniform(10000000, 100000000, days),
+    })
+
+
+# 将辅助函数注册为fixture（可选）
+@pytest.fixture
+def test_helpers():
+    """测试辅助函数集合"""
+    return {
+        'assert_dataframe_equal': assert_dataframe_equal,
+        'create_test_stock_data': create_test_stock_data,
+    }

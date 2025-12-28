@@ -1,5 +1,26 @@
 # 测试文档
 
+## 🎯 测试框架优化
+
+**最新更新**: 测试框架已全面优化，确保每次代码修改都有配套的测试用例！
+
+**快速开始**:
+```bash
+# 检查修改的文件是否有测试
+python scripts/ensure_tests.py
+
+# 自动生成缺失的测试模板
+python scripts/ensure_tests.py --generate
+
+# 运行测试
+pytest
+
+# 检查覆盖率
+python scripts/check_test_coverage.py --modified
+```
+
+**详细文档**: 请查看 [测试框架使用指南](../docs/TESTING_FRAMEWORK_GUIDE.md)
+
 ## 测试框架
 
 本项目使用 `pytest` 作为测试框架，配合 `pytest-cov` 进行代码覆盖率统计。

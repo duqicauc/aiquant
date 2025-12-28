@@ -21,10 +21,11 @@ class TestScreeningPipeline:
         """模拟DataManager"""
         mock_dm = Mock()
         
-        # 模拟股票列表
+        # 模拟股票列表（需要包含list_date列）
         mock_stocks = pd.DataFrame({
             'ts_code': ['000001.SZ', '600000.SH', '000002.SZ'],
             'name': ['股票1', '股票2', '股票3'],
+            'list_date': ['19910403', '19991110', '19910129'],  # 添加list_date列
         })
         mock_dm.get_stock_list.return_value = mock_stocks
         
@@ -55,11 +56,11 @@ class TestScreeningPipeline:
         # 获取股票列表
         stocks = mock_data_manager.get_stock_list()
         
-        # 执行财务筛选
-        filtered_stocks = filter_obj.filter_stocks(stocks['ts_code'].tolist())
+        # 执行财务筛选（filter_stocks接受DataFrame，返回DataFrame）
+        filtered_stocks = filter_obj.filter_stocks(stocks)
         
-        # 验证筛选流程
-        assert isinstance(filtered_stocks, list)
+        # 验证筛选流程（返回DataFrame）
+        assert isinstance(filtered_stocks, pd.DataFrame)
 
     @pytest.mark.unit
     def test_positive_sample_screening_flow(self, mock_data_manager):
@@ -84,7 +85,7 @@ class TestScreeningPipeline:
         # 1. 财务筛选
         financial_filter = FinancialFilter(mock_data_manager)
         stocks = mock_data_manager.get_stock_list()
-        financial_filtered = financial_filter.filter_stocks(stocks['ts_code'].tolist())
+        financial_filtered = financial_filter.filter_stocks(stocks)  # 传入DataFrame
         
         # 2. 正样本筛选
         screener = PositiveSampleScreener(mock_data_manager)
@@ -94,7 +95,7 @@ class TestScreeningPipeline:
         )
         
         # 验证流程完整性
-        assert isinstance(financial_filtered, list)
+        assert isinstance(financial_filtered, pd.DataFrame)
         assert isinstance(samples, pd.DataFrame)
 
     @pytest.mark.integration
@@ -103,11 +104,9 @@ class TestScreeningPipeline:
         # 1. 获取所有股票
         all_stocks = mock_data_manager.get_stock_list()
         
-        # 2. 财务筛选
+        # 2. 财务筛选（传入DataFrame）
         financial_filter = FinancialFilter(mock_data_manager)
-        financial_filtered = financial_filter.filter_stocks(
-            all_stocks['ts_code'].tolist()
-        )
+        financial_filtered = financial_filter.filter_stocks(all_stocks)
         
         # 3. 正样本筛选（在财务筛选后的股票中）
         screener = PositiveSampleScreener(mock_data_manager)
@@ -117,6 +116,7 @@ class TestScreeningPipeline:
         )
         
         # 验证筛选链
+        assert isinstance(financial_filtered, pd.DataFrame)
         assert len(financial_filtered) <= len(all_stocks)
         assert isinstance(samples, pd.DataFrame)
 

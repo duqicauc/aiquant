@@ -55,9 +55,9 @@ class TestPositiveSampleScreener:
         
         # 模拟返回空结果（避免真实API调用）
         mock_data_manager.get_stock_list.return_value = pd.DataFrame({
-            'ts_code': [],
-            'name': [],
-            'list_date': [],
+            'ts_code': pd.Series([], dtype='object'),
+            'name': pd.Series([], dtype='object'),
+            'list_date': pd.Series([], dtype='object'),
         })
         
         result = screener.screen_all_stocks(

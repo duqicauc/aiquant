@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.data.data_manager import DataManager
 from src.strategy.screening.positive_sample_screener import PositiveSampleScreener
 from src.utils.logger import log
+from src.utils.human_intervention import HumanInterventionChecker, require_human_confirmation
 from config.settings import settings
 import pandas as pd
 from datetime import datetime
@@ -57,6 +58,21 @@ def main():
     log.info(f"📅 数据范围配置：{START_DATE} - {END_DATE or '今天'}")
     log.info(f"💡 如需修改，请编辑 config/settings.yaml")
     
+    # 👤 人工介入检查：正样本筛选条件
+    checker = HumanInterventionChecker()
+    criteria_check = checker.check_positive_sample_criteria()
+    needs_intervention = checker.print_intervention_reminder("正样本筛选条件", criteria_check)
+    
+    if needs_intervention:
+        confirmed = require_human_confirmation(
+            "⚠️  检测到正样本筛选条件可能需要调整。\n"
+            "请检查上述警告和建议，确认是否继续使用当前配置。",
+            default=False
+        )
+        if not confirmed:
+            log.warning("用户取消操作。请修改 config/settings.yaml 后重新运行。")
+            return
+    
     try:
         df_samples = screener.screen_all_stocks(
             start_date=START_DATE,
@@ -83,6 +99,17 @@ def main():
         log.info(f"平均最高涨幅: {df_samples['max_return'].mean():.2f}%")
         log.info(f"\n前5个样本:")
         print(df_samples.head())
+        
+        # 👤 人工介入提醒：检查正样本质量
+        log.warning("\n" + "="*80)
+        log.warning("👤 人工介入提醒：请检查正样本质量")
+        log.warning("="*80)
+        log.warning("请确认：")
+        log.warning("  1. 样本数量是否合理（建议：1000-5000个）")
+        log.warning("  2. 平均涨幅是否符合预期")
+        log.warning("  3. 样本分布是否合理")
+        log.warning("  4. 是否需要调整筛选条件")
+        log.warning("="*80)
         
         # 4. 提取特征数据
         log.info("\n[步骤4] 提取特征数据（T1前34天）...")

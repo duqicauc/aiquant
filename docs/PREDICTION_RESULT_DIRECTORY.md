@@ -30,16 +30,16 @@ data/
 
 **特点**:
 - ✅ 最新结果，随时可查看
-- ✅ 按模型分类（如 `left_breakout`、`momentum` 等）
+- ✅ 按模型分类（如 `example_model`、`momentum` 等）
 - ✅ 文件带时间戳，支持同一天多次预测
 - ✅ 定期清理旧文件（默认保留7天）
 
 **目录结构**:
 ```
 data/result/
-├── left_breakout/
-│   ├── left_breakout_predictions_20251228_081953.csv
-│   └── left_breakout_prediction_report_20251228_081953.txt
+├── example_model/
+│   ├── example_model_predictions_20251228_081953.csv
+│   └── example_model_prediction_report_20251228_081953.txt
 └── momentum/
     └── ...
 ```
@@ -64,30 +64,30 @@ data/result/
 **目录结构**:
 ```
 data/prediction/history/
-└── left_breakout/
+└── example_model/
     ├── 20251225/
     │   ├── index.json
-    │   ├── left_breakout_predictions_20251225_081121.csv
-    │   └── left_breakout_prediction_report_20251225_081121.txt
+    │   ├── example_model_predictions_20251225_081121.csv
+    │   └── example_model_prediction_report_20251225_081121.txt
     └── 20251228/
         ├── index.json
         └── ...
 ```
 
 **归档方式**:
-- 手动归档: `python scripts/archive_predictions.py --model left_breakout --date 20251225`
+- 手动归档: `python scripts/archive_predictions.py --model example_model --date 20251225`
 - 自动归档: `python scripts/archive_predictions.py --auto`
 
 **索引文件格式** (`index.json`):
 ```json
 {
-  "model_name": "left_breakout",
+  "model_name": "example_model",
   "prediction_date": "20251225",
   "archived_at": "2025-12-28 08:30:00",
   "last_updated": "2025-12-28 08:30:00",
   "files": [
-    "left_breakout_predictions_20251225_081121.csv",
-    "left_breakout_prediction_report_20251225_081121.txt"
+    "example_model_predictions_20251225_081121.csv",
+    "example_model_prediction_report_20251225_081121.txt"
   ]
 }
 ```
@@ -121,18 +121,18 @@ python scripts/analyze_prediction_accuracy.py --date 20251225 --weeks 4
 
 ```
 1. 运行预测脚本
-   python scripts/predict_left_breakout.py --date 20251225
+   python scripts/predict_model.py --model example_model --date 20251225
    ↓
 2. 生成最新结果
-   data/result/left_breakout/
-   ├── left_breakout_predictions_20251225_081121.csv
-   └── left_breakout_prediction_report_20251225_081121.txt
+   data/result/example_model/
+   ├── example_model_predictions_20251225_081121.csv
+   └── example_model_prediction_report_20251225_081121.txt
    ↓
 3. （可选）归档到历史目录
-   python scripts/archive_predictions.py --model left_breakout --date 20251225
+   python scripts/archive_predictions.py --model example_model --date 20251225
    ↓
 4. 历史归档
-   data/prediction/history/left_breakout/20251225/
+   data/prediction/history/example_model/20251225/
 ```
 
 ### 分析流程
@@ -158,7 +158,7 @@ python scripts/analyze_prediction_accuracy.py --date 20251225 --weeks 4
 
 ```bash
 # 归档指定模型的预测结果
-python scripts/archive_predictions.py --model left_breakout --date 20251225
+python scripts/archive_predictions.py --model example_model --date 20251225
 
 # 自动归档所有模型的最新结果
 python scripts/archive_predictions.py --auto
@@ -167,7 +167,7 @@ python scripts/archive_predictions.py --auto
 python scripts/archive_predictions.py --clean --keep-days 7
 
 # 清理指定模型的旧文件
-python scripts/archive_predictions.py --clean --model left_breakout --keep-days 7
+python scripts/archive_predictions.py --clean --model example_model --keep-days 7
 ```
 
 ---

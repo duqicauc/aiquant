@@ -22,7 +22,7 @@ def archive_prediction_to_history(
     将最新预测结果归档到历史目录
 
     Args:
-        model_name: 模型名称（如 'left_breakout'）
+        model_name: 模型名称
         prediction_date: 预测日期（YYYYMMDD格式）
         result_dir: 最新结果目录（默认: data/result/{model_name}）
         history_dir: 历史目录（默认: data/prediction/history/{model_name}/{prediction_date}）
