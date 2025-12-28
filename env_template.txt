@@ -1,0 +1,16 @@
+# 环境变量配置模板
+# 使用方法：将此文件复制为 .env，并填入你的真实Token
+
+# Tushare API Token
+# 注册地址: https://tushare.pro/register
+# 请将下面的 YOUR_TUSHARE_TOKEN 替换为你的真实 Token
+TUSHARE_TOKEN=YOUR_TUSHARE_TOKEN
+
+# RQData 配置（可选，暂未实现）
+# RQDATA_USERNAME=your_username
+# RQDATA_PASSWORD=your_password
+
+# JQData 配置（可选，暂未实现）
+# JQDATA_USERNAME=your_username
+# JQDATA_PASSWORD=your_password
+

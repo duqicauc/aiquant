@@ -1,0 +1,21 @@
+# AIQuant 核心依赖（Python 3.13兼容版）
+
+# 核心数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 数据获取
+tushare>=1.4.0
+
+# 工具库
+python-dotenv>=1.0.0
+loguru>=0.7.0
+tqdm>=4.66.0
+
+# 可视化（基础）
+matplotlib>=3.7.0
+
+# Jupyter
+jupyter>=1.0.0
+ipykernel>=6.25.0
+

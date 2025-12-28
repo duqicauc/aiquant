@@ -1,0 +1,36 @@
+# Streamlit 配置文件
+
+[server]
+# 服务器配置
+port = 8501
+address = "localhost"
+headless = true
+runOnSave = true
+# CORS和XSRF保护不能同时配置，注释掉CORS
+# enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+# 浏览器配置
+gatherUsageStats = false
+serverAddress = "localhost"
+serverPort = 8501
+
+[theme]
+# 主题配置
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
+
+[client]
+# 客户端配置
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[runner]
+# 运行器配置
+magicEnabled = true
+fastReruns = true
+

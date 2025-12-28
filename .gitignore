@@ -1,0 +1,129 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+
+# 敏感信息和配置文件
+.env
+*.env
+.env.local
+.env.*.local
+config.ini
+secrets.yaml
+*.key
+*.pem
+*.p12
+*.pfx
+
+# 数据文件（大型数据文件不应上传）
+data/
+*.csv
+*.xlsx
+*.xls
+*.db
+*.sqlite
+*.sqlite3
+*.h5
+*.hdf5
+
+# 模型文件（通常很大）
+*.joblib
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.ckpt
+*.pb
+*.onnx
+*.tflite
+*.mlmodel
+
+# 图像和媒体文件（如果很大）
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.svg
+*.webp
+*.mp4
+*.avi
+*.mov
+
+# JSON 数据文件（如果包含敏感数据或很大）
+# 注意：小的配置文件 JSON 可以保留，大的数据 JSON 会被忽略
+# data/**/*.json 已在 data/ 规则中覆盖
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# 日志和输出文件
+*.log
+logs/
+run_output.log
+*.out
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*~
+
+# 系统文件
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+

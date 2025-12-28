@@ -1,0 +1,200 @@
+# ============================================================================
+# 多模型配置文件
+# ============================================================================
+# 每个模型都有独立的配置，包括样本准备、训练、评测等参数
+
+models:
+  # 动量模型（现有模型）
+  momentum:
+    display_name: "动量模型"
+    description: "基于3周涨幅>50%的动量选股模型，寻找已经启动的强势股"
+    enabled: true
+    
+    # 样本准备配置
+    sample_preparation:
+      start_date: "20000101"
+      end_date: null
+      
+      positive_criteria:
+        consecutive_weeks: 3       # 连续阳线周数
+        total_return_threshold: 50 # 总涨幅阈值(%)
+        max_return_threshold: 70   # 最高涨幅阈值(%)
+        min_listing_days: 180      # 最小上市天数
+      
+      negative_criteria:
+        method: "same_period_other_stocks"
+        sample_ratio: 1.0          # 负样本/正样本比例
+      
+      # 特征配置
+      feature_extraction:
+        lookback_days: 34          # 回看34天
+    
+    # 训练配置
+    training:
+      model_type: xgboost
+      parameters:
+        objective: binary:logistic
+        eval_metric: logloss
+        n_estimators: 100
+        learning_rate: 0.1
+        max_depth: 5
+        subsample: 0.8
+        colsample_bytree: 0.8
+        gamma: 0.1
+        random_state: 42
+        n_jobs: -1
+      
+      test_size: 0.2
+      time_series_split: true
+      n_splits: 5
+  
+  # 起爆点模型（新模型）
+  breakout:
+    display_name: "起爆点模型"
+    description: "寻找左侧潜力牛股，在起爆点前识别，减少时间成本，追求低风险高收益的不对称交易"
+    enabled: true
+    
+    # 样本准备配置
+    sample_preparation:
+      start_date: "20000101"
+      end_date: null
+      
+      # 起爆点模型的正样本定义：寻找起爆前1-2周的形态
+      positive_criteria:
+        # 在T0时刻（起爆点前），未来7-14天内涨幅>30%
+        future_return_window: 14   # 未来14天
+        future_return_threshold: 30  # 未来14天涨幅>30%
+        # 起爆前形态特征
+        pre_breakout_days: 7       # 起爆前7天的数据作为特征
+        min_volatility: 0.02       # 最小波动率（避免横盘）
+        max_volatility: 0.15       # 最大波动率（避免已经大涨）
+        # 技术指标要求
+        require_macd_cross: true   # 要求MACD金叉或即将金叉
+        require_volume_surge: true  # 要求成交量放大
+        min_listing_days: 180      # 最小上市天数
+      
+      negative_criteria:
+        method: "same_period_other_stocks"
+        sample_ratio: 1.0
+      
+      # 特征配置 - 起爆点模型关注更短的时间窗口
+      feature_extraction:
+        lookback_days: 20          # 回看20天（比动量模型更短）
+        # 重点关注的技术指标
+        indicators:
+          - macd
+          - rsi
+          - volume_ratio
+          - price_position  # 价格在近期区间的位置
+          - support_resistance  # 支撑阻力位
+    
+    # 训练配置
+    training:
+      model_type: xgboost
+      parameters:
+        objective: binary:logistic
+        eval_metric: logloss
+        n_estimators: 150          # 更多树（起爆点识别更复杂）
+        learning_rate: 0.05        # 更小的学习率
+        max_depth: 6               # 更深的树
+        subsample: 0.8
+        colsample_bytree: 0.8
+        gamma: 0.2                 # 更大的gamma（更保守）
+        min_child_weight: 3        # 最小子节点权重
+        random_state: 42
+        n_jobs: -1
+      
+      test_size: 0.2
+      time_series_split: true
+      n_splits: 5
+  
+  # 点火期模型（新模型）
+  ignition:
+    display_name: "点火期模型"
+    description: "识别启动初期（涨幅10-30%）的潜力股，T1前7天有突破信号，后续3周涨幅>50%"
+    enabled: true
+    
+    # 样本准备配置
+    sample_preparation:
+      start_date: "20000101"
+      end_date: null
+      
+      # 点火期模型的正样本定义：识别启动初期但未大涨的股票
+      positive_criteria:
+        # 核心条件：T1前34天涨幅在10-30%区间（已经启动但未大涨）
+        past_return_min: 10          # 最小涨幅10%
+        past_return_max: 30          # 最大涨幅30%
+        past_return_days: 34         # 回看34天
+        
+        # 突破信号要求（T1前7天）
+        breakout_window: 7           # 最近7天
+        volume_ratio_threshold: 2.0  # 量比>2
+        require_macd_cross: true     # MACD金叉
+        require_ma_breakout: true    # 突破均线（可选）
+        
+        # 验证条件：T1后3周涨幅>50%（验证确实成为牛股）
+        future_return_threshold: 50  # 未来3周涨幅>50%
+        future_return_weeks: 3        # 验证窗口3周
+        
+        # 其他条件
+        min_listing_days: 180        # 最小上市天数
+        exclude_st: true             # 排除ST股票
+        exclude_bj: true             # 排除北交所
+      
+      negative_criteria:
+        method: "same_period_other_stocks"
+        sample_ratio: 1.0            # 负样本/正样本比例
+      
+      # 特征配置
+      feature_extraction:
+        lookback_days: 34            # 回看34天
+        breakout_window: 7           # 重点关注最近7天的突破信号
+        # 重点关注的技术指标
+        indicators:
+          - macd                      # MACD指标
+          - rsi                       # RSI指标
+          - volume_ratio              # 量比
+          - ma_breakout               # 均线突破
+          - price_momentum            # 价格动量
+          - volume_trend              # 成交量趋势
+    
+    # 训练配置
+    training:
+      model_type: xgboost
+      parameters:
+        objective: binary:logistic
+        eval_metric: logloss
+        n_estimators: 120            # 树的数量
+        learning_rate: 0.08          # 学习率
+        max_depth: 6                # 树深度
+        subsample: 0.8
+        colsample_bytree: 0.8
+        gamma: 0.15                 # 正则化参数
+        min_child_weight: 2          # 最小子节点权重
+        random_state: 42
+        n_jobs: -1
+      
+      test_size: 0.2
+      time_series_split: true
+      n_splits: 5
+
+# 预测配置（所有模型共用）
+prediction:
+  scoring:
+    top_n: 50
+    min_probability: 0.0
+    max_stocks_to_score: null
+  
+  exclusion_rules:
+    exclude_st: true
+    exclude_new_listed: true
+    min_listing_days: 180
+    exclude_suspended: true
+  
+  financial_filter:
+    enabled: true
+    revenue_threshold: 3.0
+    profit_years: 3
+    net_assets_positive: true
+    initial_candidates: 150
+
