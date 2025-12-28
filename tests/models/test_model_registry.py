@@ -51,10 +51,23 @@ class TestModelRegistry:
     
     def test_get_model(self):
         """测试获取模型配置"""
-        config = ModelRegistry.get('momentum')
+        # 先注册一个测试模型
+        test_config = ModelConfig(
+            name='test_get_model',
+            display_name='测试获取模型',
+            description='测试',
+            data_dir='test_get',
+            model_dir='models',
+            sample_dir='samples',
+            metrics_dir='metrics',
+            prediction_dir='predictions'
+        )
+        ModelRegistry.register(test_config)
+        
+        config = ModelRegistry.get('test_get_model')
         assert config is not None
-        assert config.name == 'momentum'
-        assert config.display_name == '动量模型'
+        assert config.name == 'test_get_model'
+        assert config.display_name == '测试获取模型'
     
     def test_get_nonexistent_model(self):
         """测试获取不存在的模型"""
@@ -65,13 +78,25 @@ class TestModelRegistry:
         """测试列出所有模型"""
         models = ModelRegistry.list_all()
         assert isinstance(models, dict)
-        assert len(models) > 0
-        assert 'momentum' in models
-        assert 'breakout' in models
+        # 注意：momentum 和 breakout 已删除，现在可能没有注册的模型
+        # 或者只有测试中注册的模型
     
     def test_get_model_paths(self):
         """测试获取模型路径"""
-        paths = ModelRegistry.get_model_paths('momentum')
+        # 先注册一个测试模型
+        test_config = ModelConfig(
+            name='test_paths',
+            display_name='测试路径模型',
+            description='测试',
+            data_dir='test_paths',
+            model_dir='models',
+            sample_dir='samples',
+            metrics_dir='metrics',
+            prediction_dir='predictions'
+        )
+        ModelRegistry.register(test_config)
+        
+        paths = ModelRegistry.get_model_paths('test_paths')
         assert isinstance(paths, dict)
         assert 'samples' in paths
         assert 'models' in paths

@@ -17,8 +17,8 @@ import json
 @dataclass
 class ModelConfig:
     """模型配置"""
-    name: str  # 模型名称（如 'momentum', 'breakout'）
-    display_name: str  # 显示名称（如 '动量模型', '起爆点模型'）
+    name: str  # 模型名称（如 'test_model'）
+    display_name: str  # 显示名称（如 '测试模型'）
     description: str  # 模型描述
     data_dir: str  # 数据目录（相对于 data/training/models/）
     model_dir: str  # 模型文件目录（相对于 data/training/models/）
@@ -113,27 +113,7 @@ class ModelRegistry:
             return json.load(f)
 
 
-# 注册现有模型（动量模型）
-ModelRegistry.register(ModelConfig(
-    name='momentum',
-    display_name='动量模型',
-    description='基于3周涨幅>50%的动量选股模型，寻找已经启动的强势股',
-    data_dir='momentum',
-    model_dir='models',
-    sample_dir='samples',
-    metrics_dir='metrics',
-    prediction_dir='predictions'
-))
-
-# 注册起爆点模型
-ModelRegistry.register(ModelConfig(
-    name='breakout',
-    display_name='起爆点模型',
-    description='寻找左侧潜力牛股，在起爆点前识别，减少时间成本，追求低风险高收益的不对称交易',
-    data_dir='breakout',
-    model_dir='models',
-    sample_dir='samples',
-    metrics_dir='metrics',
-    prediction_dir='predictions'
-))
+# 注意：实际使用的模型：
+# 1. xgboost_timeseries - 由 scripts/score_current_stocks.py 使用（效果最好）
+# 2. left_breakout - 左侧起爆点模型，完整实现（不在 ModelRegistry 中注册）
 

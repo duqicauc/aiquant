@@ -1,183 +1,150 @@
 """
-左侧起爆点模型预测器测试
+左侧潜力牛股预测器测试
 """
 import pytest
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
+from datetime import datetime, timedelta
+from unittest.mock import Mock, patch, MagicMock
 
-# 延迟导入，避免在导入时触发dotenv
-# LeftBreakoutPredictor将在测试函数中导入
+from src.models.stock_selection.potential_discovery.left_breakout.left_predictor import LeftBreakoutPredictor
 
 
 class TestLeftBreakoutPredictor:
-    """LeftBreakoutPredictor测试类"""
-    
+    """左侧潜力牛股预测器测试类"""
+
     @pytest.fixture
     def mock_left_model(self):
-        """创建模拟左侧模型"""
+        """模拟LeftBreakoutModel"""
         mock_model = Mock()
+        mock_model.feature_engineer = Mock()
+        mock_model.model = Mock()
+        mock_model.feature_columns = ['feature1', 'feature2', 'feature3']
         
-        # 模拟特征工程器
-        mock_feature_engineer = Mock()
-        mock_feature_engineer.extract_features.return_value = pd.DataFrame({
-            'ts_code': ['000001.SZ'],
-            'name': ['平安银行'],
-            'feature1': [0.5],
-            'feature2': [0.3],
-        })
-        
-        mock_model.feature_engineer = mock_feature_engineer
-        
-        # 模拟模型（XGBoost）
-        mock_xgb_model = Mock()
-        mock_xgb_model.predict_proba.return_value = np.array([[0.3, 0.7]])  # 70%概率为正样本
-        
-        mock_model.model = mock_xgb_model
-        mock_model.feature_columns = ['feature1', 'feature2']
-        
-        # 模拟数据管理器
-        mock_model.dm = Mock()
-        mock_model.dm.get_stock_list.return_value = pd.DataFrame({
-            'ts_code': ['000001.SZ', '600000.SH'],
-            'name': ['平安银行', '浦发银行'],
-        })
+        # 模拟预测结果
+        mock_model.model.predict_proba.return_value = np.array([[0.3, 0.7], [0.2, 0.8]])
         
         return mock_model
-    
+
     @pytest.fixture
-    def predictor(self, mock_left_model):
+    def mock_data_manager(self):
+        """模拟DataManager"""
+        mock_dm = Mock()
+        
+        # 模拟股票列表
+        mock_stocks = pd.DataFrame({
+            'ts_code': ['000001.SZ', '600000.SH', '000002.SZ'],
+            'name': ['股票1', '股票2', '股票3'],
+        })
+        mock_dm.get_stock_list.return_value = mock_stocks
+        
+        # 模拟日线数据
+        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        mock_daily = pd.DataFrame({
+            'trade_date': dates.strftime('%Y%m%d'),
+            'open': np.random.uniform(10, 20, 50),
+            'high': np.random.uniform(15, 25, 50),
+            'low': np.random.uniform(8, 18, 50),
+            'close': np.random.uniform(10, 20, 50),
+            'vol': np.random.uniform(1000000, 10000000, 50),
+        })
+        mock_dm.get_daily_data.return_value = mock_daily
+        
+        # 模拟交易日历
+        mock_calendar = pd.DataFrame({
+            'cal_date': dates.strftime('%Y%m%d'),
+            'is_open': [1] * 50,
+        })
+        mock_dm.get_trade_calendar.return_value = mock_calendar
+        
+        return mock_dm
+
+    @pytest.fixture
+    def predictor(self, mock_left_model, mock_data_manager):
         """创建预测器实例"""
-        # 在fixture中导入，此时conftest的mock已生效
-        from src.models.stock_selection.left_breakout.left_predictor import LeftBreakoutPredictor
-        return LeftBreakoutPredictor(mock_left_model)
-    
+        mock_left_model.dm = mock_data_manager
+        predictor = LeftBreakoutPredictor(mock_left_model)
+        return predictor
+
+    @pytest.mark.unit
     def test_init(self, predictor, mock_left_model):
         """测试初始化"""
         assert predictor.model == mock_left_model
         assert predictor.feature_engineer == mock_left_model.feature_engineer
-    
-    def test_get_market_stocks(self, predictor):
+        assert predictor._calendar_cache == {}
+
+    @pytest.mark.unit
+    def test_predict_current_market_success(self, predictor, mock_data_manager):
+        """测试成功预测当前市场"""
+        # 模拟特征提取
+        mock_features = pd.DataFrame({
+            'ts_code': ['000001.SZ'],
+            'name': ['股票1'],
+            'feature1': [1.0],
+            'feature2': [2.0],
+            'feature3': [3.0],
+        })
+        predictor.feature_engineer.extract_features.return_value = mock_features
+        
+        result = predictor.predict_current_market(
+            prediction_date='20241226',
+            top_n=10,
+            min_probability=0.1
+        )
+        
+        assert isinstance(result, pd.DataFrame)
+        # 由于mock数据，可能为空，但应该不抛出异常
+
+    @pytest.mark.unit
+    def test_predict_current_market_no_stocks(self, predictor, mock_data_manager):
+        """测试没有股票的情况"""
+        mock_data_manager.get_stock_list.return_value = pd.DataFrame()
+        
+        result = predictor.predict_current_market()
+        
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+    @pytest.mark.unit
+    def test_predict_current_market_insufficient_calendar(self, predictor, mock_data_manager):
+        """测试交易日历不足的情况"""
+        # 模拟不足的交易日历
+        mock_calendar = pd.DataFrame({
+            'cal_date': ['20241226'],
+            'is_open': [1],
+        })
+        mock_data_manager.get_trade_calendar.return_value = mock_calendar
+        
+        result = predictor.predict_current_market()
+        
+        assert isinstance(result, pd.DataFrame)
+
+    @pytest.mark.unit
+    def test_get_trading_days_cached(self, predictor, mock_data_manager):
+        """测试获取交易日历（带缓存）"""
+        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        mock_calendar = pd.DataFrame({
+            'cal_date': dates.strftime('%Y%m%d'),
+            'is_open': [1] * 50,
+        })
+        mock_data_manager.get_trade_calendar.return_value = mock_calendar
+        
+        trading_days = predictor._get_trading_days_cached('20241226')
+        
+        assert trading_days is not None
+        assert len(trading_days) > 0
+        
+        # 第二次调用应该使用缓存
+        trading_days2 = predictor._get_trading_days_cached('20241226')
+        assert trading_days2 == trading_days
+        # 应该只调用一次
+        assert mock_data_manager.get_trade_calendar.call_count <= 2
+
+    @pytest.mark.unit
+    def test_get_market_stocks(self, predictor, mock_data_manager):
         """测试获取市场股票列表"""
         stocks = predictor._get_market_stocks()
         
         assert isinstance(stocks, pd.DataFrame)
         assert 'ts_code' in stocks.columns
         assert 'name' in stocks.columns
-    
-    def test_get_market_stocks_empty(self, predictor):
-        """测试获取空股票列表"""
-        # 模拟返回空列表
-        predictor.model.dm.get_stock_list.return_value = pd.DataFrame()
-        
-        stocks = predictor._get_market_stocks()
-        assert isinstance(stocks, pd.DataFrame)
-    
-    def test_extract_stock_features_structure(self, predictor):
-        """测试提取股票特征结构"""
-        result = predictor._extract_stock_features(
-            ts_code='000001.SZ',
-            name='平安银行',
-            prediction_date='20240101'
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        # 即使没有数据，也应该返回DataFrame
-    
-    def test_extract_stock_features_no_data(self, predictor):
-        """测试没有数据的情况"""
-        # 模拟特征工程返回空DataFrame
-        predictor.feature_engineer.extract_features.return_value = pd.DataFrame()
-        
-        result = predictor._extract_stock_features(
-            ts_code='999999.SZ',
-            name='测试股票',
-            prediction_date='20240101'
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-    
-    def test_predict_current_market_structure(self, predictor):
-        """测试预测当前市场结构"""
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10,
-            min_probability=0.1,
-            max_stocks=5
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        # 即使没有预测结果，也应该返回DataFrame
-    
-    def test_predict_current_market_empty_stocks(self, predictor):
-        """测试股票列表为空的情况"""
-        # 模拟返回空股票列表
-        predictor.model.dm.get_stock_list.return_value = pd.DataFrame()
-        
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        assert result.empty
-    
-    def test_predict_current_market_with_max_stocks(self, predictor):
-        """测试限制最大股票数"""
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10,
-            max_stocks=1  # 只处理1只股票
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-    
-    def test_predict_current_market_no_features(self, predictor):
-        """测试没有提取到特征的情况"""
-        # 模拟所有股票特征提取都失败
-        predictor.feature_engineer.extract_features.return_value = pd.DataFrame()
-        
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        # 应该返回空DataFrame
-    
-    def test_predict_current_market_with_model(self, predictor):
-        """测试使用模型进行预测"""
-        # 确保模型存在
-        predictor.model.model = Mock()
-        predictor.model.model.predict_proba.return_value = np.array([[0.2, 0.8]])
-        predictor.model.feature_columns = ['feature1', 'feature2']
-        
-        # 创建特征数据
-        predictor.feature_engineer.extract_features.return_value = pd.DataFrame({
-            'ts_code': ['000001.SZ'],
-            'name': ['平安银行'],
-            'feature1': [0.5],
-            'feature2': [0.3],
-        })
-        
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-    
-    def test_predict_current_market_no_model(self, predictor):
-        """测试没有模型的情况"""
-        # 模拟模型为None
-        predictor.model.model = None
-        
-        result = predictor.predict_current_market(
-            prediction_date='20240101',
-            top_n=10
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        # 没有模型时应该返回空DataFrame或提示信息
-

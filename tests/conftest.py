@@ -44,6 +44,19 @@ if hasattr(dotenv, 'load_dotenv'):
     if 'dotenv.main' in sys.modules:
         sys.modules['dotenv.main'].load_dotenv = mock_load_dotenv
 
+# Mock tushare导入，避免SSL权限问题
+# 在导入任何使用tushare的模块之前执行
+try:
+    import sys
+    # 创建一个mock的tushare模块
+    mock_tushare = type(sys)('tushare')
+    mock_tushare.pro = type(sys)('tushare.pro')
+    mock_tushare.pro_api = Mock()
+    sys.modules['tushare'] = mock_tushare
+    sys.modules['tushare.pro'] = mock_tushare.pro
+except Exception:
+    pass
+
 
 @pytest.fixture(scope="session")
 def project_path():
