@@ -339,6 +339,18 @@ def require_human_confirmation(
     Returns:
         用户确认结果
     """
+    # 检查环境变量，如果设置了 AUTO_CONFIRM=1，则自动确认
+    import os
+    auto_confirm = os.environ.get('AUTO_CONFIRM', '0')
+    if auto_confirm == '1':
+        log.info("=" * 80)
+        log.info("🤖 自动确认模式（AUTO_CONFIRM=1）")
+        log.info("=" * 80)
+        log.info(message)
+        log.info("=" * 80)
+        log.info(f"自动使用默认值: {default}")
+        return default
+    
     log.warning("=" * 80)
     log.warning("👤 需要人工确认")
     log.warning("=" * 80)

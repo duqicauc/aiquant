@@ -67,7 +67,7 @@ def main():
         confirmed = require_human_confirmation(
             "⚠️  检测到正样本筛选条件可能需要调整。\n"
             "请检查上述警告和建议，确认是否继续使用当前配置。",
-            default=False
+            default=True  # 默认继续，在自动模式下会自动确认
         )
         if not confirmed:
             log.warning("用户取消操作。请修改 config/settings.yaml 后重新运行。")
