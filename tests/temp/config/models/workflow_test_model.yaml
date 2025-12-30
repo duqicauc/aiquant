@@ -1,0 +1,33 @@
+
+model:
+  name: workflow_test_model
+  display_name: "工作流测试模型"
+  type: xgboost
+  version: v1.0.0
+  status: development
+
+data:
+  sample_preparation:
+    start_date: "20000101"
+    positive_criteria:
+      consecutive_weeks: 3
+      total_return_threshold: 50
+    negative_criteria:
+      method: "same_period_other_stocks"
+      sample_ratio: 1.0
+  feature_extraction:
+    lookback_days: 34
+
+model_params:
+  n_estimators: 10
+  max_depth: 3
+  learning_rate: 0.1
+  random_state: 42
+
+training:
+  validation_split: 0.2
+  time_series_split: true
+
+prediction:
+  top_n: 10
+  min_probability: 0.0

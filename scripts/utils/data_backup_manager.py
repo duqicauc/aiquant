@@ -18,7 +18,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data.storage.enhanced_cache_manager import EnhancedCacheManager
+from src.data.storage.backup_cache_manager import BackupCacheManager
 from src.utils.logger import log
 
 
@@ -28,7 +28,7 @@ def export_to_csv(args):
     log.info("📤 导出SQLite数据到CSV")
     log.info("="*80)
     
-    cache = EnhancedCacheManager(enable_backup=True)
+    cache = BackupCacheManager(enable_backup=True)
     
     # 指定数据类型
     data_types = None
@@ -50,7 +50,7 @@ def import_from_csv(args):
     log.info("📥 从CSV导入数据到SQLite")
     log.info("="*80)
     
-    cache = EnhancedCacheManager(enable_backup=True)
+    cache = BackupCacheManager(enable_backup=True)
     
     # 指定数据类型
     data_types = None
@@ -64,7 +64,7 @@ def import_from_csv(args):
 
 def show_stats(args):
     """显示备份统计"""
-    cache = EnhancedCacheManager(enable_backup=True)
+    cache = BackupCacheManager(enable_backup=True)
     
     log.info("="*80)
     log.info("📊 数据备份统计")
@@ -106,7 +106,7 @@ def show_stats(args):
 
 def clear_backup(args):
     """清理备份数据"""
-    cache = EnhancedCacheManager(enable_backup=True)
+    cache = BackupCacheManager(enable_backup=True)
     
     if args.confirm != 'yes':
         log.error("❌ 需要确认才能清理！请使用 --confirm yes")
@@ -128,7 +128,7 @@ def sync_data(args):
     log.info("🔄 同步数据")
     log.info("="*80)
     
-    cache = EnhancedCacheManager(enable_backup=True)
+    cache = BackupCacheManager(enable_backup=True)
     
     if args.direction == 'to_csv':
         log.info("从SQLite同步到CSV...")

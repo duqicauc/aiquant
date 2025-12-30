@@ -5,7 +5,15 @@
 1. 获取正样本的股票代码和T1日期
 2. 对每个正样本，在同一T1日期，随机选择其他未在正样本中的股票
 3. 提取这些股票在T1前34天的交易数据作为负样本
-4. 确保负样本股票符合基本筛选条件（非ST、非北交所等）
+4. 确保负样本股票符合基本筛选条件
+
+过滤规则（与正样本保持一致）：
+- ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
+- HALT: 剔除T1日期停牌的股票（使用suspend_d接口查询）
+- DELISTING: 剔除退市股票（使用list_status='L'只获取上市股票）
+- DELISTING_SORTING: 剔除退市整理期股票（名称包含"退"）
+- 北交所: 剔除北交所股票（代码以.BJ结尾）
+- 上市时间: 至少上市180天
 """
 import pandas as pd
 import numpy as np
@@ -97,6 +105,29 @@ class NegativeSampleScreenerV2:
                 total_processed += len(group)
                 continue
             
+            # HALT过滤：剔除T1日期停牌的股票（使用suspend_d接口）
+            t1_date_str = str(t1_date)
+            suspended_count = 0
+            try:
+                suspend_info = self.dm.get_suspend_info(trade_date=t1_date_str, suspend_type='S')
+                if not suspend_info.empty:
+                    suspended_stocks = set(suspend_info['ts_code'].tolist())
+                    before_count = len(eligible_stocks)
+                    eligible_stocks = eligible_stocks[
+                        ~eligible_stocks['ts_code'].isin(suspended_stocks)
+                    ]
+                    suspended_count = before_count - len(eligible_stocks)
+                    if suspended_count > 0:
+                        log.debug(f"T1={t1_date}: 剔除 {suspended_count} 只停牌股票")
+            except Exception as e:
+                # 如果查询停牌信息失败，记录警告但不影响筛选
+                log.warning(f"T1={t1_date}: 查询停牌信息失败 - {e}")
+            
+            if len(eligible_stocks) == 0:
+                log.warning(f"T1={t1_date}: 剔除停牌股票后无符合条件的股票")
+                total_processed += len(group)
+                continue
+            
             # 从符合条件的股票池中随机选择
             if len(eligible_stocks) < num_needed:
                 log.warning(
@@ -147,20 +178,45 @@ class NegativeSampleScreenerV2:
         """
         获取有效的股票列表（与正样本筛选器相同的规则）
         
+        过滤规则：
+        - ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
+        - DELISTING: 剔除退市股票（使用list_status='L'只获取上市股票）
+        - DELISTING_SORTING: 剔除退市整理期股票（名称包含"退"）
+        - 北交所: 剔除北交所股票（代码以.BJ结尾）
+        
+        注意：HALT（停牌）在筛选时按T1日期动态检查
+        
         Returns:
             股票列表DataFrame
         """
-        # 获取所有上市股票
+        # 获取所有上市股票（DELISTING过滤：list_status='L'已排除退市股票）
         stock_list = self.dm.get_stock_list(list_status='L')
+        original_count = len(stock_list)
         
-        # 剔除ST股票
-        stock_list = stock_list[~stock_list['name'].str.contains('ST', na=False)]
+        # ST过滤：剔除ST股票（ST、*ST、S*ST、SST等）
+        st_mask = stock_list['name'].str.contains('ST', na=False, case=False)
+        stock_list = stock_list[~st_mask]
+        st_count = st_mask.sum()
         
-        # 剔除北交所股票
-        stock_list = stock_list[~stock_list['ts_code'].str.endswith('.BJ')]
+        # 剔除北交所股票（代码以.BJ结尾）
+        bj_mask = stock_list['ts_code'].str.endswith('.BJ')
+        stock_list = stock_list[~bj_mask]
+        bj_count = bj_mask.sum()
+        
+        # DELISTING_SORTING过滤：剔除退市整理期股票（名称包含"退"字）
+        delisting_sorting_mask = stock_list['name'].str.contains('退', na=False)
+        stock_list = stock_list[~delisting_sorting_mask]
+        delisting_sorting_count = delisting_sorting_mask.sum()
         
         # 确保list_date是datetime类型
         stock_list['list_date'] = pd.to_datetime(stock_list['list_date'])
+        
+        log.info(f"股票过滤统计:")
+        log.info(f"  原始数量: {original_count}")
+        log.info(f"  剔除ST: {st_count}")
+        log.info(f"  剔除北交所: {bj_count}")
+        log.info(f"  剔除退市整理期: {delisting_sorting_count}")
+        log.info(f"  有效股票: {len(stock_list)}")
         
         return stock_list[['ts_code', 'name', 'list_date']]
     

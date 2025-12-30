@@ -1,152 +1,150 @@
 # AIQuant 文档索引
 
-本文档是 AIQuant 量化交易系统的完整文档索引，所有文档按功能分类整理。
+本文档是 AIQuant 量化交易系统的完整文档索引。
 
 ---
 
-## 📚 文档分类
+## 📁 文档结构
 
-### 🚀 快速入门
+```
+docs/
+├── README.md           # 本文档（索引）
+├── guides/             # 用户指南（如何使用）
+├── reference/          # 技术参考（原理和规范）
+└── archive/            # 历史文档（归档，供参考）
+```
+
+---
+
+## 🚀 快速入门 (guides/)
 
 适合新用户快速上手的文档：
 
-- **[快速开始指南](QUICK_START_GUIDE.md)** - 5分钟快速上手，完成第一个预测
-- **[使用指南](USAGE_GUIDE.md)** - 系统使用说明和常用操作
+| 文档 | 说明 |
+|------|------|
+| [快速开始指南](guides/QUICK_START_GUIDE.md) | 5分钟快速上手 |
+| [使用指南](guides/USAGE_GUIDE.md) | 系统使用说明 |
+| [完整工作流程](guides/COMPLETE_WORKFLOW.md) | 从数据准备到模型训练 |
 
 ---
 
-### 📋 工作流程
+## 📋 工作流程指南 (guides/)
 
-完整的工作流程文档，从数据准备到模型训练：
+详细的工作流程文档：
 
-- **[完整工作流程](COMPLETE_WORKFLOW.md)** - 从数据准备到模型训练的完整步骤
-- **[样本准备指南](SAMPLE_PREPARATION_GUIDE.md)** - 正负样本数据准备详细说明
-- **[模型训练指南](MODEL_TRAINING_GUIDE.md)** - 模型训练流程和参数配置
-- **[训练进度监控](TRAINING_PROGRESS_MONITORING.md)** - 如何监控长时间训练任务
-- **[样本监控指南](SAMPLE_MONITOR_GUIDE.md)** - 自动监控样本准备状态
-
----
-
-### 🎯 功能指南
-
-各功能模块的详细使用说明：
-
-- **[质量检查指南](QUALITY_CHECK_GUIDE.md)** - 数据质量检查流程
-- **[股票体检指南](STOCK_HEALTH_CHECK_GUIDE.md)** - 单股票全方位健康检查
-- **[可视化指南](VISUALIZATION_GUIDE.md)** - 数据可视化和图表生成
-- **[测试指南](TESTING_GUIDE.md)** - 测试流程和测试用例
+| 文档 | 说明 |
+|------|------|
+| [样本准备指南](guides/SAMPLE_PREPARATION_GUIDE.md) | 正负样本数据准备 |
+| [模型训练指南](guides/MODEL_TRAINING_GUIDE.md) | 模型训练流程 |
+| [质量检查指南](guides/QUALITY_CHECK_GUIDE.md) | 数据质量检查 |
+| [样本监控指南](guides/SAMPLE_MONITOR_GUIDE.md) | 自动监控样本准备 |
+| [训练进度监控](guides/TRAINING_PROGRESS_MONITORING.md) | 监控长时间训练任务 |
 
 ---
 
-### 🔧 技术参考
+## 🎯 功能指南 (guides/)
 
-技术实现细节和API文档：
+各功能模块的使用说明：
 
-- **[API参考文档](API_REFERENCE.md)** - 完整API接口说明
-- **[Tushare Pro功能](TUSHARE_PRO_FEATURES.md)** - Tushare Pro高级功能使用
-- **[缓存与限流](CACHE_AND_RATE_LIMIT.md)** - 数据缓存和API限流机制
-- **[Tushare优化](TUSHARE_OPTIMIZATION.md)** - Tushare API优化方案
-- **[Tushare恢复指南](TUSHARE_RECOVERY_GUIDE.md)** - Tushare服务恢复方法
-- **[SSL权限修复](SSL_PERMISSION_FIX.md)** - SSL证书权限问题解决
-
----
-
-### 📊 模型与策略
-
-模型原理和策略说明：
-
-- **[模型版本管理](MODEL_VERSION_MANAGEMENT.md)** - 同一模型不同版本的完整管理方案 🆕
-- **[选股模型原理](STOCK_SELECTION_MODEL.md)** - 正负样本选股模型详解
-- **[模型对比](MODEL_COMPARISON.md)** - XGBoost vs LSTM 模型对比
-- **[负样本对比](NEGATIVE_SAMPLE_COMPARISON.md)** - 不同负样本方案对比
-- **[避免未来函数](AVOID_FUTURE_FUNCTION.md)** - 时间序列划分避免数据泄露
-- **[特征提取指南](FEATURE_EXTRACTION_GUIDE.md)** - 技术指标特征提取说明
-- **[MACD参数对比](MACD_PARAMETER_COMPARISON.md)** - MACD指标参数优化
+| 文档 | 说明 |
+|------|------|
+| [股票体检指南](guides/STOCK_HEALTH_CHECK_GUIDE.md) | 单股票健康检查 |
+| [可视化指南](guides/VISUALIZATION_GUIDE.md) | 数据可视化和图表生成 |
+| [训练可视化指南](guides/TRAINING_VISUALIZATION_GUIDE.md) | 训练过程可视化 |
+| [测试指南](guides/TESTING_GUIDE.md) | 测试流程和用例 |
 
 ---
 
-### 📈 优化与分析
+## 🔧 技术参考 (reference/)
 
-性能优化和结果分析：
+### 核心概念
 
-- **[准确率分析](ACCURACY_ANALYSIS_AND_OPTIMIZATION.md)** - 模型准确率分析和优化
-- **[诊断结果](DIAGNOSIS_RESULTS.md)** - 系统诊断和问题分析
-- **[优化完成报告](OPTIMIZATION_COMPLETED.md)** - 系统优化完成总结
-- **[最终优化建议](FINAL_OPTIMIZATION_RECOMMENDATION.md)** - 系统优化最终建议
-- **[优化计划](OPTIMIZATION_PLAN_FINAL.md)** - 系统优化计划文档
-- **[缓存优化修复](CACHE_OPTIMIZATION_FIX.md)** - 缓存系统优化修复
+| 文档 | 说明 |
+|------|------|
+| [选股模型原理](reference/STOCK_SELECTION_MODEL.md) | 正负样本选股模型详解 |
+| [避免未来函数](reference/AVOID_FUTURE_FUNCTION.md) | 时间序列划分原理 |
+| [模型对比](reference/MODEL_COMPARISON.md) | XGBoost vs LSTM |
+| [特征提取指南](reference/FEATURE_EXTRACTION_GUIDE.md) | 技术指标特征提取 |
+
+### 模型管理
+
+| 文档 | 说明 |
+|------|------|
+| [模型版本管理](reference/MODEL_VERSION_MANAGEMENT.md) | 版本管理方案 |
+| [模型生命周期标准](reference/MODEL_LIFECYCLE_STANDARD.md) | 生命周期规范 |
+| [模型生命周期快速参考](reference/MODEL_LIFECYCLE_QUICK_REFERENCE.md) | 快速参考卡 |
+| [多模型架构](reference/ARCHITECTURE_MULTI_MODEL.md) | 多模型并行架构 |
+
+### API 和数据
+
+| 文档 | 说明 |
+|------|------|
+| [API参考文档](reference/API_REFERENCE.md) | 完整API接口说明 |
+| [Tushare Pro功能](reference/TUSHARE_PRO_FEATURES.md) | Tushare高级功能 |
+| [Tushare优化](reference/TUSHARE_OPTIMIZATION.md) | API优化方案 |
+| [缓存与限流](reference/CACHE_AND_RATE_LIMIT.md) | 数据缓存机制 |
+| [原始数据字段](reference/RAW_DATA_FIELDS.md) | 数据字段说明 |
+
+### 项目结构
+
+| 文档 | 说明 |
+|------|------|
+| [目录结构](reference/DIRECTORY_STRUCTURE.md) | 项目目录结构 |
+| [项目结构说明](reference/PROJECT_STRUCTURE_CLARIFICATION.md) | 结构澄清 |
+| [预测目录关系](reference/PREDICTION_DIRECTORY_RELATIONSHIP.md) | 预测目录关系 |
 
 ---
 
-### 🏗️ 项目结构
+## 📦 归档文档 (archive/)
 
-项目架构和目录结构说明：
+历史变更记录、优化笔记、对比分析等，仅供参考：
 
-- **[多模型并行架构](ARCHITECTURE_MULTI_MODEL.md)** - 支持多模型并行的完整架构设计 🆕
-- **[多模型架构实施计划](IMPLEMENTATION_PLAN_MULTI_MODEL.md)** - 架构迁移的详细实施计划 🆕
-- **[目录结构](DIRECTORY_STRUCTURE.md)** - 项目目录结构详细说明
-- **[项目结构说明](PROJECT_STRUCTURE_CLARIFICATION.md)** - 项目结构澄清文档
-- **[目录优化总结](DIRECTORY_OPTIMIZATION_SUMMARY.md)** - 目录结构优化总结
-- **[预测目录关系](PREDICTION_DIRECTORY_RELATIONSHIP.md)** - 预测相关目录关系
-- **[预测结果目录](PREDICTION_RESULT_DIRECTORY.md)** - 预测结果存储说明
-
----
-
-### 📝 其他文档
-
-其他重要文档：
-
-- **[模型优化笔记 2025-12-28](MODEL_OPTIMIZATION_NOTES_20251228.md)** - 模型优化思路和技术因子改进建议
-- **[样本目标分析](SAMPLE_TARGET_ANALYSIS.md)** - 样本目标值分析
-- **[严格标准恢复](STRICT_CRITERIA_RESTORED.md)** - 严格筛选标准恢复说明
-- **[可视化工具评估](VISUALIZATION_TOOLS_EVALUATION.md)** - 可视化工具对比评估
-- **[可视化脚本评估](VISUALIZATION_SCRIPTS_EVALUATION.md)** - 可视化脚本功能评估
+- 缓存/限流优化记录
+- 模型版本迁移记录
+- 参数对比分析
+- 诊断和优化结果
 
 ---
 
 ## 🔍 按使用场景查找
 
 ### 我是新用户，想快速开始
-1. [快速开始指南](QUICK_START_GUIDE.md)
-2. [使用指南](USAGE_GUIDE.md)
-3. [完整工作流程](COMPLETE_WORKFLOW.md)
+1. [快速开始指南](guides/QUICK_START_GUIDE.md)
+2. [使用指南](guides/USAGE_GUIDE.md)
+3. [完整工作流程](guides/COMPLETE_WORKFLOW.md)
 
 ### 我想训练模型
-1. [样本准备指南](SAMPLE_PREPARATION_GUIDE.md)
-2. [模型训练指南](MODEL_TRAINING_GUIDE.md)
-3. [质量检查指南](QUALITY_CHECK_GUIDE.md)
-
-### 我想使用预测功能
-1. [使用指南](USAGE_GUIDE.md) - 预测部分
-2. [股票体检指南](STOCK_HEALTH_CHECK_GUIDE.md)
+1. [样本准备指南](guides/SAMPLE_PREPARATION_GUIDE.md)
+2. [模型训练指南](guides/MODEL_TRAINING_GUIDE.md)
+3. [质量检查指南](guides/QUALITY_CHECK_GUIDE.md)
 
 ### 我想了解技术细节
-1. [API参考文档](API_REFERENCE.md)
-2. [选股模型原理](STOCK_SELECTION_MODEL.md)
-3. [避免未来函数](AVOID_FUTURE_FUNCTION.md)
+1. [API参考文档](reference/API_REFERENCE.md)
+2. [选股模型原理](reference/STOCK_SELECTION_MODEL.md)
+3. [避免未来函数](reference/AVOID_FUTURE_FUNCTION.md)
 
-### 我想优化系统性能
-1. [Tushare优化](TUSHARE_OPTIMIZATION.md)
-2. [缓存与限流](CACHE_AND_RATE_LIMIT.md)
-3. [准确率分析](ACCURACY_ANALYSIS_AND_OPTIMIZATION.md)
-
----
-
-## 📖 文档更新记录
-
-- **2025-12-28**: 整理文档结构，创建索引文档
-- **2025-12-24**: v3.0版本文档更新
+### 我想管理模型版本
+1. [模型版本管理](reference/MODEL_VERSION_MANAGEMENT.md)
+2. [模型生命周期标准](reference/MODEL_LIFECYCLE_STANDARD.md)
 
 ---
 
-## 💡 文档贡献
+## 🛠️ 常用命令
 
-如果发现文档有误或需要补充，欢迎：
-1. 提交 Issue
-2. 创建 Pull Request
-3. 联系项目维护者
+```bash
+# 查看模型版本状态
+python scripts/model_version_manager.py status
+
+# 比较两个版本
+python scripts/model_version_manager.py compare v1.3.0 v1.4.0
+
+# 股票评分（新框架）
+python scripts/score_stocks.py
+
+# 股票评分（旧框架，兼容）
+python scripts/score_current_stocks.py
+```
 
 ---
 
-**最后更新**: 2025-12-28
-
+**最后更新**: 2025-12-30

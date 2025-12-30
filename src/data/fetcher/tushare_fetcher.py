@@ -13,12 +13,13 @@ from dotenv import load_dotenv
 
 from src.utils.logger import log
 from src.utils.rate_limiter import get_api_limiter, init_rate_limiter
+from src.data.fetcher.base_fetcher import BaseFetcher
 
 # 加载环境变量
 load_dotenv()
 
 
-class TushareFetcher:
+class TushareFetcher(BaseFetcher):
     """Tushare Pro 数据获取器"""
     
     def __init__(self, token: str = None, points: int = None):
@@ -29,6 +30,7 @@ class TushareFetcher:
             token: Tushare Pro Token，如果为None则从环境变量读取
             points: Tushare 积分，用于设置限流级别
         """
+        # 先设置 token，因为父类初始化会调用 _init_connection
         self.token = token or os.getenv('TUSHARE_TOKEN')
         
         if not self.token or self.token == 'YOUR_TUSHARE_TOKEN':
@@ -38,23 +40,28 @@ class TushareFetcher:
                 "2. 在 .env 文件中设置 TUSHARE_TOKEN=你的token"
             )
         
-        # 初始化 Tushare Pro
-        import tushare as ts
-        ts.set_token(self.token)
-        self.pro = ts.pro_api()
-        
         # 初始化限流器（根据积分设置）
         if points is None:
             points = int(os.getenv('TUSHARE_POINTS', '120'))
         init_rate_limiter(points)
         self.rate_limiter = get_api_limiter()
         
+        # 调用父类初始化（会触发 _init_connection）
+        super().__init__(source_name='tushare')
+        
         log.info(f"TushareFetcher 初始化成功 (积分级别: {points})")
+    
+    def _init_connection(self):
+        """初始化 Tushare Pro 连接"""
+        import tushare as ts
+        ts.set_token(self.token)
+        self.pro = ts.pro_api()
     
     def get_stock_list(
         self, 
         list_status: str = 'L',
-        exchange: str = None
+        exchange: str = None,
+        **kwargs
     ) -> pd.DataFrame:
         """
         获取股票列表
@@ -82,23 +89,32 @@ class TushareFetcher:
     
     def get_daily_data(
         self,
-        ts_code: str,
+        stock_code: str,
         start_date: str,
-        end_date: str,
+        end_date: Optional[str] = None,
         adjust: str = 'qfq'
     ) -> pd.DataFrame:
         """
         获取日线数据
         
         Args:
-            ts_code: 股票代码 (如 '000001.SZ')
-            start_date: 开始日期 (YYYYMMDD)
-            end_date: 结束日期 (YYYYMMDD)
+            stock_code: 股票代码 (如 '000001.SZ' 或 '000001')
+            start_date: 开始日期 (YYYYMMDD 或 YYYY-MM-DD)
+            end_date: 结束日期 (YYYYMMDD 或 YYYY-MM-DD)，如果为None则使用今天
             adjust: 复权类型 ('qfq'前复权, 'hfq'后复权, ''不复权)
             
         Returns:
             日线数据DataFrame
         """
+        # 格式化股票代码和日期
+        ts_code = self.format_stock_code(stock_code)
+        start_date = self.format_date(start_date)
+        
+        if end_date is None:
+            end_date = datetime.now().strftime('%Y%m%d')
+        else:
+            end_date = self.format_date(end_date)
+        
         self.rate_limiter.wait_if_needed()
         
         try:
@@ -165,19 +181,19 @@ class TushareFetcher:
     
     def get_daily_basic(
         self,
-        ts_code: str = None,
-        trade_date: str = None,
-        start_date: str = None,
-        end_date: str = None
+        stock_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        **kwargs
     ) -> pd.DataFrame:
         """
         获取每日指标（市值、市盈率、换手率等）
         
         Args:
-            ts_code: 股票代码（可选）
-            trade_date: 交易日期（可选）
-            start_date: 开始日期（可选）
-            end_date: 结束日期（可选）
+            stock_code: 股票代码（可选，如果为None则获取所有股票）
+            start_date: 开始日期 (YYYYMMDD 或 YYYY-MM-DD)，可选
+            end_date: 结束日期 (YYYYMMDD 或 YYYY-MM-DD)，可选
+            **kwargs: 其他参数（trade_date等）
             
         Returns:
             每日指标DataFrame
@@ -191,14 +207,26 @@ class TushareFetcher:
                          'total_share,float_share,free_share,total_mv,circ_mv'
             }
             
-            if ts_code:
+            # 处理trade_date参数（优先使用）
+            if 'trade_date' in kwargs:
+                params['trade_date'] = self.format_date(kwargs['trade_date'])
+            else:
+                # 处理日期范围
+                if start_date:
+                    start_date = self.format_date(start_date)
+                    params['start_date'] = start_date
+                
+                if end_date:
+                    end_date = self.format_date(end_date)
+                    params['end_date'] = end_date
+                elif start_date:
+                    # 如果只有start_date，使用它作为end_date
+                    params['end_date'] = start_date
+            
+            # 处理股票代码
+            if stock_code:
+                ts_code = self.format_stock_code(stock_code)
                 params['ts_code'] = ts_code
-            if trade_date:
-                params['trade_date'] = trade_date
-            if start_date:
-                params['start_date'] = start_date
-            if end_date:
-                params['end_date'] = end_date
             
             df = self.pro.daily_basic(**params)
             
@@ -323,6 +351,50 @@ class TushareFetcher:
             log.warning(f"获取交易日历失败: {e}")
             return pd.DataFrame()
     
+    def get_minute_data(
+        self,
+        stock_code: str,
+        freq: str = '5min',
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        获取分钟数据（Tushare Pro 暂不支持，返回空DataFrame）
+        
+        Args:
+            stock_code: 股票代码
+            freq: 频率（1min, 5min, 15min, 30min, 60min）
+            start_date: 开始日期
+            end_date: 结束日期
+            
+        Returns:
+            分钟数据DataFrame（Tushare Pro 暂不支持，返回空DataFrame）
+        """
+        log.warning("Tushare Pro 暂不支持分钟数据获取")
+        return pd.DataFrame()
+    
+    def get_fundamental_data(
+        self,
+        stock_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        获取基本面数据（通过财务指标接口实现）
+        
+        Args:
+            stock_code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            
+        Returns:
+            基本面数据DataFrame
+        """
+        # Tushare Pro 的基本面数据需要通过其他接口获取
+        # 这里返回空DataFrame，具体实现可以根据需要添加
+        log.warning("基本面数据获取功能待实现")
+        return pd.DataFrame()
+    
     def batch_get_daily_basic(
         self,
         trade_date: str,
@@ -338,12 +410,18 @@ class TushareFetcher:
         Returns:
             每日指标DataFrame
         """
-        df = self.get_daily_basic(trade_date=trade_date)
+        # 使用新的接口，传入trade_date参数
+        df = self.get_daily_basic(
+            stock_code=None,
+            trade_date=trade_date
+        )
         
         if df.empty:
             return df
         
         if stock_codes:
-            df = df[df['ts_code'].isin(stock_codes)]
+            # 格式化股票代码列表
+            formatted_codes = [self.format_stock_code(code) for code in stock_codes]
+            df = df[df['ts_code'].isin(formatted_codes)]
         
         return df

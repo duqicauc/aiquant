@@ -1,0 +1,8 @@
+
+model:
+  name: model_b
+  type: lightgbm
+  version: v1.0.0
+
+prediction:
+  top_n: 100

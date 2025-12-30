@@ -1,22 +1,58 @@
 # ============================================================================
-# 多模型配置文件
+# 多模型注册表
 # ============================================================================
-# 每个模型都有独立的配置，包括样本准备、训练、评测等参数
+# 注册所有可用的模型，每个模型引用独立的配置文件
 
-# 注意：实际使用的模型：
-# 1. breakout_launch_scorer - 由 scripts/score_current_stocks.py 使用（效果最好）
-models: {}
+# 已注册模型列表
+models:
+  # 突破起爆评分模型（主力模型）
+  breakout_launch_scorer:
+    config_file: "config/models/breakout_launch_scorer.yaml"
+    display_name: "突破起爆评分模型"
+    description: "基于技术指标识别股票起爆点，预测未来3周强势上涨概率"
+    status: active  # active, deprecated, experimental
+    
+    # 快捷配置覆盖（可选，会覆盖配置文件中的值）
+    # 如果不需要覆盖，可以删除这部分
+    overrides:
+      prediction:
+        top_n: 50
 
-# 预测配置（所有模型共用）
-prediction:
-  scoring:
-    top_n: 50
-    min_probability: 0.0
-    max_stocks_to_score: null
+# 默认模型
+default_model: breakout_launch_scorer
+
+# 模型存储根目录
+models_root: "data/models"
+
+# 共享预测配置（所有模型共用，可被各模型配置覆盖）
+shared:
+  prediction:
+    scoring:
+      top_n: 50
+      min_probability: 0.0
+      max_stocks_to_score: null
+    
+    exclusion_rules:
+      exclude_st: true
+      exclude_new_listed: true
+      min_listing_days: 180
+      exclude_suspended: true
+    
+    report:
+      include_market_analysis: true
+      include_recommendations: true
+      include_risk_warnings: true
+
+# 版本管理配置
+version_management:
+  # 各环境保留版本数
+  keep_versions:
+    development: 5
+    testing: 3
+    staging: 2
+    production: 3
   
-  exclusion_rules:
-    exclude_st: true
-    exclude_new_listed: true
-    min_listing_days: 180
-    exclude_suspended: true
-
+  # 自动归档配置
+  auto_archive:
+    enabled: true
+    archive_after_days: 30  # 30天后自动归档非活跃版本

@@ -5,9 +5,14 @@
 1. 周K连续三周收阳线
 2. 总涨幅超50%
 3. 最高涨幅超70%
-4. 剔除ST、HALT、DELISTING
-5. 上市超过半年
-6. 剔除北交所
+4. 上市超过半年（180天）
+
+过滤规则：
+- ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
+- HALT: 剔除T1日期停牌的股票（使用suspend_d接口查询）
+- DELISTING: 剔除退市股票（使用list_status='L'只获取上市股票）
+- DELISTING_SORTING: 剔除退市整理期股票（名称包含"退"）
+- 北交所: 剔除北交所股票（代码以.BJ结尾）
 """
 import pandas as pd
 import numpy as np
@@ -119,26 +124,45 @@ class PositiveSampleScreener:
         """
         获取有效的股票列表
         
+        过滤规则：
+        - ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
+        - DELISTING: 剔除退市股票（使用list_status='L'只获取上市股票）
+        - DELISTING_SORTING: 剔除退市整理期股票（名称包含"退"）
+        - 北交所: 剔除北交所股票（代码以.BJ结尾）
+        
+        注意：HALT（停牌）在筛选时按T1日期动态检查
+        
         Returns:
             股票列表DataFrame
         """
-        # 获取所有上市股票
+        # 获取所有上市股票（DELISTING过滤：list_status='L'已排除退市股票）
         stock_list = self.dm.get_stock_list(list_status='L')
+        original_count = len(stock_list)
         
-        # 剔除ST股票（ST、*ST、S*ST等）
-        stock_list = stock_list[~stock_list['name'].str.contains('ST', na=False)]
+        # ST过滤：剔除ST股票（ST、*ST、S*ST、SST等）
+        st_mask = stock_list['name'].str.contains('ST', na=False, case=False)
+        stock_list = stock_list[~st_mask]
+        st_count = st_mask.sum()
         
         # 剔除北交所股票（代码以.BJ结尾）
-        stock_list = stock_list[~stock_list['ts_code'].str.endswith('.BJ')]
+        bj_mask = stock_list['ts_code'].str.endswith('.BJ')
+        stock_list = stock_list[~bj_mask]
+        bj_count = bj_mask.sum()
         
-        # 剔除停牌和退市股票（如果数据中有status字段）
-        # 注：Tushare的stock_basic接口list_status='L'已经排除了退市股票
-        # 停牌状态需要通过daily_basic或suspend_d接口查询，这里先标注
+        # DELISTING_SORTING过滤：剔除退市整理期股票（名称包含"退"字）
+        delisting_sorting_mask = stock_list['name'].str.contains('退', na=False)
+        stock_list = stock_list[~delisting_sorting_mask]
+        delisting_sorting_count = delisting_sorting_mask.sum()
         
         # 确保list_date是datetime类型
         stock_list['list_date'] = pd.to_datetime(stock_list['list_date'])
         
-        log.info(f"筛选后有效股票数: {len(stock_list)} 只（已剔除ST和北交所）")
+        log.info(f"股票过滤统计:")
+        log.info(f"  原始数量: {original_count}")
+        log.info(f"  剔除ST: {st_count}")
+        log.info(f"  剔除北交所: {bj_count}")
+        log.info(f"  剔除退市整理期: {delisting_sorting_count}")
+        log.info(f"  有效股票: {len(stock_list)}")
         
         return stock_list[['ts_code', 'name', 'list_date']]
     
@@ -204,9 +228,9 @@ class PositiveSampleScreener:
             if result:
                 samples.append(result)
         
-        # 去重：同一股票只保留最早的样本
+        # 去重：处理重叠时间段
         if samples:
-            samples = [samples[0]]  # 保留第一个（最早的）
+            samples = self._merge_overlapping_samples(samples)
         
         return samples
     
@@ -237,6 +261,72 @@ class PositiveSampleScreener:
         df_weekly = df_weekly.reset_index()
         
         return df_weekly
+    
+    def _merge_overlapping_samples(self, samples: List[Dict]) -> List[Dict]:
+        """
+        合并重叠的时间段样本
+        
+        规则：
+        1. 如果两个时间段重叠，合并为一个样本，选择最早的T1日期
+        2. 如果两个时间段不重叠，保留两个样本
+        
+        Args:
+            samples: 样本列表
+            
+        Returns:
+            去重后的样本列表
+        """
+        if len(samples) <= 1:
+            return samples
+        
+        # 按T1日期排序
+        samples = sorted(samples, key=lambda x: x['t1_date'])
+        
+        merged_samples = []
+        
+        for sample in samples:
+            # 将日期字符串转换为datetime以便比较
+            week1_start = pd.to_datetime(sample['week1_start'], format='%Y%m%d')
+            week3_end = pd.to_datetime(sample['week3_end'], format='%Y%m%d')
+            t1_date = pd.to_datetime(sample['t1_date'], format='%Y%m%d')
+            
+            # 查找是否有重叠的已合并样本
+            merged = False
+            for merged_sample in merged_samples:
+                merged_week1_start = pd.to_datetime(merged_sample['week1_start'], format='%Y%m%d')
+                merged_week3_end = pd.to_datetime(merged_sample['week3_end'], format='%Y%m%d')
+                merged_t1_date = pd.to_datetime(merged_sample['t1_date'], format='%Y%m%d')
+                
+                # 判断时间段是否重叠
+                # 重叠条件：新时间段的开始 <= 已合并时间段的结束 且 新时间段的结束 >= 已合并时间段的开始
+                if week1_start <= merged_week3_end and week3_end >= merged_week1_start:
+                    # 时间段重叠，合并：选择最早的T1日期作为起点
+                    if t1_date < merged_t1_date:
+                        # 新样本的T1更早，更新为新的起点
+                        merged_sample['t1_date'] = sample['t1_date']
+                        merged_sample['week1_start'] = sample['week1_start']
+                        merged_sample['week1_open'] = sample['week1_open']
+                    # 选择最晚的结束时间，覆盖整个上涨周期
+                    if week3_end > merged_week3_end:
+                        merged_sample['week3_end'] = sample['week3_end']
+                        merged_sample['week3_close'] = sample['week3_close']
+                    # 选择更高的最高价和涨幅
+                    if sample['three_week_high'] > merged_sample['three_week_high']:
+                        merged_sample['three_week_high'] = sample['three_week_high']
+                    if sample['max_return'] > merged_sample['max_return']:
+                        merged_sample['max_return'] = sample['max_return']
+                    # 重新计算总涨幅（基于最早的起点和最新的终点）
+                    # 注意：这里需要重新获取数据计算，暂时保留较大的值
+                    if sample['total_return'] > merged_sample['total_return']:
+                        merged_sample['total_return'] = sample['total_return']
+                    merged = True
+                    break
+            
+            # 如果没有重叠，添加为新样本
+            if not merged:
+                merged_samples.append(sample.copy())
+        
+        return merged_samples
     
     def _check_three_week_pattern(
         self,
@@ -284,7 +374,7 @@ class PositiveSampleScreener:
         if days_since_list < 180:
             return None
         
-        # 条件5: 检查T1日期是否停牌
+        # HALT过滤：检查T1日期是否停牌（使用suspend_d接口）
         t1_date_str = t1_date.strftime('%Y%m%d')
         try:
             suspend_info = self.dm.get_suspend_info(trade_date=t1_date_str, suspend_type='S')

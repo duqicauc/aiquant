@@ -7,7 +7,7 @@
 #### 单元测试
 - ✅ `tests/utils/test_prediction_organizer.py` - 11个测试用例
 - ✅ `tests/utils/test_ssl_fix.py` - 3个测试用例（部分需要修复）
-- ✅ `tests/data/storage/test_enhanced_cache_manager.py` - 12个测试用例（部分需要修复）
+- ✅ `tests/data/storage/test_backup_cache_manager.py` - 12个测试用例（部分需要修复）
 - ✅ `tests/backtest/test_data_feed.py` - 10个测试用例
 - ✅ `tests/visualization/test_stock_chart.py` - 11个测试用例
 - ✅ `tests/models/test_left_predictor.py` - 7个测试用例
@@ -91,7 +91,7 @@ open htmlcov/index.html
 - ✅ `src/visualization/stock_chart.py` - 97%
 
 ### 中等覆盖率模块（40-80%）
-- ⚠️ `src/data/storage/enhanced_cache_manager.py` - 32%
+- ⚠️ `src/data/storage/backup_cache_manager.py` - 32%
 - ⚠️ `src/utils/rate_limiter.py` - 36%
 
 ### 低覆盖率模块（<40%）

@@ -104,7 +104,7 @@ class DataManager:
         
         # 从API获取
         df = self.fetcher.get_daily_data(
-            ts_code=stock_code,
+            stock_code=stock_code,
             start_date=start_date,
             end_date=end_date,
             adjust=adjust
@@ -196,10 +196,10 @@ class DataManager:
         
         # 从API获取
         df = self.fetcher.get_daily_basic(
-            ts_code=stock_code,
-            trade_date=trade_date,
+            stock_code=stock_code,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            trade_date=trade_date
         )
         
         # 存入缓存

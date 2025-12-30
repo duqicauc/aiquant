@@ -1,0 +1,12 @@
+
+model:
+  name: test_model
+  type: xgboost
+
+data:
+  feature_extraction:
+    lookback_days: 34
+
+prediction:
+  top_n: 50
+  min_probability: 0.0

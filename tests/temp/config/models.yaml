@@ -1,0 +1,9 @@
+
+models:
+  workflow_test_model:
+    config_file: "config/models/workflow_test_model.yaml"
+    display_name: "工作流测试模型"
+    status: active
+
+default_model: workflow_test_model
+models_root: "data/models"

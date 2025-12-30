@@ -24,7 +24,7 @@
   - SSL证书权限修复
 
 ### 2. 数据存储模块测试
-- ✅ `tests/data/storage/test_enhanced_cache_manager.py` - **12个测试用例**
+- ✅ `tests/data/storage/test_backup_cache_manager.py` - **12个测试用例**
   - 增强缓存管理器（SQLite + CSV备份）
   - 数据保存和读取
   - CSV备份功能
@@ -129,7 +129,7 @@ open htmlcov/index.html
 - ✅ `src/visualization/stock_chart.py` - **97%**
 
 ### 中等覆盖率模块（40-80%）
-- ⚠️ `src/data/storage/enhanced_cache_manager.py` - **32%**（需要补充）
+- ⚠️ `src/data/storage/backup_cache_manager.py` - **32%**（需要补充）
 
 ### 当前整体覆盖率
 - **约10-20%**（主要因为大量业务逻辑模块还未测试）

@@ -113,14 +113,6 @@ def mock_data_manager():
     })
     mock_dm.get_daily_data.return_value = mock_daily_data
     
-    # 模拟基本面数据
-    mock_fundamental_data = pd.DataFrame({
-        'end_date': ['20231231'],
-        'revenue': [5.0],
-        'net_profit': [0.5],
-    })
-    mock_dm.get_fundamental_data.return_value = mock_fundamental_data
-    
     # 模拟其他方法
     mock_dm.get_weekly_data.return_value = pd.DataFrame({
         'trade_date': dates.strftime('%Y%m%d'),
