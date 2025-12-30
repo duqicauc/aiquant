@@ -1,4 +1,22 @@
 """
+⚠️  ⚠️  ⚠️  重要警告 ⚠️  ⚠️  ⚠️
+
+本文件仅用于旧版模型框架（legacy model framework），不支持新版模型开发框架！
+
+【使用限制】
+- 本脚本仅支持旧的 xgboost_timeseries 模型格式
+- 模型路径：data/training/models/xgboost_timeseries_v2_*.json
+- 特征计算方式与旧版训练流程绑定
+- 不支持新版模型生命周期管理系统
+
+【新版模型使用说明】
+如需在新版模型框架下进行股票评分，请：
+1. 创建新的评分脚本（建议命名：scripts/score_stocks_v2.py）
+2. 使用新版模型加载接口（src/models/model_manager.py）
+3. 使用新版特征工程接口（src/features/feature_engineer.py）
+4. 遵循新版模型开发规范
+
+【旧版功能说明】
 对当前市场所有股票进行评分和筛选
 
 基于训练好的模型，对所有A股进行评分，找出最有可能成为牛股的股票
@@ -34,6 +52,9 @@ from src.utils.logger import log
 
 def load_model(model_path=None, version=None):
     """加载训练好的模型（旧版本：仅支持xgboost_timeseries模型）
+    
+    ⚠️  警告：此函数仅用于旧版模型框架，不支持新版模型管理系统！
+    如需使用新版模型，请创建新的评分脚本并使用 src.models.model_manager.ModelManager
     
     Args:
         model_path: 直接指定模型文件路径，如果为None则自动查找最新模型
@@ -1088,8 +1109,15 @@ def save_results(df_scores, df_top, top_n=50, model_path=None, model_name=None, 
 
 def main():
     """主函数"""
+    # ⚠️ 运行时警告：这是旧版模型框架的脚本
+    log.warning("="*80)
+    log.warning("⚠️  警告：本脚本仅用于旧版模型框架（legacy model framework）")
+    log.warning("⚠️  如需使用新版模型，请创建新的评分脚本并使用新版模型管理系统")
+    log.warning("="*80)
+    log.info("")
+    
     # 解析命令行参数
-    parser = argparse.ArgumentParser(description='股票评分系统')
+    parser = argparse.ArgumentParser(description='股票评分系统（旧版模型框架）')
     parser.add_argument('--date', type=str, default=None,
                         help='指定日期（格式：YYYYMMDD），用于历史回测。例如：--date 20250919')
     parser.add_argument('--max-stocks', type=int, default=None,
