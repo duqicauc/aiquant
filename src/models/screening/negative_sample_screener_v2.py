@@ -79,22 +79,36 @@ class NegativeSampleScreenerV2:
         log.info("开始筛选负样本...")
         log.info("="*80)
         
+        # 需要的历史数据天数（lookback + 缓冲）
+        min_days_before_t1 = 180  # 至少上市180天，确保有足够历史数据
+        
         for t1_date, group in t1_groups:
             num_positive = len(group)
             num_needed = num_positive * samples_per_positive
             
-            # 从可用股票池中随机选择
-            if len(available_stocks) < num_needed:
+            # 关键修复：只选择在T1日期之前已上市足够长时间的股票
+            t1_datetime = pd.to_datetime(str(t1_date))
+            eligible_stocks = available_stocks[
+                available_stocks['list_date'] < t1_datetime - timedelta(days=min_days_before_t1)
+            ]
+            
+            if len(eligible_stocks) == 0:
+                log.warning(f"T1={t1_date}: 无符合条件的股票（需上市满{min_days_before_t1}天）")
+                total_processed += len(group)
+                continue
+            
+            # 从符合条件的股票池中随机选择
+            if len(eligible_stocks) < num_needed:
                 log.warning(
-                    f"T1={t1_date}: 可用股票({len(available_stocks)})不足"
+                    f"T1={t1_date}: 符合条件股票({len(eligible_stocks)})不足"
                     f"，需要{num_needed}只"
                 )
-                selected_stocks = available_stocks.sample(
-                    n=len(available_stocks), 
+                selected_stocks = eligible_stocks.sample(
+                    n=len(eligible_stocks), 
                     random_state=random_seed + total_processed
                 )
             else:
-                selected_stocks = available_stocks.sample(
+                selected_stocks = eligible_stocks.sample(
                     n=num_needed,
                     random_state=random_seed + total_processed
                 )

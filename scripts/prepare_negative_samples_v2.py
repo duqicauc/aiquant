@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 from src.data.data_manager import DataManager
-from src.strategy.screening.negative_sample_screener_v2 import NegativeSampleScreenerV2
+from src.models.screening.negative_sample_screener_v2 import NegativeSampleScreenerV2
 from src.utils.logger import log
 
 
@@ -96,6 +96,63 @@ def main():
         log.error("✗ 特征提取失败")
         return
     
+    # 4.1 数据质量处理
+    log.info("\n[步骤4.1] 数据质量处理...")
+    
+    # 统计原始缺失值
+    missing_before = df_negative_features.isnull().sum()
+    total_missing_before = missing_before.sum()
+    log.info(f"原始缺失值总数: {total_missing_before}")
+    if total_missing_before > 0:
+        for col, count in missing_before.items():
+            if count > 0:
+                log.info(f"  - {col}: {count} ({count/len(df_negative_features)*100:.2f}%)")
+    
+    # 定义需要填充的数值列
+    numeric_cols = ['close', 'pct_chg', 'total_mv', 'circ_mv', 'ma5', 'ma10', 
+                    'volume_ratio', 'macd_dif', 'macd_dea', 'macd', 
+                    'rsi_6', 'rsi_12', 'rsi_24']
+    numeric_cols = [col for col in numeric_cols if col in df_negative_features.columns]
+    
+    # 按样本分组进行前向填充+后向填充
+    log.info("执行缺失值填充（按样本分组：前向填充 + 后向填充）...")
+    df_negative_features[numeric_cols] = df_negative_features.groupby('sample_id')[numeric_cols].transform(
+        lambda x: x.ffill().bfill()
+    )
+    
+    # 检查填充后的缺失值
+    missing_after = df_negative_features.isnull().sum()
+    total_missing_after = missing_after.sum()
+    log.info(f"填充后缺失值总数: {total_missing_after}")
+    
+    # 4.2 过滤数据不足的样本
+    log.info("\n[步骤4.2] 过滤数据不足的样本...")
+    min_days = 30  # 最少需要30天数据
+    
+    days_per_sample = df_negative_features.groupby('sample_id').size()
+    valid_samples = days_per_sample[days_per_sample >= min_days].index
+    invalid_samples = days_per_sample[days_per_sample < min_days]
+    
+    if len(invalid_samples) > 0:
+        log.warning(f"发现 {len(invalid_samples)} 个样本数据不足{min_days}天，将被过滤")
+        df_negative_features = df_negative_features[df_negative_features['sample_id'].isin(valid_samples)]
+        # 同步过滤负样本列表
+        valid_sample_ids = df_negative_features['sample_id'].unique()
+        df_negative_samples = df_negative_samples[df_negative_samples.index.isin(valid_sample_ids)]
+        log.info(f"过滤后剩余样本数: {df_negative_features['sample_id'].nunique()}")
+    else:
+        log.success(f"✓ 所有样本数据完整（均≥{min_days}天）")
+    
+    # 4.3 最终数据质量检查
+    log.info("\n[步骤4.3] 最终数据质量检查...")
+    final_missing = df_negative_features.isnull().sum().sum()
+    if final_missing > 0:
+        log.warning(f"仍有 {final_missing} 个缺失值，将使用列均值填充...")
+        df_negative_features[numeric_cols] = df_negative_features[numeric_cols].fillna(
+            df_negative_features[numeric_cols].mean()
+        )
+    log.success(f"✓ 数据质量处理完成，最终缺失值: {df_negative_features.isnull().sum().sum()}")
+    
     # 5. 保存结果
     log.info("\n" + "="*80)
     log.info("第五步：保存结果")
@@ -117,7 +174,15 @@ def main():
         'total_positive_samples': len(df_positive_samples),
         'samples_per_positive': SAMPLES_PER_POSITIVE,
         'negative_feature_records': len(df_negative_features),
+        'feature_samples': int(df_negative_features['sample_id'].nunique()),
         'random_seed': RANDOM_SEED,
+        'min_days_required': min_days,
+        'data_quality': {
+            'missing_values_before': int(total_missing_before),
+            'missing_values_after': int(df_negative_features.isnull().sum().sum()),
+            'filtered_samples': int(len(invalid_samples)) if len(invalid_samples) > 0 else 0,
+            'avg_days_per_sample': float(df_negative_features.groupby('sample_id').size().mean())
+        },
         'files': {
             'negative_samples': OUTPUT_NEGATIVE_SAMPLES,
             'negative_features': OUTPUT_NEGATIVE_FEATURES,

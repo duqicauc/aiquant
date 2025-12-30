@@ -368,19 +368,20 @@ class PositiveSampleScreener:
     ) -> pd.DataFrame:
         """
         提取单个样本的特征（优先使用Tushare Pro的技术因子API）
-        
+
         Args:
             ts_code: 股票代码
             name: 股票名称
             t1_date: T1日期
             lookback_days: 回看天数
             sample_id: 样本ID
-            
+
         Returns:
             特征DataFrame
         """
         # 计算开始日期（T1前100天，确保有足够数据）
-        t1 = pd.to_datetime(t1_date)
+        # 确保 t1_date 是字符串格式（从CSV读取可能是整数）
+        t1 = pd.to_datetime(str(t1_date), format='%Y%m%d')
         start_date = (t1 - timedelta(days=150)).strftime('%Y%m%d')
         end_date = (t1 - timedelta(days=1)).strftime('%Y%m%d')  # T1的前一天
         

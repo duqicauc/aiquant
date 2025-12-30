@@ -816,6 +816,13 @@ python scripts/utils/network_monitor.py --interval 60 --retry 3
 # 修改 config/settings.yaml 中的批处理大小
 ```
 
+### 问题5：windows环境下终端输出中文时候乱码
+
+可通过"-Encoding UTF8"强制指定编码
+```bash
+Get-Content -Path ".\logs\aiquant.log" -Tail 10 -Encoding UTF8
+```
+
 ---
 
 ## 🤝 贡献
