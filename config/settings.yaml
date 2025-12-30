@@ -70,20 +70,12 @@ prediction:
     min_listing_days: 180
     exclude_suspended: true      # 排除停牌
   
-  # 财务筛选（基本面过滤）
-  financial_filter:
-    enabled: true                # 是否启用财务筛选
-    revenue_threshold: 3.0       # 营收阈值（亿元）
-    profit_years: 3              # 连续盈利年数
-    net_assets_positive: true    # 净资产必须>0
-    initial_candidates: 150      # 初选候选数量（筛选前）
   
   # 报告配置
   report:
     include_market_analysis: true
     include_recommendations: true
     include_risk_warnings: true
-    include_financial_info: true  # 包含财务信息
 
 # 回顾配置
 review:

@@ -29,68 +29,34 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 from src.data.data_manager import DataManager
-from src.strategy.screening.financial_filter import FinancialFilter
 from src.utils.logger import log
 
 
 def load_model(model_path=None, version=None):
-    """加载训练好的模型（兼容新旧框架）
+    """加载训练好的模型（旧版本：仅支持xgboost_timeseries模型）
     
     Args:
-        model_path: 直接指定模型文件路径
-        version: 指定模型版本号（如 'v1.0.0'），如果为None则使用最新版本
+        model_path: 直接指定模型文件路径，如果为None则自动查找最新模型
+        version: 已废弃，保留以兼容旧代码
     """
-    feature_names = None
-    
+    # 如果未指定路径，查找旧路径的模型
     if model_path is None:
-        # 优先使用新框架的模型
-        try:
-            from src.models.lifecycle.iterator import ModelIterator
-            model_name = 'breakout_launch_scorer'
-            iterator = ModelIterator(model_name)
-            
-            # 如果指定了版本，使用指定版本；否则使用最新版本
-            if version:
-                target_version = version
-                # 检查版本是否存在
-                if target_version not in iterator.list_versions():
-                    raise ValueError(f"模型版本 {target_version} 不存在。可用版本: {iterator.list_versions()}")
-                log.info(f"使用指定版本: {target_version}")
+        model_dir = 'data/training/models'
+        if os.path.exists(model_dir):
+            import glob
+            # 查找 xgboost_timeseries_v2_*.json 文件
+            model_files = glob.glob(os.path.join(model_dir, 'xgboost_timeseries_v2_*.json'))
+            if model_files:
+                # 使用最新的模型文件
+                model_path = max(model_files, key=os.path.getmtime)
+                log.info(f"自动找到模型: {model_path}")
             else:
-                target_version = iterator.get_latest_version()
-                if target_version:
-                    log.info(f"使用最新版本: {target_version}")
-            
-            if target_version:
-                version_path = iterator.versions_path / target_version
-                model_path = version_path / "model" / "model.json"
-                feature_names_file = version_path / "model" / "feature_names.json"
-                if model_path.exists():
-                    log.info(f"使用新框架模型: {model_path}")
-                    # 加载特征名称
-                    if feature_names_file.exists():
-                        with open(feature_names_file, 'r', encoding='utf-8') as f:
-                            feature_names = json.load(f)
-                            log.info(f"✓ 加载特征名称: {len(feature_names)} 个特征")
-                else:
-                    model_path = None
-        except Exception as e:
-            log.warning(f"尝试加载新框架模型失败: {e}")
-            model_path = None
-        
-        # 如果新框架没有模型，尝试旧路径
-        if model_path is None or not os.path.exists(model_path):
-            # 找旧路径的模型
-            model_dir = 'data/training/models'
-            if os.path.exists(model_dir):
-                import glob
-                model_files = glob.glob(os.path.join(model_dir, 'breakout_launch_scorer_*.json'))
-                if model_files:
-                    model_path = max(model_files, key=os.path.getmtime)
-                    log.info(f"使用旧路径模型: {model_path}")
-        
-        if model_path is None or not os.path.exists(model_path):
-            raise FileNotFoundError("未找到模型文件，请先训练模型")
+                raise FileNotFoundError(f"未找到模型文件，请检查 {model_dir} 目录")
+        else:
+            raise FileNotFoundError(f"模型目录不存在: {model_dir}")
+    
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"模型文件不存在: {model_path}")
     
     log.info(f"加载模型: {model_path}")
     
@@ -98,31 +64,55 @@ def load_model(model_path=None, version=None):
     booster = xgb.Booster()
     booster.load_model(str(model_path))
     
-    # 提取模型信息（名称和版本）
-    model_name = 'breakout_launch_scorer'
-    model_version = None
-    is_new_framework = False
+    # 从metrics文件获取特征名称
+    metrics_file = 'data/training/metrics/xgboost_timeseries_v2_metrics.json'
+    feature_names = None
     
-    # 判断是否是新框架模型
-    if 'data/models/breakout_launch_scorer/versions' in str(model_path):
-        is_new_framework = True
-        # 从路径提取版本号，例如：data/models/breakout_launch_scorer/versions/v1.0.0/model/model.json
-        path_parts = str(model_path).split('/')
-        if 'versions' in path_parts:
-            version_idx = path_parts.index('versions')
-            if version_idx + 1 < len(path_parts):
-                model_version = path_parts[version_idx + 1]
-    else:
-        # 旧框架模型，从文件名提取信息
-        model_filename = os.path.basename(model_path)
-        if 'xgboost_timeseries' in model_filename:
-            model_name = 'xgboost_timeseries'
-            # 尝试从文件名提取版本信息
-            if '_v' in model_filename:
-                parts = model_filename.split('_v')
-                if len(parts) > 1:
-                    version_part = parts[1].split('_')[0]
-                    model_version = f'v{version_part}'
+    if os.path.exists(metrics_file):
+        try:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
+                metrics = json.load(f)
+            
+            if 'feature_importance' in metrics:
+                feature_names = [item['feature'] for item in metrics['feature_importance']]
+                log.info(f"✓ 从metrics文件加载特征名称: {len(feature_names)} 个特征")
+        except Exception as e:
+            log.warning(f"从metrics文件加载特征名称失败: {e}")
+    
+    # 如果无法从metrics获取，尝试从模型获取
+    if feature_names is None:
+        if hasattr(booster, 'feature_names'):
+            feature_names = booster.feature_names
+        elif hasattr(booster, 'feature_names_'):
+            feature_names = booster.feature_names_
+    
+    # 如果仍然无法获取，使用默认特征顺序
+    if feature_names is None:
+        log.warning("无法获取特征名称，使用默认特征顺序")
+        feature_names = [
+            'close_mean', 'close_std', 'close_max', 'close_min', 'close_trend',
+            'pct_chg_mean', 'pct_chg_std', 'pct_chg_sum',
+            'positive_days', 'negative_days', 'max_gain', 'max_loss',
+            'volume_ratio_mean', 'volume_ratio_max', 'volume_ratio_gt_2', 'volume_ratio_gt_4',
+            'macd_mean', 'macd_positive_days', 'macd_max',
+            'ma5_mean', 'price_above_ma5', 'ma10_mean', 'price_above_ma10',
+            'total_mv_mean', 'circ_mv_mean',
+            'return_1w', 'return_2w'
+        ]
+        log.info(f"使用默认特征顺序: {len(feature_names)} 个特征")
+    
+    # 从文件名提取模型信息
+    model_filename = os.path.basename(model_path)
+    model_name = 'xgboost_timeseries'
+    model_version = None
+    
+    # 尝试从文件名提取版本信息（例如：xgboost_timeseries_v2_20251225_205905.json）
+    if '_v' in model_filename:
+        # 提取版本号部分（v2_20251225_205905）
+        parts = model_filename.split('_v')
+        if len(parts) > 1:
+            version_part = parts[1].replace('.json', '')
+            model_version = f'v{version_part}'
     
     # 返回模型和特征名称
     class ModelWrapper:
@@ -137,6 +127,7 @@ def load_model(model_path=None, version=None):
             """预测概率"""
             return self.booster.predict(dmatrix, output_margin=False, validate_features=False)
     
+    log.success("✓ 模型加载成功")
     return ModelWrapper(booster, feature_names, model_name, model_version, model_path)
 
 
@@ -1104,9 +1095,13 @@ def main():
     parser.add_argument('--max-stocks', type=int, default=None,
                         help='最大评分股票数量（用于测试），默认None表示评分所有股票')
     parser.add_argument('--version', type=str, default=None,
-                        help='指定模型版本（如 v1.0.0），默认使用最新版本')
+                        help='[已废弃] 此参数已不再使用，将自动使用最新的xgboost_timeseries模型')
     
     args = parser.parse_args()
+    
+    # 如果指定了version参数，给出警告
+    if args.version:
+        log.warning(f"⚠️  --version 参数已废弃，将自动使用最新的 xgboost_timeseries 模型")
     
     # 解析目标日期
     target_date = None
@@ -1126,7 +1121,7 @@ def main():
     log.info("当前市场股票评分系统")
     log.info("="*80)
     log.info("")
-    log.info("📊 使用最新训练的模型对所有A股进行评分")
+    log.info("📊 使用最新训练的 xgboost_timeseries 模型对所有A股进行评分")
     log.info("🎯 输出Top 50推荐股票及详细投资报告")
     if target_date:
         log.info(f"📅 模拟日期: {target_date.strftime('%Y年%m月%d日')} 收盘后的评分结果")
@@ -1140,7 +1135,7 @@ def main():
         log.info("="*80)
         log.info("第一步：加载模型")
         log.info("="*80)
-        model = load_model(version=args.version)
+        model = load_model()
         log.success(f"✓ 模型加载成功")
         log.info("")
         

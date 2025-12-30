@@ -74,12 +74,6 @@ prediction:
     exclude_new_listed: true    # 排除新股
     min_listing_days: 180
     exclude_suspended: true     # 排除停牌
-  financial_filter:
-    enabled: false              # 是否启用财务筛选（score_current_stocks.py中已移除）
-    revenue_threshold: 3.0      # 营收阈值（亿元）
-    profit_years: 3             # 连续盈利年数
-    net_assets_positive: true    # 净资产必须>0
-    initial_candidates: 150     # 初选候选数量
 
 # 评测配置
 evaluation:

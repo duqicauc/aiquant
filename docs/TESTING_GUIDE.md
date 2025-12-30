@@ -15,7 +15,6 @@ tests/
 ├── data/                          # 数据模块测试
 │   └── test_data_manager.py      # 数据管理器测试
 ├── strategy/                      # 策略模块测试
-│   └── test_financial_filter.py  # 财务筛选器测试
 ├── models/                         # 模型模块测试
 │   └── test_model_registry.py   # 模型注册表测试
 ├── integration/                   # 集成测试
@@ -77,11 +76,6 @@ bash tests/run_tests.sh --coverage
 - ✅ 日线数据获取测试
 
 ### 3. 策略模块测试 (`tests/strategy/`)
-
-#### `test_financial_filter.py`
-- ✅ FinancialFilter初始化测试
-- ✅ 股票筛选功能测试
-- ✅ 财务指标检查测试
 - ✅ 不同列名处理测试
 
 ### 4. 模型模块测试 (`tests/models/`)

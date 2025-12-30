@@ -31,7 +31,6 @@
 
 各功能模块的详细使用说明：
 
-- **[财务筛选指南](FINANCIAL_FILTER_GUIDE.md)** - 财务数据筛选功能说明
 - **[质量检查指南](QUALITY_CHECK_GUIDE.md)** - 数据质量检查流程
 - **[股票体检指南](STOCK_HEALTH_CHECK_GUIDE.md)** - 单股票全方位健康检查
 - **[可视化指南](VISUALIZATION_GUIDE.md)** - 数据可视化和图表生成
@@ -119,8 +118,7 @@
 
 ### 我想使用预测功能
 1. [使用指南](USAGE_GUIDE.md) - 预测部分
-2. [财务筛选指南](FINANCIAL_FILTER_GUIDE.md)
-3. [股票体检指南](STOCK_HEALTH_CHECK_GUIDE.md)
+2. [股票体检指南](STOCK_HEALTH_CHECK_GUIDE.md)
 
 ### 我想了解技术细节
 1. [API参考文档](API_REFERENCE.md)

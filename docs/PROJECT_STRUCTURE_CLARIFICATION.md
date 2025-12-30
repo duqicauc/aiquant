@@ -45,7 +45,6 @@ aiquant/
 ```python
 # scripts/score_current_stocks.py
 from src.data.data_manager import DataManager
-from src.strategy.screening.financial_filter import FinancialFilter
 from src.utils.logger import log
 ```
 
@@ -115,7 +114,6 @@ from src.utils.logger import log
 scripts/score_current_stocks.py
     ↓ 导入
 src/data/data_manager.py
-src/strategy/screening/financial_filter.py
 src/utils/logger.py
     ↓ 使用
 data/training/models/  (读取模型)

@@ -14,7 +14,6 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.data.data_manager import DataManager
-from src.strategy.screening.financial_filter import FinancialFilter
 from src.utils.logger import log
 
 
@@ -23,7 +22,6 @@ class StockHealthChecker:
     
     def __init__(self):
         self.dm = DataManager()
-        self.financial_filter = FinancialFilter(self.dm)
         
         # 尝试加载模型
         model_path = Path("models/stock_selection/xgboost_timeseries_v3.joblib")
@@ -407,10 +405,9 @@ class StockHealthChecker:
         fundamental = {}
         
         try:
-            # 财务指标检查
-            financial_ok = self.financial_filter.check_financial_indicators(stock_code)
-            fundamental['financial_health'] = '健康' if financial_ok else '需关注'
-            fundamental['financial_score'] = 10 if financial_ok else 3
+            # 基本面分析（已移除财务筛选）
+            fundamental['financial_health'] = '未知'
+            fundamental['financial_score'] = 5
             
             # 可以扩展更多基本面分析
             # 如：PE、PB、ROE等
@@ -708,8 +705,6 @@ class StockHealthChecker:
             if risk.get('overall_risk') == '低风险':
                 signals['hold_reasons'].append('风险可控')
             
-            if report.get('fundamental_analysis', {}).get('financial_health') == '健康':
-                signals['hold_reasons'].append('财务健康')
             
             # 综合建议
             buy_count = len(signals['buy_signals'])

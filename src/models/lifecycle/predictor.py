@@ -16,7 +16,6 @@ import xgboost as xgb
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 from src.data.data_manager import DataManager
-from src.strategy.screening.financial_filter import FinancialFilter
 from src.utils.logger import log
 from src.models.lifecycle.iterator import ModelIterator
 
@@ -199,7 +198,7 @@ class ModelPredictor:
         return pd.DataFrame(valid_stocks)
     
     def _extract_stock_features(self, ts_code, name, lookback_days, target_date=None):
-        """提取股票特征"""
+        """提取股票特征（与训练时保持一致）"""
         try:
             if target_date:
                 target_date = datetime.strptime(target_date, '%Y%m%d')
@@ -223,7 +222,14 @@ class ModelPredictor:
             if len(df) < 20:
                 return None
             
+            # 确保数据是数值类型
+            numeric_cols = ['close', 'pct_chg', 'vol']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
             features = {}
+            features['latest_close'] = df['close'].iloc[-1]
             
             # 价格特征
             features['close_mean'] = df['close'].mean()
@@ -234,7 +240,6 @@ class ModelPredictor:
                 (df['close'].iloc[-1] - df['close'].iloc[0]) / 
                 df['close'].iloc[0] * 100
             )
-            features['latest_close'] = df['close'].iloc[-1]
             
             # 涨跌幅特征
             features['pct_chg_mean'] = df['pct_chg'].mean()
@@ -245,45 +250,76 @@ class ModelPredictor:
             features['max_gain'] = df['pct_chg'].max()
             features['max_loss'] = df['pct_chg'].min()
             
-            # 技术指标
-            df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
-            df['ma10'] = df['close'].rolling(window=10, min_periods=1).mean()
+            # 计算技术指标（与训练时一致：优先使用Tushare数据，缺失时再计算）
+            # MA5和MA10
+            if 'ma5' not in df.columns:
+                df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
+            if 'ma10' not in df.columns:
+                df['ma10'] = df['close'].rolling(window=10, min_periods=1).mean()
             
-            features['ma5_mean'] = df['ma5'].mean()
-            features['price_above_ma5'] = (df['close'] > df['ma5']).sum()
-            features['ma10_mean'] = df['ma10'].mean()
-            features['price_above_ma10'] = (df['close'] > df['ma10']).sum()
+            # 量比（优先使用daily_basic，如果没有则计算）
+            if 'volume_ratio' not in df.columns:
+                df['vol_ma5'] = df['vol'].rolling(window=5, min_periods=1).mean()
+                df['volume_ratio'] = df['vol'] / df['vol_ma5']
             
-            # 量比
-            df['vol_ma5'] = df['vol'].rolling(window=5, min_periods=1).mean()
-            df['volume_ratio'] = df['vol'] / (df['vol_ma5'] + 1e-6)
-            features['volume_ratio_mean'] = df['volume_ratio'].mean()
-            features['volume_ratio_max'] = df['volume_ratio'].max()
+            # MACD（优先使用Tushare技术因子，缺失时再计算，与训练时一致）
+            if 'macd' not in df.columns:
+                try:
+                    ema12 = df['close'].ewm(span=12, adjust=False).mean()
+                    ema26 = df['close'].ewm(span=26, adjust=False).mean()
+                    df['macd_dif'] = ema12 - ema26
+                    df['macd_dea'] = df['macd_dif'].ewm(span=9, adjust=False).mean()
+                    df['macd'] = (df['macd_dif'] - df['macd_dea']) * 2
+                except Exception:
+                    pass
             
-            # MACD（简化版）
-            exp1 = df['close'].ewm(span=12, adjust=False).mean()
-            exp2 = df['close'].ewm(span=26, adjust=False).mean()
-            macd = exp1 - exp2
-            macd_data = macd.dropna()
-            if len(macd_data) > 0:
-                features['macd_mean'] = macd_data.mean()
-                features['macd_positive_days'] = (macd_data > 0).sum()
-            else:
-                features['macd_mean'] = 0
-                features['macd_positive_days'] = 0
+            # 量比特征（与训练时完全一致：如果列存在才设置特征）
+            if 'volume_ratio' in df.columns:
+                features['volume_ratio_mean'] = df['volume_ratio'].mean()
+                features['volume_ratio_max'] = df['volume_ratio'].max()
+                features['volume_ratio_gt_2'] = (df['volume_ratio'] > 2).sum()
+                features['volume_ratio_gt_4'] = (df['volume_ratio'] > 4).sum()
             
-            # 确保所有特征都存在（填充缺失值）
-            required_features = [
-                'close_mean', 'close_std', 'close_max', 'close_min', 'close_trend',
-                'pct_chg_mean', 'pct_chg_std', 'pct_chg_sum', 'positive_days', 'negative_days',
-                'max_gain', 'max_loss', 'volume_ratio_mean', 'volume_ratio_max',
-                'macd_mean', 'macd_positive_days', 'ma5_mean', 'price_above_ma5',
-                'ma10_mean', 'price_above_ma10'
-            ]
+            # MACD特征（与训练时完全一致：如果列存在才设置特征）
+            if 'macd' in df.columns:
+                macd_data = df['macd'].dropna()
+                if len(macd_data) > 0:
+                    features['macd_mean'] = macd_data.mean()
+                    features['macd_positive_days'] = (macd_data > 0).sum()
+                    features['macd_max'] = macd_data.max()
             
-            for feat in required_features:
-                if feat not in features:
-                    features[feat] = 0
+            # MA特征（与训练时完全一致：如果列存在才设置特征）
+            if 'ma5' in df.columns:
+                features['ma5_mean'] = df['ma5'].mean()
+                features['price_above_ma5'] = (df['close'] > df['ma5']).sum()
+            
+            if 'ma10' in df.columns:
+                features['ma10_mean'] = df['ma10'].mean()
+                features['price_above_ma10'] = (df['close'] > df['ma10']).sum()
+            
+            # 市值特征（与训练时完全一致：如果列存在且数据有效才设置特征）
+            if 'total_mv' in df.columns:
+                mv_data = df['total_mv'].dropna()
+                if len(mv_data) > 0:
+                    features['total_mv_mean'] = mv_data.mean()
+            
+            if 'circ_mv' in df.columns:
+                circ_mv_data = df['circ_mv'].dropna()
+                if len(circ_mv_data) > 0:
+                    features['circ_mv_mean'] = circ_mv_data.mean()
+            
+            # 动量特征（与训练时完全一致：如果数据足够才设置特征）
+            days = len(df)
+            if days >= 7:
+                features['return_1w'] = (
+                    (df['close'].iloc[-1] - df['close'].iloc[-7]) /
+                    df['close'].iloc[-7] * 100
+                )
+            if days >= 14:
+                features['return_2w'] = (
+                    (df['close'].iloc[-1] - df['close'].iloc[-14]) /
+                    df['close'].iloc[-14] * 100
+                )
             
             return features
             

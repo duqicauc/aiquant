@@ -38,29 +38,4 @@ class TestScreeningReal:
         
         assert isinstance(result, pd.DataFrame)
         # 即使没有找到正样本，也应该返回DataFrame
-    
-    def test_financial_filter_real(self):
-        """测试财务筛选器（真实数据）"""
-        from src.data.data_manager import DataManager
-        from src.strategy.screening.financial_filter import FinancialFilter
-        
-        dm = DataManager(source='tushare')
-        filter_obj = FinancialFilter(dm)
-        
-        # 创建测试股票列表
-        test_stocks = pd.DataFrame({
-            'ts_code': ['000001.SZ', '600000.SH'],
-            '股票代码': ['000001.SZ', '600000.SH'],
-            'name': ['平安银行', '浦发银行'],
-            '股票名称': ['平安银行', '浦发银行'],
-        })
-        
-        result = filter_obj.filter_stocks(
-            test_stocks,
-            revenue_threshold=3.0,
-            profit_years=3
-        )
-        
-        assert isinstance(result, pd.DataFrame)
-        # 结果应该包含筛选后的股票（可能为空）
 

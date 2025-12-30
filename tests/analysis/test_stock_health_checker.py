@@ -14,7 +14,6 @@ class TestStockHealthChecker:
         """测试初始化"""
         checker = StockHealthChecker()
         assert checker.dm is not None
-        assert checker.financial_filter is not None
     
     def test_check_stock_structure(self, mock_data_manager):
         """测试检查股票结构"""

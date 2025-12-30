@@ -19,11 +19,4 @@ prediction:
     exclude_new_listed: true
     min_listing_days: 180
     exclude_suspended: true
-  
-  financial_filter:
-    enabled: true
-    revenue_threshold: 3.0
-    profit_years: 3
-    net_assets_positive: true
-    initial_candidates: 150
 

@@ -18,7 +18,6 @@
 - **模型训练** - XGBoost时间序列分割，避免未来函数
 - **模型验证** - Walk-Forward验证，评估稳定性
 - **股票评分** - 每周自动预测，Top 50推荐
-- **财务筛选** - 基本面过滤，降低退市风险
 - **风险管理** - 多层筛选，智能风控
 
 ### 🤖 自动化系统
@@ -226,20 +225,11 @@ Window 3: Train[2000-2020] → Test[2021]
 - AUC-ROC一致性
 - 不同市场环境表现
 
-### 4. 股票评分与筛选
+### 4. 股票评分
 
-**两阶段筛选**：
-
-**阶段1：技术面（模型评分）**
+技术面（模型评分）
 - 对所有股票计算牛股概率
 - 排除：ST股票、新股（<1年）、停牌股票
-- 初选：Top 150
-
-**阶段2：基本面（财务筛选）**
-- 营收 > 3亿元
-- 连续3年净利润 > 0
-- 净资产 > 0
-- 最终推荐：Top 50
 
 **预测报告包含**：
 - 市场整体分析
@@ -247,24 +237,6 @@ Window 3: Train[2000-2020] → Test[2021]
 - 投资建议
 - 风险警示
 
-### 5. 财务筛选（新增！）
-
-基于财务退市指标进行二次筛选，降低投资风险：
-
-```yaml
-# config/settings.yaml
-financial_filter:
-  enabled: true                # 是否启用
-  revenue_threshold: 3.0       # 营收阈值（亿元）
-  profit_years: 3              # 连续盈利年数
-  initial_candidates: 150      # 初选数量
-```
-
-**效果**：
-- 避免财务造假风险
-- 降低退市风险
-- 提高推荐质量
-- 夏普比率提升约0.2-0.3
 
 ### 6. 网络监控与自动恢复（新增！）
 
@@ -362,12 +334,6 @@ prediction:
     exclude_st: true              # 排除ST
     min_listing_days: 252         # 最小上市天数
 
-# 财务筛选
-financial_filter:
-  enabled: true                   # 启用筛选
-  revenue_threshold: 3.0          # 营收3亿
-  profit_years: 3                 # 连续3年盈利
-
 # 数据备份
 data_storage:
   backup:
@@ -391,7 +357,7 @@ data_storage:
 src/          # 核心源代码（39个Python文件）
               # 可复用的业务逻辑模块，被scripts导入使用
               # - data/: 数据管理（DataManager、Fetcher、Cache）
-              # - strategy/: 策略模块（筛选器、财务过滤）
+              # - strategy/: 策略模块（筛选器）
               # - models/: 模型相关（评估、预测）
               # - utils/: 工具函数（日志、日期、限流）
 
@@ -445,7 +411,6 @@ data/
 - ✅ 周线API - 直接获取周线数据
 - ✅ 技术因子API - 100+ 技术指标
 - ✅ 每日指标API - 市值、量比、换手率
-- ✅ 财务数据API - 利润表、资产负债表
 - ✅ 交易日历API - 准确计算交易日
 
 ### 数据备份（新增！）
@@ -546,7 +511,6 @@ data/
 - [模型训练指南](docs/MODEL_TRAINING_GUIDE.md) - 模型训练流程
 
 ### 功能指南
-- [财务筛选指南](docs/FINANCIAL_FILTER_GUIDE.md) - 财务数据筛选
 - [股票体检指南](docs/STOCK_HEALTH_CHECK_GUIDE.md) - 单股票健康检查
 - [质量检查指南](docs/QUALITY_CHECK_GUIDE.md) - 数据质量检查
 - [可视化指南](docs/VISUALIZATION_GUIDE.md) - 数据可视化
@@ -587,8 +551,7 @@ aiquant/
 │   ├── strategy/               # 策略模块
 │   │   ├── screening/         # 筛选器
 │   │   │   ├── positive_sample_screener.py
-│   │   │   ├── negative_sample_screener_v2.py
-│   │   │   └── financial_filter.py
+│   │   │   └── negative_sample_screener_v2.py
 │   │   ├── portfolio/         # 组合管理
 │   │   └── timing/            # 择时策略
 │   │
@@ -899,7 +862,6 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 - [x] 25年历史数据训练
 - [x] 配置管理系统
 - [x] 数据备份系统
-- [x] 财务筛选功能
 - [x] 网络监控与恢复
 - [x] 自动化调度系统
 - [x] Walk-Forward验证
@@ -927,7 +889,6 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 - **重大更新**: 使用2000年以来25年历史数据
 - **新增**: 配置管理系统（settings.yaml）
 - **新增**: 数据备份系统（SQLite + CSV）
-- **新增**: 财务筛选功能
 - **新增**: 网络监控与自动恢复
 - **新增**: 自动化调度系统
 - **新增**: Walk-Forward验证
