@@ -195,12 +195,16 @@ class DataManager:
                 return cached
         
         # 从API获取
-        df = self.fetcher.get_daily_basic(
-            stock_code=stock_code,
-            start_date=start_date,
-            end_date=end_date,
-            trade_date=trade_date
-        )
+        # 只传递非None的参数，避免 format_date(None) 报错
+        api_params = {'stock_code': stock_code}
+        if start_date:
+            api_params['start_date'] = start_date
+        if end_date:
+            api_params['end_date'] = end_date
+        if trade_date:
+            api_params['trade_date'] = trade_date
+        
+        df = self.fetcher.get_daily_basic(**api_params)
         
         # 存入缓存
         if self.cache and not df.empty:
@@ -434,3 +438,65 @@ class DataManager:
         """
         if self.cache:
             self.cache.invalidate(data_type)
+    
+    def get_index_daily(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> pd.DataFrame:
+        """
+        获取指数日线数据
+        
+        Args:
+            ts_code: 指数代码（如 '000001.SH' 上证指数）
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (YYYYMMDD)
+            
+        Returns:
+            指数日线数据DataFrame
+        """
+        cache_key_params = {
+            'ts_code': ts_code,
+            'start_date': start_date,
+            'end_date': end_date
+        }
+        
+        # 尝试从缓存获取
+        if self.cache:
+            cached = self.cache.get('index_daily', **cache_key_params)
+            if cached is not None:
+                return cached
+        
+        # 从API获取
+        df = self.fetcher.get_index_daily(ts_code, start_date, end_date)
+        
+        # 存入缓存
+        if self.cache and not df.empty:
+            self.cache.set('index_daily', df, **cache_key_params)
+        
+        return df
+    
+    def get_market_factors(
+        self,
+        stock_data: pd.DataFrame,
+        index_code: str = '000001.SH',
+        window: int = 34
+    ) -> pd.DataFrame:
+        """
+        为个股数据添加市场因子
+        
+        Args:
+            stock_data: 个股日线数据（需包含 trade_date, close, pct_chg）
+            index_code: 参考指数代码
+            window: 计算窗口
+            
+        Returns:
+            添加了市场因子的DataFrame
+        """
+        from src.data.market_factors import MarketFactors
+        
+        mf = MarketFactors(self.fetcher)
+        return mf.enrich_stock_data_with_market_factors(
+            stock_data, index_code, window
+        )

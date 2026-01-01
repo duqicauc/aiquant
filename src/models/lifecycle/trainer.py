@@ -24,6 +24,22 @@ from src.models.lifecycle.iterator import ModelIterator
 from src.visualization.training_visualizer import TrainingVisualizer
 
 
+def safe_to_datetime(date_value):
+    """
+    安全地将日期值转换为datetime类型
+    
+    处理以下情况：
+    - 整数：如 20230101 -> 被错误解析为纳秒时间戳
+    - 字符串：如 '20230101' -> 正常解析
+    - datetime：直接返回
+    """
+    if pd.isna(date_value):
+        return pd.NaT
+    if isinstance(date_value, (int, np.integer, float, np.floating)):
+        return pd.to_datetime(str(int(date_value)), format='%Y%m%d', errors='coerce')
+    return pd.to_datetime(date_value, errors='coerce')
+
+
 class ModelTrainer:
     """模型训练器"""
     
@@ -215,7 +231,7 @@ class ModelTrainer:
         df_positive_samples = pd.read_csv('data/training/samples/positive_samples.csv')
         t1_date_map = dict(zip(
             df_positive_samples.index,
-            pd.to_datetime(df_positive_samples['t1_date'])
+            df_positive_samples['t1_date'].apply(safe_to_datetime)
         ))
         
         if os.path.exists('data/training/samples/negative_samples_v2.csv'):
@@ -225,7 +241,7 @@ class ModelTrainer:
         
         max_positive_id = df_positive_samples.index.max()
         for idx, row in df_negative_samples.iterrows():
-            t1_date_map[max_positive_id + 1 + idx] = pd.to_datetime(row['t1_date'])
+            t1_date_map[max_positive_id + 1 + idx] = safe_to_datetime(row['t1_date'])
         
         for i, sample_id in enumerate(sample_ids):
             if (i + 1) % 500 == 0:
@@ -237,7 +253,7 @@ class ModelTrainer:
                 continue
             
             t1_row = sample_data.iloc[sample_data['days_to_t1'].abs().argmin()]
-            t1_date = pd.to_datetime(t1_row['trade_date'])
+            t1_date = safe_to_datetime(t1_row['trade_date'])
             
             feature_dict = {
                 'sample_id': sample_id,
@@ -336,8 +352,8 @@ class ModelTrainer:
         log.info("第三步：时间序列划分（避免未来函数）")
         log.info("="*80)
         
-        # 确保t1_date是datetime类型
-        df_features['t1_date'] = pd.to_datetime(df_features['t1_date'])
+        # 确保t1_date是datetime类型（防止整数被误解析）
+        df_features['t1_date'] = df_features['t1_date'].apply(safe_to_datetime)
         
         # 按时间排序
         df_features = df_features.sort_values('t1_date').reset_index(drop=True)

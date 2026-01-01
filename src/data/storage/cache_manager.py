@@ -159,7 +159,11 @@ class CacheManager:
                     for col in df.columns:
                         if 'date' in col.lower():
                             try:
-                                df[col] = pd.to_datetime(df[col])
+                                # 如果是整数类型（如19910403），需要先转字符串再解析
+                                if df[col].dtype in ['int64', 'float64']:
+                                    df[col] = pd.to_datetime(df[col].astype(str), format='%Y%m%d', errors='coerce')
+                                else:
+                                    df[col] = pd.to_datetime(df[col], errors='coerce')
                             except:
                                 pass
                     
@@ -367,7 +371,11 @@ class CacheManager:
                     for col in df.columns:
                         if 'date' in col.lower():
                             try:
-                                df[col] = pd.to_datetime(df[col])
+                                # 如果是整数类型（如19910403），需要先转字符串再解析
+                                if df[col].dtype in ['int64', 'float64']:
+                                    df[col] = pd.to_datetime(df[col].astype(str), format='%Y%m%d', errors='coerce')
+                                else:
+                                    df[col] = pd.to_datetime(df[col], errors='coerce')
                             except:
                                 pass
                     

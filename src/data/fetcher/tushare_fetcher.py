@@ -425,3 +425,106 @@ class TushareFetcher(BaseFetcher):
             df = df[df['ts_code'].isin(formatted_codes)]
         
         return df
+    
+    def get_index_daily(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> pd.DataFrame:
+        """
+        获取指数日线数据
+        
+        Args:
+            ts_code: 指数代码（如 '000001.SH' 上证指数）
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (YYYYMMDD)
+            
+        Returns:
+            指数日线数据DataFrame
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            df = self.pro.index_daily(
+                ts_code=ts_code,
+                start_date=self.format_date(start_date),
+                end_date=self.format_date(end_date),
+                fields='ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount'
+            )
+            
+            if df is not None and not df.empty:
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+                df = df.sort_values('trade_date').reset_index(drop=True)
+                
+            return df if df is not None else pd.DataFrame()
+            
+        except Exception as e:
+            log.warning(f"获取指数日线数据失败 {ts_code}: {e}")
+            return pd.DataFrame()
+    
+    def get_limit_list(
+        self,
+        trade_date: str
+    ) -> pd.DataFrame:
+        """
+        获取涨跌停统计
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            
+        Returns:
+            涨跌停统计DataFrame
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            df = self.pro.limit_list_d(
+                trade_date=self.format_date(trade_date)
+            )
+            
+            return df if df is not None else pd.DataFrame()
+            
+        except Exception as e:
+            log.warning(f"获取涨跌停统计失败: {e}")
+            return pd.DataFrame()
+    
+    def get_margin_data(
+        self,
+        trade_date: str = None,
+        start_date: str = None,
+        end_date: str = None
+    ) -> pd.DataFrame:
+        """
+        获取融资融券数据
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            start_date: 开始日期
+            end_date: 结束日期
+            
+        Returns:
+            融资融券数据DataFrame
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            params = {}
+            if trade_date:
+                params['trade_date'] = self.format_date(trade_date)
+            if start_date:
+                params['start_date'] = self.format_date(start_date)
+            if end_date:
+                params['end_date'] = self.format_date(end_date)
+            
+            df = self.pro.margin(**params)
+            
+            if df is not None and not df.empty:
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+                df = df.sort_values('trade_date').reset_index(drop=True)
+            
+            return df if df is not None else pd.DataFrame()
+            
+        except Exception as e:
+            log.warning(f"获取融资融券数据失败: {e}")
+            return pd.DataFrame()

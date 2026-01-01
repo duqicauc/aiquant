@@ -208,8 +208,11 @@ class NegativeSampleScreenerV2:
         stock_list = stock_list[~delisting_sorting_mask]
         delisting_sorting_count = delisting_sorting_mask.sum()
         
-        # 确保list_date是datetime类型
-        stock_list['list_date'] = pd.to_datetime(stock_list['list_date'])
+        # 确保list_date是datetime类型（防止整数被误解析为时间戳）
+        if stock_list['list_date'].dtype in ['int64', 'float64']:
+            stock_list['list_date'] = pd.to_datetime(stock_list['list_date'].astype(str), format='%Y%m%d', errors='coerce')
+        else:
+            stock_list['list_date'] = pd.to_datetime(stock_list['list_date'], errors='coerce')
         
         log.info(f"股票过滤统计:")
         log.info(f"  原始数量: {original_count}")

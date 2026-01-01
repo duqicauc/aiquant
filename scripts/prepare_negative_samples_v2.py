@@ -31,7 +31,7 @@ def main():
     log.info("="*80)
     
     # 配置参数
-    SAMPLES_PER_POSITIVE = 1  # 每个正样本对应的负样本数量
+    SAMPLES_PER_POSITIVE = 2  # 每个正样本对应的负样本数量（增加以平衡样本）
     RANDOM_SEED = 42
     
     POSITIVE_SAMPLES_FILE = 'data/training/samples/positive_samples.csv'

@@ -28,16 +28,36 @@ from sklearn.metrics import (
 )
 import xgboost as xgb
 from src.utils.logger import log
+from config.feature_config import get_feature_set, filter_available_features, EFFECTIVE_MARKET_FEATURES, INEFFECTIVE_MARKET_FEATURES
+
+
+def safe_to_datetime(date_value):
+    """
+    安全地将日期值转换为datetime类型
+    
+    处理以下情况：
+    - 整数：如 20230101 -> 被错误解析为纳秒时间戳
+    - 字符串：如 '20230101' -> 正常解析
+    - datetime：直接返回
+    """
+    if pd.isna(date_value):
+        return pd.NaT
+    if isinstance(date_value, (int, np.integer, float, np.floating)):
+        return pd.to_datetime(str(int(date_value)), format='%Y%m%d', errors='coerce')
+    return pd.to_datetime(date_value, errors='coerce')
 from src.utils.human_intervention import HumanInterventionChecker, require_human_confirmation
 from src.visualization.training_visualizer import TrainingVisualizer
 
 
-def load_and_prepare_data(neg_version='v2'):
+def load_and_prepare_data(neg_version='v2', use_market_factors=True, use_tech_factors=False, use_advanced_factors=False):
     """
     加载并准备训练数据
     
     Args:
         neg_version: 负样本版本 ('v1' 或 'v2')
+        use_market_factors: 是否使用带市场因子的特征文件
+        use_tech_factors: 是否使用带新技术因子的v2特征文件
+        use_advanced_factors: 是否使用带高级因子的特征文件
         
     Returns:
         df_features: 特征DataFrame
@@ -47,13 +67,33 @@ def load_and_prepare_data(neg_version='v2'):
     log.info("="*80)
     
     # 加载正样本（使用新的目录结构）
-    df_pos = pd.read_csv('data/training/features/feature_data_34d.csv')
+    if use_advanced_factors:
+        pos_file = 'data/training/processed/feature_data_34d_advanced.csv'
+        log.info("📊 使用带高级技术因子的特征文件(advanced)")
+    elif use_tech_factors:
+        pos_file = 'data/training/processed/feature_data_34d_full.csv'
+        log.info("📊 使用带新技术因子的特征文件(full)")
+    elif use_market_factors:
+        pos_file = 'data/training/processed/feature_data_34d_with_market.csv'
+        log.info("📊 使用带市场因子的特征文件")
+    else:
+        pos_file = 'data/training/processed/feature_data_34d.csv'
+        log.info("📊 使用基础特征文件")
+    
+    df_pos = pd.read_csv(pos_file)
     df_pos['label'] = 1
     log.success(f"✓ 正样本加载完成: {len(df_pos)} 条")
     
     # 加载负样本
     if neg_version == 'v2':
-        neg_file = 'data/training/features/negative_feature_data_v2_34d.csv'
+        if use_advanced_factors:
+            neg_file = 'data/training/features/negative_feature_data_v2_34d_advanced.csv'
+        elif use_tech_factors:
+            neg_file = 'data/training/features/negative_feature_data_v2_34d_full.csv'
+        elif use_market_factors:
+            neg_file = 'data/training/features/negative_feature_data_v2_34d_with_market.csv'
+        else:
+            neg_file = 'data/training/features/negative_feature_data_v2_34d.csv'
     else:
         neg_file = 'data/training/features/negative_feature_data_34d.csv'
     
@@ -95,7 +135,7 @@ def extract_features_with_time(df):
     df_positive_samples = pd.read_csv('data/training/samples/positive_samples.csv')
     t1_date_map = dict(zip(
         df_positive_samples.index,
-        pd.to_datetime(df_positive_samples['t1_date'])
+        df_positive_samples['t1_date'].apply(safe_to_datetime)
     ))
     
     # 获取负样本的T1日期映射
@@ -107,7 +147,7 @@ def extract_features_with_time(df):
     # 负样本的sample_id需要偏移（因为是从0开始的）
     max_positive_id = df_positive_samples.index.max()
     for idx, row in df_negative_samples.iterrows():
-        t1_date_map[max_positive_id + 1 + idx] = pd.to_datetime(row['t1_date'])
+        t1_date_map[max_positive_id + 1 + idx] = safe_to_datetime(row['t1_date'])
     
     for i, sample_id in enumerate(sample_ids):
         if (i + 1) % 500 == 0:
@@ -121,7 +161,7 @@ def extract_features_with_time(df):
         # 从数据中获取T1日期（基于days_to_t1=0的那一天）
         # 找到 days_to_t1 最接近0的记录
         t1_row = sample_data.iloc[sample_data['days_to_t1'].abs().argmin()]
-        t1_date = pd.to_datetime(t1_row['trade_date'])
+        t1_date = safe_to_datetime(t1_row['trade_date'])
         
         feature_dict = {
             'sample_id': sample_id,
@@ -189,6 +229,34 @@ def extract_features_with_time(df):
             if len(circ_mv_data) > 0:
                 feature_dict['circ_mv_mean'] = circ_mv_data.mean()
         
+        # RSI特征
+        if 'rsi_6' in sample_data.columns:
+            rsi6_data = sample_data['rsi_6'].dropna()
+            if len(rsi6_data) > 0:
+                feature_dict['rsi_6_mean'] = rsi6_data.mean()
+                feature_dict['rsi_6_std'] = rsi6_data.std()
+                feature_dict['rsi_6_max'] = rsi6_data.max()
+                feature_dict['rsi_6_min'] = rsi6_data.min()
+                feature_dict['rsi_6_last'] = rsi6_data.iloc[-1]  # 最近一天的RSI
+                feature_dict['rsi_6_gt_70'] = (rsi6_data > 70).sum()  # 超买天数
+                feature_dict['rsi_6_lt_30'] = (rsi6_data < 30).sum()  # 超卖天数
+        
+        if 'rsi_12' in sample_data.columns:
+            rsi12_data = sample_data['rsi_12'].dropna()
+            if len(rsi12_data) > 0:
+                feature_dict['rsi_12_mean'] = rsi12_data.mean()
+                feature_dict['rsi_12_std'] = rsi12_data.std()
+                feature_dict['rsi_12_last'] = rsi12_data.iloc[-1]
+                feature_dict['rsi_12_gt_70'] = (rsi12_data > 70).sum()
+                feature_dict['rsi_12_lt_30'] = (rsi12_data < 30).sum()
+        
+        if 'rsi_24' in sample_data.columns:
+            rsi24_data = sample_data['rsi_24'].dropna()
+            if len(rsi24_data) > 0:
+                feature_dict['rsi_24_mean'] = rsi24_data.mean()
+                feature_dict['rsi_24_std'] = rsi24_data.std()
+                feature_dict['rsi_24_last'] = rsi24_data.iloc[-1]
+        
         # 动量特征（分段收益率）
         days = len(sample_data)
         if days >= 7:
@@ -202,6 +270,246 @@ def extract_features_with_time(df):
                 sample_data['close'].iloc[-14] * 100
             )
         
+        # ===== 市场因子特征（如果存在）=====
+        if 'market_pct_chg' in sample_data.columns:
+            market_data = sample_data['market_pct_chg'].dropna()
+            if len(market_data) > 0:
+                feature_dict['market_pct_chg_mean'] = market_data.mean()
+        
+        if 'market_return_34d' in sample_data.columns:
+            market_return_data = sample_data['market_return_34d'].dropna()
+            if len(market_return_data) > 0:
+                feature_dict['market_return_34d_last'] = market_return_data.iloc[-1]
+        
+        if 'market_volatility_34d' in sample_data.columns:
+            market_vol_data = sample_data['market_volatility_34d'].dropna()
+            if len(market_vol_data) > 0:
+                feature_dict['market_volatility_34d_last'] = market_vol_data.iloc[-1]
+        
+        if 'market_trend' in sample_data.columns:
+            market_trend_data = sample_data['market_trend'].dropna()
+            if len(market_trend_data) > 0:
+                feature_dict['market_trend_last'] = market_trend_data.iloc[-1]
+        
+        if 'excess_return' in sample_data.columns:
+            excess_data = sample_data['excess_return'].dropna()
+            if len(excess_data) > 0:
+                feature_dict['excess_return_mean'] = excess_data.mean()
+                feature_dict['excess_return_sum'] = excess_data.sum()
+                feature_dict['excess_return_positive_days'] = (excess_data > 0).sum()
+        
+        if 'excess_return_cumsum' in sample_data.columns:
+            excess_cumsum_data = sample_data['excess_return_cumsum'].dropna()
+            if len(excess_cumsum_data) > 0:
+                feature_dict['excess_return_cumsum_last'] = excess_cumsum_data.iloc[-1]
+        
+        if 'price_vs_hist_mean' in sample_data.columns:
+            hist_mean_data = sample_data['price_vs_hist_mean'].dropna()
+            if len(hist_mean_data) > 0:
+                feature_dict['price_vs_hist_mean_last'] = hist_mean_data.iloc[-1]
+        
+        # 以下低效特征已剔除（重要性 < 阈值）:
+        # - price_vs_hist_high_last: 0.0088
+        # - volatility_vs_hist_last: 0.0064
+        
+        # ===== 新技术因子特征（full）=====
+        # 换手率（自由流通股）
+        if 'turnover_rate_f' in sample_data.columns:
+            turnover_data = sample_data['turnover_rate_f'].dropna()
+            if len(turnover_data) > 0:
+                feature_dict['turnover_rate_f_mean'] = turnover_data.mean()
+                feature_dict['turnover_rate_f_max'] = turnover_data.max()
+                feature_dict['turnover_rate_f_std'] = turnover_data.std()
+        
+        # 乖离率BIAS (bias_short/mid/long)
+        if 'bias_short' in sample_data.columns:
+            bias_short = sample_data['bias_short'].dropna()
+            if len(bias_short) > 0:
+                feature_dict['bias_short_last'] = bias_short.iloc[-1]
+                feature_dict['bias_short_mean'] = bias_short.mean()
+        if 'bias_mid' in sample_data.columns:
+            bias_mid = sample_data['bias_mid'].dropna()
+            if len(bias_mid) > 0:
+                feature_dict['bias_mid_last'] = bias_mid.iloc[-1]
+        if 'bias_long' in sample_data.columns:
+            bias_long = sample_data['bias_long'].dropna()
+            if len(bias_long) > 0:
+                feature_dict['bias_long_last'] = bias_long.iloc[-1]
+        
+        # EMA
+        if 'ema_5' in sample_data.columns and 'ema_20' in sample_data.columns:
+            ema5 = sample_data['ema_5'].dropna()
+            ema20 = sample_data['ema_20'].dropna()
+            if len(ema5) > 0 and len(ema20) > 0:
+                # EMA短期/长期比值
+                feature_dict['ema_ratio_5_20'] = ema5.iloc[-1] / ema20.iloc[-1] if ema20.iloc[-1] != 0 else 1
+                # 价格相对EMA位置
+                if len(sample_data['close'].dropna()) > 0:
+                    close_last = sample_data['close'].dropna().iloc[-1]
+                    feature_dict['price_vs_ema5'] = (close_last - ema5.iloc[-1]) / ema5.iloc[-1] * 100 if ema5.iloc[-1] != 0 else 0
+                    feature_dict['price_vs_ema20'] = (close_last - ema20.iloc[-1]) / ema20.iloc[-1] * 100 if ema20.iloc[-1] != 0 else 0
+        if 'ema_60' in sample_data.columns:
+            ema60 = sample_data['ema_60'].dropna()
+            if len(ema60) > 0 and len(sample_data['close'].dropna()) > 0:
+                close_last = sample_data['close'].dropna().iloc[-1]
+                feature_dict['price_vs_ema60'] = (close_last - ema60.iloc[-1]) / ema60.iloc[-1] * 100 if ema60.iloc[-1] != 0 else 0
+        
+        # KDJ
+        if 'kdj_k' in sample_data.columns:
+            kdj_k = sample_data['kdj_k'].dropna()
+            if len(kdj_k) > 0:
+                feature_dict['kdj_k_last'] = kdj_k.iloc[-1]
+                feature_dict['kdj_k_mean'] = kdj_k.mean()
+        if 'kdj_d' in sample_data.columns:
+            kdj_d = sample_data['kdj_d'].dropna()
+            if len(kdj_d) > 0:
+                feature_dict['kdj_d_last'] = kdj_d.iloc[-1]
+        if 'kdj_j' in sample_data.columns:
+            kdj_j = sample_data['kdj_j'].dropna()
+            if len(kdj_j) > 0:
+                feature_dict['kdj_j_last'] = kdj_j.iloc[-1]
+                # J值超买超卖
+                feature_dict['kdj_j_overbought'] = (kdj_j > 80).sum()
+                feature_dict['kdj_j_oversold'] = (kdj_j < 20).sum()
+        
+        # 涨停统计 (is_limit_up)
+        if 'is_limit_up' in sample_data.columns:
+            is_limit = sample_data['is_limit_up'].dropna()
+            if len(is_limit) > 0:
+                feature_dict['limit_up_count'] = is_limit.sum()
+        
+        # OBV
+        if 'obv' in sample_data.columns:
+            obv = sample_data['obv'].dropna()
+            if len(obv) > 0:
+                # OBV变化率
+                feature_dict['obv_change'] = (obv.iloc[-1] - obv.iloc[0]) / abs(obv.iloc[0]) * 100 if obv.iloc[0] != 0 else 0
+                feature_dict['obv_trend'] = 1 if obv.iloc[-1] > obv.mean() else 0
+        
+        # 成交量与均量比 (vol_ma5_ratio/vol_ma20_ratio)
+        if 'vol_ma5_ratio' in sample_data.columns:
+            vol_r5 = sample_data['vol_ma5_ratio'].dropna()
+            if len(vol_r5) > 0:
+                feature_dict['vol_ma5_ratio_mean'] = vol_r5.mean()
+                feature_dict['vol_ma5_ratio_max'] = vol_r5.max()
+        if 'vol_ma20_ratio' in sample_data.columns:
+            vol_r20 = sample_data['vol_ma20_ratio'].dropna()
+            if len(vol_r20) > 0:
+                feature_dict['vol_ma20_ratio_mean'] = vol_r20.mean()
+                feature_dict['vol_ma20_ratio_max'] = vol_r20.max()
+        
+        # ===== 高级技术因子（advanced）=====
+        # 动量因子
+        for period in [5, 10, 20]:
+            col = f'momentum_{period}d'
+            if col in sample_data.columns:
+                data = sample_data[col].dropna()
+                if len(data) > 0:
+                    feature_dict[f'{col}_last'] = data.iloc[-1]
+                    feature_dict[f'{col}_mean'] = data.mean()
+        
+        if 'momentum_acceleration' in sample_data.columns:
+            data = sample_data['momentum_acceleration'].dropna()
+            if len(data) > 0:
+                feature_dict['momentum_acceleration_last'] = data.iloc[-1]
+        
+        # 量价配合度
+        if 'volume_price_corr_10d' in sample_data.columns:
+            data = sample_data['volume_price_corr_10d'].dropna()
+            if len(data) > 0:
+                feature_dict['volume_price_corr_last'] = data.iloc[-1]
+        if 'volume_price_match_sum_10d' in sample_data.columns:
+            data = sample_data['volume_price_match_sum_10d'].dropna()
+            if len(data) > 0:
+                feature_dict['volume_price_match_sum'] = data.iloc[-1]
+        
+        # 多时间框架特征 (8d, 55d)
+        for tf in [8, 55]:
+            for metric in ['return', 'price_vs_ma', 'volatility', 'price_position', 'trend_slope']:
+                col = f'{metric}_{tf}d'
+                if col in sample_data.columns:
+                    data = sample_data[col].dropna()
+                    if len(data) > 0:
+                        feature_dict[f'{col}_last'] = data.iloc[-1]
+        
+        # 突破形态
+        for period in [10, 20, 55]:
+            col = f'breakout_high_{period}d'
+            if col in sample_data.columns:
+                data = sample_data[col].dropna()
+                if len(data) > 0:
+                    feature_dict[f'{col}_sum'] = data.sum()
+        
+        for ma in [5, 10, 20, 55]:
+            col = f'breakout_ma{ma}'
+            if col in sample_data.columns:
+                data = sample_data[col].dropna()
+                if len(data) > 0:
+                    feature_dict[f'{col}_sum'] = data.sum()
+        
+        if 'high_volume_breakout' in sample_data.columns:
+            data = sample_data['high_volume_breakout'].dropna()
+            if len(data) > 0:
+                feature_dict['high_volume_breakout_sum'] = data.sum()
+        
+        if 'consecutive_new_high' in sample_data.columns:
+            data = sample_data['consecutive_new_high'].dropna()
+            if len(data) > 0:
+                feature_dict['consecutive_new_high_max'] = data.max()
+        
+        # 支撑阻力
+        for period in [10, 20]:
+            for metric in ['dist_to_support', 'dist_to_resistance']:
+                col = f'{metric}_{period}d'
+                if col in sample_data.columns:
+                    data = sample_data[col].dropna()
+                    if len(data) > 0:
+                        feature_dict[f'{col}_last'] = data.iloc[-1]
+            
+            for metric in ['support_strength', 'resistance_strength']:
+                col = f'{metric}_{period}d'
+                if col in sample_data.columns:
+                    data = sample_data[col].dropna()
+                    if len(data) > 0:
+                        feature_dict[f'{col}_last'] = data.iloc[-1]
+        
+        if 'channel_width_20d' in sample_data.columns:
+            data = sample_data['channel_width_20d'].dropna()
+            if len(data) > 0:
+                feature_dict['channel_width_last'] = data.iloc[-1]
+        
+        # 高级成交量
+        for col in ['volume_trend_slope_10d', 'volume_trend_slope_20d']:
+            if col in sample_data.columns:
+                data = sample_data[col].dropna()
+                if len(data) > 0:
+                    feature_dict[f'{col}_last'] = data.iloc[-1]
+        
+        if 'volume_breakout_count_20d' in sample_data.columns:
+            data = sample_data['volume_breakout_count_20d'].dropna()
+            if len(data) > 0:
+                feature_dict['volume_breakout_count'] = data.iloc[-1]
+        
+        if 'price_up_vol_down_count_10d' in sample_data.columns:
+            data = sample_data['price_up_vol_down_count_10d'].dropna()
+            if len(data) > 0:
+                feature_dict['price_up_vol_down_count'] = data.iloc[-1]
+        
+        if 'price_down_vol_up_count_10d' in sample_data.columns:
+            data = sample_data['price_down_vol_up_count_10d'].dropna()
+            if len(data) > 0:
+                feature_dict['price_down_vol_up_count'] = data.iloc[-1]
+        
+        if 'volume_rsv_20d' in sample_data.columns:
+            data = sample_data['volume_rsv_20d'].dropna()
+            if len(data) > 0:
+                feature_dict['volume_rsv_last'] = data.iloc[-1]
+        
+        if 'obv_trend' in sample_data.columns:
+            data = sample_data['obv_trend'].dropna()
+            if len(data) > 0:
+                feature_dict['obv_trend_sum'] = data.sum()
+        
         features.append(feature_dict)
     
     df_features = pd.DataFrame(features)
@@ -213,7 +521,7 @@ def extract_features_with_time(df):
     return df_features
 
 
-def timeseries_split(df_features, train_end_date=None, test_start_date=None):
+def timeseries_split(df_features, train_end_date=None, test_start_date=None, feature_set='optimized'):
     """
     按时间划分训练集和测试集（避免未来函数）
     
@@ -221,6 +529,7 @@ def timeseries_split(df_features, train_end_date=None, test_start_date=None):
         df_features: 特征DataFrame（必须包含t1_date列）
         train_end_date: 训练集截止日期（如'2023-12-31'）
         test_start_date: 测试集开始日期（如'2024-01-01'）
+        feature_set: 特征集名称，可选 'base', 'all_market', 'optimized', 'core'
         
     Returns:
         X_train, X_test, y_train, y_test, train_dates, test_dates
@@ -229,8 +538,8 @@ def timeseries_split(df_features, train_end_date=None, test_start_date=None):
     log.info("第三步：时间序列划分（避免未来函数）")
     log.info("="*80)
     
-    # 确保t1_date是datetime类型
-    df_features['t1_date'] = pd.to_datetime(df_features['t1_date'])
+    # 确保t1_date是datetime类型（防止整数被误解析）
+    df_features['t1_date'] = df_features['t1_date'].apply(safe_to_datetime)
     
     # 按时间排序
     df_features = df_features.sort_values('t1_date').reset_index(drop=True)
@@ -270,32 +579,66 @@ def timeseries_split(df_features, train_end_date=None, test_start_date=None):
     else:
         log.success("✓ 训练集和测试集时间无重叠，无数据泄露风险")
     
-    # 准备特征和标签
-    feature_cols = [col for col in df_features.columns 
-                   if col not in ['sample_id', 'label', 't1_date']]
+    # 准备特征和标签（排除非特征列和非数值列）
+    exclude_cols = ['sample_id', 'label', 't1_date', 'ts_code', 'name']
+    all_feature_cols = [col for col in df_features.columns 
+                       if col not in exclude_cols]
     
-    X_train = df_train[feature_cols]
+    # 特征筛选：根据feature_set参数筛选特征
+    log.info(f"\n特征筛选（使用特征集: {feature_set}）:")
+    if feature_set == 'optimized':
+        # 排除低效市场因子
+        ineffective_cols = [col for col in INEFFECTIVE_MARKET_FEATURES if col.replace('_last', '') in col or col in all_feature_cols]
+        ineffective_cols_in_data = [col for col in all_feature_cols if col in INEFFECTIVE_MARKET_FEATURES]
+        feature_cols = [col for col in all_feature_cols if col not in ineffective_cols_in_data]
+        log.info(f"  剔除低效市场因子: {ineffective_cols_in_data}")
+        log.success(f"  ✓ 保留 {len(feature_cols)} 个高效特征")
+    elif feature_set == 'base':
+        # 仅使用基础特征，排除所有市场因子
+        all_market_cols = EFFECTIVE_MARKET_FEATURES + INEFFECTIVE_MARKET_FEATURES
+        market_cols_in_data = [col for col in all_feature_cols if col in all_market_cols]
+        feature_cols = [col for col in all_feature_cols if col not in market_cols_in_data]
+        log.info(f"  剔除所有市场因子: {market_cols_in_data}")
+        log.success(f"  ✓ 保留 {len(feature_cols)} 个基础特征")
+    else:
+        # 使用全部特征
+        feature_cols = all_feature_cols
+        log.info(f"  使用全部特征: {len(feature_cols)} 个")
+    
+    X_train = df_train[feature_cols].copy()
     y_train = df_train['label']
     train_dates = df_train['t1_date']
     
-    X_test = df_test[feature_cols]
+    X_test = df_test[feature_cols].copy()
     y_test = df_test['label']
     test_dates = df_test['t1_date']
     
-    # 处理缺失值
-    X_train = X_train.fillna(0)
-    X_test = X_test.fillna(0)
-    
-    # 删除非数值列
+    # 删除非数值列（如果还有的话）
     non_numeric_cols = X_train.select_dtypes(include=['object']).columns
     if len(non_numeric_cols) > 0:
         log.info(f"删除非数值列: {list(non_numeric_cols)}")
         X_train = X_train.drop(columns=non_numeric_cols)
         X_test = X_test.drop(columns=non_numeric_cols)
+        feature_cols = [col for col in feature_cols if col not in non_numeric_cols]
     
-    log.info(f"特征矩阵:")
+    # 缺失值处理：使用训练集的统计量填充（避免未来函数）
+    # 关键：只用训练集的统计量，不能用测试集数据
+    log.info("\n缺失值处理（避免未来函数）:")
+    train_missing = X_train.isnull().sum().sum()
+    test_missing = X_test.isnull().sum().sum()
+    log.info(f"  训练集缺失值: {train_missing}")
+    log.info(f"  测试集缺失值: {test_missing}")
+    
+    # 计算训练集的中位数（更稳健，不受异常值影响）
+    train_medians = X_train.median()
+    X_train = X_train.fillna(train_medians)
+    X_test = X_test.fillna(train_medians)  # 用训练集的统计量填充测试集
+    log.success("  ✓ 使用训练集中位数填充（避免数据泄露）")
+    
+    log.info(f"\n特征矩阵:")
     log.info(f"  训练集: {X_train.shape}")
     log.info(f"  测试集: {X_test.shape}")
+    log.info(f"  特征数: {len(feature_cols)}")
     log.info("")
     
     return X_train, X_test, y_train, y_test, train_dates, test_dates
@@ -316,6 +659,14 @@ def train_model(X_train, y_train, X_test, y_test):
     log.info("第四步：训练XGBoost模型")
     log.info("="*80)
     
+    # 计算类别权重（处理样本不均衡）
+    neg_count = (y_train == 0).sum()
+    pos_count = (y_train == 1).sum()
+    raw_weight = neg_count / pos_count if pos_count > 0 else 1.0
+    # 限制权重范围在[0.5, 2.0]之间，避免过度补偿
+    scale_pos_weight = max(0.5, min(2.0, raw_weight))
+    log.info(f"样本不均衡处理: 正样本={pos_count}, 负样本={neg_count}, scale_pos_weight={scale_pos_weight:.3f} (原始:{raw_weight:.3f})")
+    
     # 训练模型
     log.info("开始训练...")
     model = xgb.XGBClassifier(
@@ -328,6 +679,7 @@ def train_model(X_train, y_train, X_test, y_test):
         gamma=0.1,
         reg_alpha=0.1,
         reg_lambda=1.0,
+        scale_pos_weight=scale_pos_weight,  # 处理样本不均衡
         random_state=42,
         eval_metric='logloss'
     )
@@ -492,6 +844,19 @@ def save_model(model, metrics, neg_version, train_dates, test_dates):
 
 def main():
     """主函数"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='XGBoost时间序列模型训练')
+    parser.add_argument('--use-market-factors', action='store_true', 
+                       help='使用带市场因子的特征文件')
+    parser.add_argument('--use-tech-factors', action='store_true',
+                       help='使用带新技术因子的v2特征文件')
+    parser.add_argument('--use-advanced-factors', action='store_true',
+                       help='使用带高级技术因子的特征文件')
+    parser.add_argument('--neg-version', default='v2', choices=['v1', 'v2'],
+                       help='负样本版本')
+    args = parser.parse_args()
+    
     log.info("="*80)
     log.info("XGBoost 股票选股模型训练 - 时间序列版本")
     log.info("="*80)
@@ -502,11 +867,17 @@ def main():
     log.info("  3. 避免未来函数，确保无数据泄露")
     log.info("")
     
-    # 选择负样本版本
-    NEG_VERSION = 'v2'  # 'v1' 或 'v2'
+    # 配置
+    NEG_VERSION = args.neg_version
+    USE_ADVANCED_FACTORS = args.use_advanced_factors
+    USE_TECH_FACTORS = args.use_tech_factors and not USE_ADVANCED_FACTORS
+    USE_MARKET_FACTORS = args.use_market_factors or (not args.use_tech_factors and not USE_ADVANCED_FACTORS)
     
     log.info(f"配置:")
     log.info(f"  负样本版本: {NEG_VERSION}")
+    log.info(f"  使用市场因子: {USE_MARKET_FACTORS}")
+    log.info(f"  使用新技术因子: {USE_TECH_FACTORS}")
+    log.info(f"  使用高级因子: {USE_ADVANCED_FACTORS}")
     log.info(f"  划分方式: 时间序列划分（80%训练，20%测试）")
     log.info(f"  模型: XGBoost")
     log.info("")
@@ -518,7 +889,12 @@ def main():
         checker.print_intervention_reminder("特征选择", feature_check)
         
         # 1. 加载数据
-        df = load_and_prepare_data(neg_version=NEG_VERSION)
+        df = load_and_prepare_data(
+            neg_version=NEG_VERSION, 
+            use_market_factors=USE_MARKET_FACTORS,
+            use_tech_factors=USE_TECH_FACTORS,
+            use_advanced_factors=USE_ADVANCED_FACTORS
+        )
         
         # 2. 特征工程（保留时间信息）
         df_features = extract_features_with_time(df)

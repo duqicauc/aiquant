@@ -274,8 +274,11 @@ class NegativeSampleScreener:
         # 剔除北交所股票
         stock_list = stock_list[~stock_list['ts_code'].str.endswith('.BJ')]
         
-        # 确保list_date是datetime类型
-        stock_list['list_date'] = pd.to_datetime(stock_list['list_date'])
+        # 确保list_date是datetime类型（防止整数被误解析为时间戳）
+        if stock_list['list_date'].dtype in ['int64', 'float64']:
+            stock_list['list_date'] = pd.to_datetime(stock_list['list_date'].astype(str), format='%Y%m%d', errors='coerce')
+        else:
+            stock_list['list_date'] = pd.to_datetime(stock_list['list_date'], errors='coerce')
         
         return stock_list[['ts_code', 'name', 'list_date']]
     
