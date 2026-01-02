@@ -643,14 +643,28 @@ def analyze_results(results):
     return df_results
 
 
-def save_results(results_df):
-    """保存验证结果"""
-    output_file = 'data/results/walk_forward_validation_results.json'
-    os.makedirs('data/results', exist_ok=True)
+def save_results(results_df, version=None, model_name='breakout_launch_scorer', 
+                 use_advanced_factors=False, neg_version='v2'):
+    """
+    保存验证结果
     
+    Args:
+        results_df: 验证结果 DataFrame
+        version: 版本号（如 v1.5.0），指定后将保存到版本目录
+        model_name: 模型名称
+        use_advanced_factors: 是否使用高级因子
+        neg_version: 负样本版本
+    """
+    # 构建结果字典
     results_dict = {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'n_windows': len(results_df),
+        'config': {
+            'use_advanced_factors': use_advanced_factors,
+            'neg_version': neg_version,
+            'n_splits': 5,
+            'train_size': 0.6
+        },
         'summary': {
             'accuracy_mean': float(results_df['accuracy'].mean()),
             'accuracy_std': float(results_df['accuracy'].std()),
@@ -663,13 +677,184 @@ def save_results(results_df):
             'auc_mean': float(results_df['auc'].mean()),
             'auc_std': float(results_df['auc'].std()),
         },
+        'stability': _evaluate_stability(results_df),
         'windows': results_df.to_dict('records')
     }
+    
+    # 保存到默认位置
+    output_file = 'data/results/walk_forward_validation_results.json'
+    os.makedirs('data/results', exist_ok=True)
     
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(results_dict, f, indent=2, ensure_ascii=False)
     
     log.success(f"\n✓ 验证结果已保存: {output_file}")
+    
+    # 如果指定了版本号，同时保存到版本目录
+    if version:
+        save_to_version_directory(results_dict, results_df, version, model_name)
+
+
+def _evaluate_stability(results_df):
+    """评估模型稳定性"""
+    f1_std = results_df['f1_score'].std()
+    auc_std = results_df['auc'].std()
+    
+    if f1_std < 0.05:
+        level = "excellent"
+        description = "非常稳定 ⭐⭐⭐⭐⭐"
+    elif f1_std < 0.10:
+        level = "good"
+        description = "稳定 ⭐⭐⭐⭐"
+    elif f1_std < 0.15:
+        level = "fair"
+        description = "一般 ⭐⭐⭐"
+    else:
+        level = "poor"
+        description = "不稳定 ⭐⭐"
+    
+    return {
+        'level': level,
+        'description': description,
+        'f1_std': float(f1_std),
+        'auc_std': float(auc_std)
+    }
+
+
+def save_to_version_directory(results_dict, results_df, version, model_name):
+    """
+    将验证结果保存到版本目录
+    
+    Args:
+        results_dict: 验证结果字典
+        results_df: 验证结果 DataFrame
+        version: 版本号
+        model_name: 模型名称
+    """
+    log.info("")
+    log.info("-"*60)
+    log.info(f"📦 保存验证结果到版本目录: {model_name}/{version}")
+    log.info("-"*60)
+    
+    # 版本目录
+    version_dir = f'data/models/{model_name}/versions/{version}'
+    evaluation_dir = f'{version_dir}/evaluation'
+    
+    # 创建目录
+    os.makedirs(evaluation_dir, exist_ok=True)
+    
+    # 1. 保存验证结果 JSON
+    validation_file = f'{evaluation_dir}/walk_forward_validation.json'
+    with open(validation_file, 'w', encoding='utf-8') as f:
+        json.dump(results_dict, f, indent=2, ensure_ascii=False)
+    log.success(f"  ✓ 验证结果: {validation_file}")
+    
+    # 2. 保存验证结果 CSV（方便查看）
+    csv_file = f'{evaluation_dir}/walk_forward_validation.csv'
+    results_df.to_csv(csv_file, index=False)
+    log.success(f"  ✓ 验证明细: {csv_file}")
+    
+    # 3. 生成验证报告
+    report_file = f'{evaluation_dir}/validation_report.md'
+    _generate_validation_report(results_dict, results_df, report_file, version)
+    log.success(f"  ✓ 验证报告: {report_file}")
+    
+    # 4. 更新版本元数据
+    _update_version_metadata(version_dir, results_dict)
+    
+    log.success(f"\n✅ 验证结果已保存到版本目录: {evaluation_dir}")
+
+
+def _generate_validation_report(results_dict, results_df, report_file, version):
+    """生成验证报告 Markdown"""
+    summary = results_dict['summary']
+    stability = results_dict['stability']
+    
+    report = f"""# Walk-Forward 验证报告
+
+## 版本信息
+
+| 属性 | 值 |
+|------|-----|
+| **版本号** | {version} |
+| **验证时间** | {results_dict['timestamp']} |
+| **时间窗口数** | {results_dict['n_windows']} |
+| **训练集比例** | {results_dict['config']['train_size']*100:.0f}% |
+
+## 性能摘要
+
+| 指标 | 均值 | 标准差 |
+|------|------|--------|
+| **准确率** | {summary['accuracy_mean']*100:.2f}% | ±{summary['accuracy_std']*100:.2f}% |
+| **精确率** | {summary['precision_mean']*100:.2f}% | ±{summary['precision_std']*100:.2f}% |
+| **召回率** | {summary['recall_mean']*100:.2f}% | ±{summary['recall_std']*100:.2f}% |
+| **F1-Score** | {summary['f1_score_mean']*100:.2f}% | ±{summary['f1_score_std']*100:.2f}% |
+| **AUC-ROC** | {summary['auc_mean']:.4f} | ±{summary['auc_std']:.4f} |
+
+## 稳定性评估
+
+| 属性 | 值 |
+|------|-----|
+| **稳定性等级** | {stability['description']} |
+| **F1 标准差** | {stability['f1_std']*100:.2f}% |
+| **AUC 标准差** | {stability['auc_std']:.4f} |
+
+## 各窗口详情
+
+| 窗口 | 训练期 | 测试期 | 准确率 | 精确率 | 召回率 | F1 | AUC |
+|------|--------|--------|--------|--------|--------|-----|-----|
+"""
+    
+    for _, row in results_df.iterrows():
+        report += f"| {int(row['window'])} | {row['train_start']}~{row['train_end']} | {row['test_start']}~{row['test_end']} | {row['accuracy']*100:.1f}% | {row['precision']*100:.1f}% | {row['recall']*100:.1f}% | {row['f1_score']*100:.1f}% | {row['auc']:.3f} |\n"
+    
+    report += f"""
+## 结论
+
+"""
+    
+    if stability['level'] == 'excellent':
+        report += "✅ **模型表现优秀**：在不同时间窗口上表现稳定，可以放心用于生产环境。\n"
+    elif stability['level'] == 'good':
+        report += "✅ **模型表现良好**：在大多数时间窗口上表现稳定，建议持续监控。\n"
+    elif stability['level'] == 'fair':
+        report += "⚠️ **模型表现一般**：在部分时间窗口上表现不稳定，建议进一步优化。\n"
+    else:
+        report += "❌ **模型表现不稳定**：在不同时间窗口上表现差异较大，不建议用于生产环境。\n"
+    
+    report += f"""
+---
+*由 walk_forward_validation.py 自动生成*
+"""
+    
+    with open(report_file, 'w', encoding='utf-8') as f:
+        f.write(report)
+
+
+def _update_version_metadata(version_dir, results_dict):
+    """更新版本元数据，添加验证结果"""
+    metadata_file = f'{version_dir}/metadata.json'
+    
+    if os.path.exists(metadata_file):
+        with open(metadata_file, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+    else:
+        metadata = {}
+    
+    # 添加验证结果
+    metadata['validation'] = {
+        'walk_forward': {
+            'completed_at': results_dict['timestamp'],
+            'n_windows': results_dict['n_windows'],
+            'summary': results_dict['summary'],
+            'stability': results_dict['stability']
+        }
+    }
+    
+    with open(metadata_file, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    
+    log.success(f"  ✓ 已更新版本元数据")
 
 
 def main():
@@ -685,6 +870,11 @@ def main():
                        help='使用带高级技术因子的特征文件')
     parser.add_argument('--neg-version', default='v2', choices=['v1', 'v2'],
                        help='负样本版本')
+    # 版本管理参数
+    parser.add_argument('--version', type=str, default=None,
+                       help='模型版本号（如 v1.5.0），指定后将验证结果保存到版本目录')
+    parser.add_argument('--model-name', type=str, default='breakout_launch_scorer',
+                       help='模型名称（默认: breakout_launch_scorer）')
     args = parser.parse_args()
     
     # 配置
@@ -697,6 +887,8 @@ def main():
     log.info("Walk-Forward验证 - 多时间窗口模型稳定性测试")
     log.info("="*80)
     log.info(f"配置: 负样本版本={NEG_VERSION}, 市场因子={USE_MARKET_FACTORS}, 技术因子={USE_TECH_FACTORS}, 高级因子={USE_ADVANCED_FACTORS}")
+    if args.version:
+        log.info(f"版本: {args.version} (结果将保存到版本目录)")
     log.info("")
     
     try:
@@ -717,12 +909,23 @@ def main():
         # 4. 分析结果
         results_df = analyze_results(results)
         
-        # 5. 保存结果
-        save_results(results_df)
+        # 5. 保存结果（支持版本管理）
+        save_results(
+            results_df,
+            version=args.version,
+            model_name=args.model_name,
+            use_advanced_factors=USE_ADVANCED_FACTORS,
+            neg_version=NEG_VERSION
+        )
         
         log.info("\n" + "="*80)
         log.success("✅ Walk-Forward验证完成！")
         log.info("="*80)
+        
+        if args.version:
+            log.info("")
+            log.info("💡 验证结果已保存到版本目录:")
+            log.info(f"   data/models/{args.model_name}/versions/{args.version}/evaluation/")
         
     except Exception as e:
         log.error(f"✗ Walk-Forward验证出错: {e}")

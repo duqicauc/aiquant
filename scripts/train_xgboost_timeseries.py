@@ -14,6 +14,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import json
+import yaml
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -58,6 +59,7 @@ def load_and_prepare_data(neg_version='v2', use_market_factors=True, use_tech_fa
         use_market_factors: 是否使用带市场因子的特征文件
         use_tech_factors: 是否使用带新技术因子的v2特征文件
         use_advanced_factors: 是否使用带高级因子的特征文件
+        # TODO: use_ma233_factors: 是否使用带MA233因子的特征文件 (待实施，见 docs/plans/ma233_feature_plan.md)
         
     Returns:
         df_features: 特征DataFrame
@@ -67,6 +69,10 @@ def load_and_prepare_data(neg_version='v2', use_market_factors=True, use_tech_fa
     log.info("="*80)
     
     # 加载正样本（使用新的目录结构）
+    # TODO: MA233因子支持 (待实施)
+    # if use_ma233_factors:
+    #     pos_file = 'data/training/processed/feature_data_34d_ma233.csv'
+    #     log.info("📊 使用带MA233因子的特征文件(ma233)")
     if use_advanced_factors:
         pos_file = 'data/training/processed/feature_data_34d_advanced.csv'
         log.info("📊 使用带高级技术因子的特征文件(advanced)")
@@ -86,6 +92,9 @@ def load_and_prepare_data(neg_version='v2', use_market_factors=True, use_tech_fa
     
     # 加载负样本
     if neg_version == 'v2':
+        # TODO: MA233因子支持 (待实施)
+        # if use_ma233_factors:
+        #     neg_file = 'data/training/features/negative_feature_data_v2_34d_ma233.csv'
         if use_advanced_factors:
             neg_file = 'data/training/features/negative_feature_data_v2_34d_advanced.csv'
         elif use_tech_factors:
@@ -811,8 +820,23 @@ def generate_training_visualizations(model, X_train, df_features, train_dates, t
         traceback.print_exc()
 
 
-def save_model(model, metrics, neg_version, train_dates, test_dates):
-    """保存模型和结果"""
+def save_model(model, metrics, neg_version, train_dates, test_dates, 
+               version=None, model_name='breakout_launch_scorer', feature_names=None,
+               training_config=None):
+    """
+    保存模型和结果
+    
+    Args:
+        model: 训练好的模型
+        metrics: 评估指标
+        neg_version: 负样本版本
+        train_dates: 训练集日期
+        test_dates: 测试集日期
+        version: 版本号（如 v1.5.0），指定后将保存到版本目录
+        model_name: 模型名称
+        feature_names: 特征名称列表
+        training_config: 训练配置字典
+    """
     log.info("\n" + "="*80)
     log.info("第六步：保存模型")
     log.info("="*80)
@@ -839,7 +863,151 @@ def save_model(model, metrics, neg_version, train_dates, test_dates):
         json.dump(metrics, f, indent=2, ensure_ascii=False)
     
     log.success(f"✓ 评估报告已保存: {metrics_file}")
+    
+    # 如果指定了版本号，保存到版本目录
+    if version:
+        save_to_version_directory(
+            model=model,
+            metrics=metrics,
+            version=version,
+            model_name=model_name,
+            feature_names=feature_names,
+            train_dates=train_dates,
+            test_dates=test_dates,
+            training_config=training_config
+        )
+    
     log.info("")
+
+
+def save_to_version_directory(model, metrics, version, model_name, feature_names,
+                              train_dates, test_dates, training_config=None):
+    """
+    将模型保存到版本管理目录
+    
+    Args:
+        model: 训练好的模型
+        metrics: 评估指标
+        version: 版本号（如 v1.5.0）
+        model_name: 模型名称
+        feature_names: 特征名称列表
+        train_dates: 训练集日期
+        test_dates: 测试集日期
+        training_config: 训练配置字典
+    """
+    import shutil
+    
+    log.info("\n" + "-"*60)
+    log.info(f"📦 保存到版本目录: {model_name}/{version}")
+    log.info("-"*60)
+    
+    # 版本目录
+    version_dir = f'data/models/{model_name}/versions/{version}'
+    model_dir = f'{version_dir}/model'
+    training_dir = f'{version_dir}/training'
+    charts_dir = f'{version_dir}/charts'
+    
+    # 创建目录结构
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(training_dir, exist_ok=True)
+    os.makedirs(charts_dir, exist_ok=True)
+    os.makedirs(f'{version_dir}/evaluation', exist_ok=True)
+    os.makedirs(f'{version_dir}/experiments', exist_ok=True)
+    
+    # 1. 保存模型文件
+    model_file = f'{model_dir}/model.json'
+    model.get_booster().save_model(model_file)
+    log.success(f"  ✓ 模型文件: {model_file}")
+    
+    # 2. 保存特征名称
+    if feature_names:
+        feature_file = f'{model_dir}/feature_names.json'
+        with open(feature_file, 'w', encoding='utf-8') as f:
+            json.dump(feature_names, f, indent=2, ensure_ascii=False)
+        log.success(f"  ✓ 特征名称: {feature_file}")
+    
+    # 3. 保存训练指标
+    metrics_file = f'{training_dir}/metrics.json'
+    with open(metrics_file, 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    log.success(f"  ✓ 训练指标: {metrics_file}")
+    
+    # 4. 保存元数据
+    metadata = {
+        'version': version,
+        'model_name': model_name,
+        'status': 'development',
+        'created_at': datetime.now().isoformat(),
+        'created_by': 'train_xgboost_timeseries.py',
+        'parent_version': None,
+        'metrics': {
+            'training': {
+                'accuracy': metrics.get('accuracy'),
+                'precision': metrics.get('precision'),
+                'recall': metrics.get('recall'),
+                'f1': metrics.get('f1_score'),
+                'auc': metrics.get('auc')
+            },
+            'validation': {
+                'accuracy': metrics.get('accuracy'),
+                'precision': metrics.get('precision'),
+                'recall': metrics.get('recall'),
+                'f1': metrics.get('f1_score'),
+                'auc': metrics.get('auc')
+            },
+            'test': {
+                'accuracy': metrics.get('accuracy'),
+                'precision': metrics.get('precision'),
+                'recall': metrics.get('recall'),
+                'f1': metrics.get('f1_score'),
+                'auc': metrics.get('auc'),
+                'confusion_matrix': metrics.get('confusion_matrix', [])
+            }
+        },
+        'training': {
+            'train_date_range': f"{train_dates.min().date()} to {train_dates.max().date()}",
+            'test_date_range': f"{test_dates.min().date()} to {test_dates.max().date()}",
+            'completed_at': datetime.now().isoformat()
+        },
+        'notes': '由 train_xgboost_timeseries.py 训练'
+    }
+    
+    metadata_file = f'{version_dir}/metadata.json'
+    with open(metadata_file, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    log.success(f"  ✓ 元数据: {metadata_file}")
+    
+    # 5. 保存训练配置
+    if training_config:
+        config_file = f'{version_dir}/training_config.yaml'
+        with open(config_file, 'w', encoding='utf-8') as f:
+            yaml.dump(training_config, f, default_flow_style=False, allow_unicode=True)
+        log.success(f"  ✓ 训练配置: {config_file}")
+    
+    # 6. 更新 current.json
+    current_file = f'data/models/{model_name}/current.json'
+    if os.path.exists(current_file):
+        with open(current_file, 'r', encoding='utf-8') as f:
+            current = json.load(f)
+    else:
+        current = {
+            'production': None,
+            'staging': None,
+            'testing': None,
+            'development': None
+        }
+    
+    current['development'] = version
+    current['updated_at'] = datetime.now().isoformat()
+    
+    with open(current_file, 'w', encoding='utf-8') as f:
+        json.dump(current, f, indent=2, ensure_ascii=False)
+    log.success(f"  ✓ 版本指针: {current_file}")
+    
+    log.info("")
+    log.success(f"✅ 版本 {version} 已保存到: {version_dir}")
+    log.info("   下一步可以使用以下命令提升版本状态:")
+    log.info(f"   python -c \"from src.models.lifecycle import ModelIterator; mi = ModelIterator('{model_name}'); mi.set_current_version('{version}', 'production')\"")
 
 
 def main():
@@ -853,8 +1021,16 @@ def main():
                        help='使用带新技术因子的v2特征文件')
     parser.add_argument('--use-advanced-factors', action='store_true',
                        help='使用带高级技术因子的特征文件')
+    # TODO: MA233因子支持 (待实施，见 docs/plans/ma233_feature_plan.md)
+    # parser.add_argument('--use-ma233-factors', action='store_true',
+    #                    help='使用带MA233因子的特征文件（包含5日/233日均线突破特征）')
     parser.add_argument('--neg-version', default='v2', choices=['v1', 'v2'],
                        help='负样本版本')
+    # 版本管理参数
+    parser.add_argument('--version', type=str, default=None,
+                       help='模型版本号（如 v1.5.0），指定后将保存到版本目录')
+    parser.add_argument('--model-name', type=str, default='breakout_launch_scorer',
+                       help='模型名称（默认: breakout_launch_scorer）')
     args = parser.parse_args()
     
     log.info("="*80)
@@ -872,6 +1048,8 @@ def main():
     USE_ADVANCED_FACTORS = args.use_advanced_factors
     USE_TECH_FACTORS = args.use_tech_factors and not USE_ADVANCED_FACTORS
     USE_MARKET_FACTORS = args.use_market_factors or (not args.use_tech_factors and not USE_ADVANCED_FACTORS)
+    # TODO: MA233因子支持 (待实施，见 docs/plans/ma233_feature_plan.md)
+    # USE_MA233_FACTORS = args.use_ma233_factors
     
     log.info(f"配置:")
     log.info(f"  负样本版本: {NEG_VERSION}")
@@ -950,7 +1128,39 @@ def main():
         log.warning("="*80)
         
         # 5. 保存模型
-        save_model(model, metrics, NEG_VERSION, train_dates, test_dates)
+        # 构建训练配置（用于版本管理）
+        training_config = {
+            'version': args.version,
+            'created_at': datetime.now().strftime('%Y-%m-%d'),
+            'training_script': 'scripts/train_xgboost_timeseries.py',
+            'data': {
+                'neg_version': NEG_VERSION,
+                'use_market_factors': USE_MARKET_FACTORS,
+                'use_tech_factors': USE_TECH_FACTORS,
+                'use_advanced_factors': USE_ADVANCED_FACTORS,
+                'feature_type': 'advanced' if USE_ADVANCED_FACTORS else ('full' if USE_TECH_FACTORS else ('with_market' if USE_MARKET_FACTORS else 'base'))
+            },
+            'split': {
+                'method': 'time_series',
+                'train_ratio': 0.8
+            },
+            'model_params': {
+                'algorithm': 'XGBoost',
+                'n_estimators': 100,
+                'max_depth': 5,
+                'learning_rate': 0.1,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8
+            }
+        }
+        
+        save_model(
+            model, metrics, NEG_VERSION, train_dates, test_dates,
+            version=args.version,
+            model_name=args.model_name,
+            feature_names=list(X_train.columns),
+            training_config=training_config if args.version else None
+        )
         
         # 6. 最终总结
         log.info("="*80)
