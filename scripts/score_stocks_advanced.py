@@ -986,6 +986,77 @@ def score_all_stocks(dm: DataManager, booster: xgb.Booster, feature_names: list,
     return df_results
 
 
+def apply_risk_filter(df_scores: pd.DataFrame, 
+                     max_34d_return: float = 50.0,
+                     filter_mode: str = '降权') -> pd.DataFrame:
+    """
+    对评分结果应用风险过滤
+    
+    Args:
+        df_scores: 评分结果DataFrame
+        max_34d_return: 34日涨幅阈值（超过此值的股票会被处理）
+        filter_mode: 处理模式
+            - '降权': 降低牛股概率（推荐，保留模型识别能力）
+            - '标记': 仅添加风险标记，不改变概率
+            - '过滤': 直接移除高风险股票
+    
+    Returns:
+        处理后的DataFrame
+    """
+    df_filtered = df_scores.copy()
+    
+    # 识别高风险股票
+    high_risk_mask = df_filtered['34日涨幅%'] > max_34d_return
+    high_risk_count = high_risk_mask.sum()
+    
+    if high_risk_count == 0:
+        log.info(f"✓ 无高风险股票（34日涨幅>{max_34d_return}%）")
+        return df_filtered
+    
+    log.warning(f"⚠️  发现 {high_risk_count} 只高风险股票（34日涨幅>{max_34d_return}%）")
+    
+    if filter_mode == '降权':
+        # 降权策略：根据涨幅超阈值程度降低概率
+        # 例如：涨幅60% → 降权20%，涨幅80% → 降权40%
+        def calculate_penalty(row):
+            excess = row['34日涨幅%'] - max_34d_return
+            # 每超过10%降权5%，最大降权50%
+            penalty_rate = min(0.5, excess / 10 * 0.05)
+            return row['牛股概率'] * (1 - penalty_rate)
+        
+        df_filtered.loc[high_risk_mask, '原始概率'] = df_filtered.loc[high_risk_mask, '牛股概率']
+        df_filtered.loc[high_risk_mask, '牛股概率'] = df_filtered.loc[high_risk_mask].apply(calculate_penalty, axis=1)
+        df_filtered.loc[high_risk_mask, '风险标记'] = '高风险-已降权'
+        
+        # 重新排序
+        df_filtered = df_filtered.sort_values('牛股概率', ascending=False).reset_index(drop=True)
+        
+        log.info(f"✓ 已对 {high_risk_count} 只股票进行降权处理")
+        
+        # 显示降权详情
+        high_risk_stocks = df_filtered[df_filtered['风险标记'] == '高风险-已降权']
+        if len(high_risk_stocks) > 0:
+            log.info("\n降权股票详情:")
+            log.info(f"{'代码':<12} {'名称':<10} {'原始概率':<10} {'降权后':<10} {'34日%':<8}")
+            log.info("-" * 60)
+            for _, row in high_risk_stocks.head(10).iterrows():
+                original = row.get('原始概率', row['牛股概率'])
+                log.info(f"{row['股票代码']:<12} {row['股票名称']:<10} "
+                        f"{original:<10.4f} {row['牛股概率']:<10.4f} {row['34日涨幅%']:<8.2f}")
+    
+    elif filter_mode == '标记':
+        # 仅添加标记，不改变概率
+        df_filtered.loc[high_risk_mask, '风险标记'] = '高风险-追高'
+        log.info(f"✓ 已标记 {high_risk_count} 只高风险股票")
+    
+    elif filter_mode == '过滤':
+        # 直接移除
+        df_filtered = df_filtered[~high_risk_mask].reset_index(drop=True)
+        log.info(f"✓ 已过滤 {high_risk_count} 只高风险股票，剩余 {len(df_filtered)} 只")
+    
+    return df_filtered
+
+
 def save_results(df_scores: pd.DataFrame, df_top: pd.DataFrame, 
                 target_date: datetime, model_info: dict, top_n: int = 50):
     """保存结果"""
@@ -1034,6 +1105,12 @@ def main():
     parser.add_argument('--date', '-d', default=None, help='目标日期（YYYYMMDD格式，如20251225）')
     parser.add_argument('--max-stocks', type=int, default=None, help='最大评分数量（测试用）')
     parser.add_argument('--top-n', type=int, default=50, help='Top N推荐数量')
+    parser.add_argument('--risk-threshold', type=float, default=50.0, 
+                       help='34日涨幅风险阈值（超过此值会被处理，默认50.0）')
+    parser.add_argument('--risk-mode', choices=['降权', '标记', '过滤'], default='降权',
+                       help='风险处理模式：降权（推荐）、标记、过滤')
+    parser.add_argument('--disable-risk-filter', action='store_true',
+                       help='禁用风险过滤（保留所有股票）')
     
     args = parser.parse_args()
     
@@ -1071,21 +1148,47 @@ def main():
             log.error("评分失败，没有结果")
             return
         
-        # 5. Top N
+        # 5. 应用风险过滤（可选）
+        if not args.disable_risk_filter:
+            log.info("\n" + "="*80)
+            log.info("风险过滤")
+            log.info("="*80)
+            log.info(f"风险阈值: 34日涨幅 > {args.risk_threshold}%")
+            log.info(f"处理模式: {args.risk_mode}")
+            df_scores = apply_risk_filter(
+                df_scores, 
+                max_34d_return=args.risk_threshold,
+                filter_mode=args.risk_mode
+            )
+        else:
+            log.info("\n⚠️  风险过滤已禁用")
+        
+        # 6. Top N
         df_top = df_scores.head(args.top_n)
         
-        # 6. 显示结果
+        # 7. 显示结果
         log.info("\n" + "="*80)
         log.info(f"Top {args.top_n} 推荐")
         log.info("="*80)
         
-        print(f"\n{'序号':<4} {'代码':<12} {'名称':<10} {'概率':<8} {'最新价':<8} {'34日%':<8}")
-        print("-" * 60)
-        for i, row in df_top.iterrows():
-            print(f"{i+1:<4} {row['股票代码']:<12} {row['股票名称']:<10} "
-                  f"{row['牛股概率']:.4f} {row['最新价格']:<8.2f} {row['34日涨幅%']:<8.2f}")
+        # 检查是否有风险标记列
+        has_risk_marker = '风险标记' in df_top.columns
         
-        # 7. 保存结果
+        if has_risk_marker:
+            print(f"\n{'序号':<4} {'代码':<12} {'名称':<10} {'概率':<8} {'最新价':<8} {'34日%':<8} {'风险':<10}")
+            print("-" * 70)
+            for i, row in df_top.iterrows():
+                risk_marker = row.get('风险标记', '')
+                print(f"{i+1:<4} {row['股票代码']:<12} {row['股票名称']:<10} "
+                      f"{row['牛股概率']:.4f} {row['最新价格']:<8.2f} {row['34日涨幅%']:<8.2f} {risk_marker:<10}")
+        else:
+            print(f"\n{'序号':<4} {'代码':<12} {'名称':<10} {'概率':<8} {'最新价':<8} {'34日%':<8}")
+            print("-" * 60)
+            for i, row in df_top.iterrows():
+                print(f"{i+1:<4} {row['股票代码']:<12} {row['股票名称']:<10} "
+                      f"{row['牛股概率']:.4f} {row['最新价格']:<8.2f} {row['34日涨幅%']:<8.2f}")
+        
+        # 8. 保存结果
         save_results(df_scores, df_top, target_date, model_info, args.top_n)
         
         log.success("\n✅ 评分完成！")

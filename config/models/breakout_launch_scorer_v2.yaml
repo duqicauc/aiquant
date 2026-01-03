@@ -1,0 +1,115 @@
+# ============================================================================
+# 突破起爆评分模型配置文件 V2 - 防过拟合优化版
+# ============================================================================
+# 主要优化：
+# 1. 降低模型复杂度（max_depth: 5->3, min_child_weight: 3->10）
+# 2. 增强正则化（reg_alpha: 0.1->1.0, reg_lambda: 1.0->3.0）
+# 3. 降低采样率（subsample: 0.8->0.6, colsample_bytree: 0.8->0.5）
+# 4. 支持硬负样本训练
+
+# 模型基本信息
+model:
+  name: breakout_launch_scorer
+  display_name: 突破起爆评分模型 V2
+  description: 防过拟合优化版 - 基于技术指标识别股票起爆点
+  type: xgboost
+  version: v2.0.0
+  status: development
+
+# 数据配置
+data:
+  sample_preparation:
+    start_date: "20000101"
+    end_date: null
+    
+    # 正样本条件
+    positive_criteria:
+      consecutive_weeks: 3
+      total_return_threshold: 50
+      max_return_threshold: 70
+      min_listing_days: 180
+    
+    # 负样本条件 - 混合策略
+    negative_criteria:
+      method: "mixed"  # 混合普通负样本和硬负样本
+      random_sample_ratio: 1.0      # 随机负样本与正样本的比例
+      hard_sample_ratio: 0.5        # 硬负样本与正样本的比例
+      hard_sample_return_range:     # 硬负样本涨幅范围
+        min: 20
+        max: 45
+  
+  # 特征配置
+  feature_extraction:
+    lookback_days: 34
+    extractors:
+      - technical.ma
+      - technical.macd
+      - technical.rsi
+      - market.volume
+      - price.trend
+
+# 模型参数 - 防过拟合优化
+model_params:
+  objective: binary:logistic
+  eval_metric: auc  # 改用AUC而非logloss
+  
+  # 树结构参数 - 降低复杂度
+  n_estimators: 200           # 增加树的数量
+  learning_rate: 0.03         # 降低学习率（0.1->0.03）
+  max_depth: 3                # 降低深度（5->3）
+  
+  # 正则化参数 - 增强正则化
+  min_child_weight: 10        # 增加（3->10）
+  gamma: 0.3                  # 增加（0.1->0.3）
+  reg_alpha: 1.0              # L1正则化（0.1->1.0）
+  reg_lambda: 3.0             # L2正则化（1.0->3.0）
+  
+  # 采样参数 - 降低采样率
+  subsample: 0.6              # 降低（0.8->0.6）
+  colsample_bytree: 0.5       # 降低（0.8->0.5）
+  
+  # 其他参数
+  scale_pos_weight: 1.5       # 正样本权重（处理样本不平衡）
+  random_state: 42
+  n_jobs: -1
+
+# 训练配置
+training:
+  validation_split: 0.2
+  time_series_split: true
+  train_end_date: null
+  test_start_date: null
+  early_stopping: true        # 启用早停
+  early_stopping_rounds: 30   # 30轮无改善则停止
+  n_splits: 5
+
+# 预测配置
+prediction:
+  top_n: 50
+  min_probability: 0.0
+  
+  # 概率区间优化（避免高概率陷阱）
+  probability_filter:
+    optimal_min: 0.975        # 最优区间下限
+    optimal_max: 0.985        # 最优区间上限
+    warning_threshold: 0.99   # 警戒阈值
+  
+  exclusion_rules:
+    exclude_st: true
+    exclude_new_listed: true
+    min_listing_days: 180
+    exclude_suspended: true
+
+# 评测配置
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - auc
+  backtest:
+    enabled: true
+    start_date: 20230101
+    end_date: null
+
