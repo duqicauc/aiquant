@@ -575,8 +575,8 @@ elif page == "🏥 股票诊断":
                     st.markdown("---")
                     
                     # 详细分析标签页
-                    tab1, tab2, tab3, tab4 = st.tabs(
-                        ["📈 技术分析", "🤖 AI预测", "⚠️ 风险评估", "🎯 交易信号"]
+                    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+                        ["📈 技术分析", "🤖 AI预测", "⚠️ 风险评估", "🎯 交易信号", "📋 交易计划"]
                     )
                     
                     with tab1:
@@ -607,10 +607,23 @@ elif page == "🏥 股票诊断":
                         with col1:
                             st.metric("牛股概率", f"{prob*100:.1f}%")
                             st.metric("预测信号", model.get('signal', 'N/A'))
+                            
+                            # 显示校准信息（如果是v2.3.0）
+                            if model.get('calibration_applied', False):
+                                raw_prob = model.get('raw_probability', prob)
+                                cal_prob = model.get('calibrated_probability', prob)
+                                st.info(f"📊 **概率校准**: 原始概率 {raw_prob*100:.1f}% → 校准后 {cal_prob*100:.1f}%")
                         
                         with col2:
                             st.metric("置信度", model.get('confidence', 'N/A'))
-                            st.metric("模型版本", model.get('model_version', 'N/A'))
+                            model_version = model.get('model_version', 'N/A')
+                            st.metric("模型版本", model_version)
+                            
+                            # 显示模型详细信息
+                            if 'v2.3.0' in str(model_version) or 'v2.2.0' in str(model_version):
+                                calibration_method = model.get('calibration_method', 'isotonic_regression')
+                                st.caption(f"🔧 校准方法: {calibration_method}")
+                                st.caption(f"📈 特征数: {model.get('feature_count', 'N/A')}")
                     
                     with tab3:
                         risk = report.get('risk_assessment', {})
@@ -647,6 +660,128 @@ elif page == "🏥 股票诊断":
                             st.markdown("**❌ 卖出/警告信号**")
                             for s in signals.get('sell_signals', []) + signals.get('warning_signals', []):
                                 st.markdown(f"• {s}")
+                    
+                    with tab5:
+                        # 交易计划（基于v2.3.0模型，盈亏比>2体系）
+                        trading_plan = report.get('trading_plan', {})
+                        
+                        if trading_plan:
+                            st.markdown("### 📊 盈亏比分析")
+                            rr = trading_plan.get('risk_reward', {})
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("第一目标盈亏比", rr.get('ratio_tp1', 'N/A'))
+                            with col2:
+                                st.metric("加权盈亏比", rr.get('weighted_ratio', 'N/A'))
+                            with col3:
+                                st.metric("期望收益", rr.get('expected_return', 'N/A'))
+                            
+                            # 期望收益评估
+                            assessment = rr.get('assessment', '')
+                            if '✅' in assessment:
+                                st.success(assessment)
+                            elif '⚠️' in assessment:
+                                st.warning(assessment)
+                            elif '❌' in assessment:
+                                st.error(assessment)
+                            
+                            st.markdown("---")
+                            
+                            # 入场和出场计划
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("### 🎯 入场计划")
+                                entry = trading_plan.get('entry', {})
+                                st.markdown(f"**操作建议**: {entry.get('action', 'N/A')}")
+                                if entry.get('ideal_price'):
+                                    st.markdown(f"**理想买入价**: ¥{entry.get('ideal_price', 0):.2f}")
+                                if entry.get('max_price'):
+                                    st.markdown(f"**最高买入价**: ¥{entry.get('max_price', 0):.2f}")
+                                if entry.get('support_level'):
+                                    st.markdown(f"**支撑位**: ¥{entry.get('support_level', 0):.2f}")
+                                if entry.get('strategy'):
+                                    st.info(f"💡 {entry.get('strategy')}")
+                            
+                            with col2:
+                                st.markdown("### 🚪 出场计划")
+                                exit_plan = trading_plan.get('exit', {})
+                                st.markdown(f"**止损价**: ¥{exit_plan.get('stop_loss', 0):.2f} ({exit_plan.get('stop_loss_pct', 0):.1f}%)")
+                                st.markdown(f"**第一目标**: ¥{exit_plan.get('take_profit_1', 0):.2f} (+{exit_plan.get('take_profit_1_pct', 0):.1f}%)")
+                                st.markdown(f"**第二目标**: ¥{exit_plan.get('take_profit_2', 0):.2f} (+{exit_plan.get('take_profit_2_pct', 0):.1f}%)")
+                                st.markdown(f"**第三目标**: ¥{exit_plan.get('take_profit_3', 0):.2f} (+{exit_plan.get('take_profit_3_pct', 0):.1f}%)")
+                            
+                            st.markdown("---")
+                            
+                            # 分批止盈策略
+                            if exit_plan.get('strategy'):
+                                st.markdown("### 📈 分批止盈策略")
+                                st.code(exit_plan.get('strategy'), language=None)
+                            
+                            # 仓位管理
+                            st.markdown("### 💰 仓位管理")
+                            position = trading_plan.get('position', {})
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("建议仓位", position.get('suggested', 'N/A'))
+                            with col2:
+                                st.metric("凯利公式(1/4)", position.get('kelly_quarter', 'N/A'))
+                            with col3:
+                                st.metric("单笔最大风险", position.get('max_loss_per_trade', 'N/A'))
+                            
+                            # 时机建议
+                            timing = trading_plan.get('timing', {})
+                            if timing.get('notes'):
+                                st.markdown("### ⏰ 时机建议")
+                                for note in timing.get('notes', []):
+                                    if '✅' in note:
+                                        st.success(note)
+                                    elif '⚠️' in note:
+                                        st.warning(note)
+                                    else:
+                                        st.info(note)
+                            
+                            st.markdown("---")
+                            
+                            # 交易纪律
+                            st.markdown("### 📜 交易纪律（盈亏比>2体系）")
+                            discipline = trading_plan.get('discipline', {})
+                            
+                            with st.expander("📥 入场纪律", expanded=True):
+                                for rule in discipline.get('entry_rules', []):
+                                    st.markdown(f"• {rule}")
+                            
+                            with st.expander("📊 持仓纪律"):
+                                for rule in discipline.get('holding_rules', []):
+                                    st.markdown(f"• {rule}")
+                            
+                            with st.expander("📤 出场纪律"):
+                                for rule in discipline.get('exit_rules', []):
+                                    st.markdown(f"• {rule}")
+                            
+                            with st.expander("⚠️ 风险控制"):
+                                for rule in discipline.get('risk_rules', []):
+                                    st.markdown(f"• {rule}")
+                            
+                            with st.expander("🤖 模型使用说明"):
+                                for rule in discipline.get('model_usage', []):
+                                    st.markdown(f"• {rule}")
+                            
+                            # 交易检查清单
+                            st.markdown("### ✅ 交易检查清单")
+                            checklist = trading_plan.get('checklist', {})
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown("**入场前检查**")
+                                for item in checklist.get('before_entry', []):
+                                    st.markdown(item)
+                            with col2:
+                                st.markdown("**入场后检查**")
+                                for item in checklist.get('after_entry', []):
+                                    st.markdown(item)
+                        else:
+                            st.warning("无法生成交易计划")
         
         except Exception as e:
             st.error(f"❌ 诊断失败: {str(e)}")

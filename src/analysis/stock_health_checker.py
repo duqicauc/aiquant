@@ -30,78 +30,153 @@ except ImportError:
 
 
 class StockHealthChecker:
-    """股票健康体检器 - 增强版（集成高级技术因子模型）"""
+    """股票健康体检器 - 增强版（集成v2.3.0模型，含风险特征和概率校准）"""
     
     def __init__(self):
         self.dm = DataManager()
         self.model = None
+        self.calibrator = None
         self.feature_names = None
         self.model_info = {}
         
-        # 加载高级模型（XGBoost Booster）
+        # 加载高级模型（优先v2.3.0，包含校准器）
         self._load_advanced_model()
     
     def _load_advanced_model(self):
-        """加载高级技术因子版模型"""
+        """加载高级技术因子版模型（优先v2.3.0）"""
         if not HAS_XGBOOST:
             log.warning("xgboost 未安装，无法加载高级模型")
             return
         
         try:
-            # 方案1：从 v1.4.0 版本目录加载
+            # 方案1：优先加载 v2.3.0 模型（带校准器）
+            v23_model_dir = project_root / 'data' / 'models' / 'breakout_launch_scorer' / 'versions' / 'v2.3.0' / 'model'
+            v23_model_path = v23_model_dir / 'model.json'
+            v23_calibrator_path = v23_model_dir / 'calibrator.pkl'
+            v23_feature_path = v23_model_dir / 'feature_names.json'
+            v23_metadata_path = project_root / 'data' / 'models' / 'breakout_launch_scorer' / 'versions' / 'v2.3.0' / 'metadata.json'
+            
+            if v23_model_path.exists() and v23_calibrator_path.exists() and v23_feature_path.exists():
+                # 加载 v2.3.0 模型
+                booster = xgb.Booster()
+                booster.load_model(str(v23_model_path))
+                
+                with open(v23_feature_path, 'r', encoding='utf-8') as f:
+                    feature_names = json.load(f)
+                
+                calibrator = joblib.load(str(v23_calibrator_path))
+                
+                # 加载元数据
+                model_metadata = {}
+                if v23_metadata_path.exists():
+                    with open(v23_metadata_path, 'r', encoding='utf-8') as f:
+                        model_metadata = json.load(f)
+                
+                self.model = booster
+                self.calibrator = calibrator
+                self.feature_names = feature_names
+                self.model_info = {
+                    'model_path': str(v23_model_path),
+                    'model_name': 'breakout_launch_scorer',
+                    'version': 'v2.3.0 (风险特征+概率校准)',
+                    'feature_count': len(feature_names),
+                    'calibration_method': model_metadata.get('calibration_method', 'isotonic_regression'),
+                    'risk_features': model_metadata.get('risk_features', []),
+                    'description': model_metadata.get('description', '带风险特征+概率校准的优化模型')
+                }
+                log.info(f"✓ v2.3.0模型加载成功，特征数: {len(feature_names)}, 已启用概率校准")
+                return
+            
+            # 方案2：尝试加载 v2.2.0 模型（也带校准器）
+            v22_model_dir = project_root / 'data' / 'models' / 'breakout_launch_scorer' / 'versions' / 'v2.2.0' / 'model'
+            v22_model_path = v22_model_dir / 'model.json'
+            v22_calibrator_path = v22_model_dir / 'calibrator.pkl'
+            v22_feature_path = v22_model_dir / 'feature_names.json'
+            
+            if v22_model_path.exists() and v22_calibrator_path.exists() and v22_feature_path.exists():
+                booster = xgb.Booster()
+                booster.load_model(str(v22_model_path))
+                
+                with open(v22_feature_path, 'r', encoding='utf-8') as f:
+                    feature_names = json.load(f)
+                
+                calibrator = joblib.load(str(v22_calibrator_path))
+                
+                self.model = booster
+                self.calibrator = calibrator
+                self.feature_names = feature_names
+                self.model_info = {
+                    'model_path': str(v22_model_path),
+                    'model_name': 'breakout_launch_scorer',
+                    'version': 'v2.2.0 (概率校准)',
+                    'feature_count': len(feature_names),
+                    'calibration_method': 'isotonic_regression'
+                }
+                log.info(f"✓ v2.2.0模型加载成功，特征数: {len(feature_names)}, 已启用概率校准")
+                return
+            
+            # 方案3：从 v1.4.0 版本目录加载（无校准器）
             version_model_path = project_root / 'data' / 'models' / 'breakout_launch_scorer' / 'versions' / 'v1.4.0' / 'model' / 'model.json'
             
-            # 方案2：从训练模型目录加载最新模型
+            if version_model_path.exists():
+                booster = xgb.Booster()
+                booster.load_model(str(version_model_path))
+                
+                feature_names = booster.feature_names
+                if feature_names is None:
+                    feature_path = version_model_path.parent / 'feature_names.json'
+                    if feature_path.exists():
+                        with open(feature_path, 'r', encoding='utf-8') as f:
+                            feature_names = json.load(f)
+                
+                if feature_names:
+                    self.model = booster
+                    self.calibrator = None
+                    self.feature_names = feature_names
+                    self.model_info = {
+                        'model_path': str(version_model_path),
+                        'model_name': 'breakout_launch_scorer',
+                        'version': 'v1.4.0 (高级技术因子版)',
+                        'feature_count': len(feature_names)
+                    }
+                    log.info(f"✓ v1.4.0模型加载成功，特征数: {len(feature_names)}")
+                    return
+            
+            # 方案4：从训练模型目录加载最新模型
             training_model_dir = project_root / 'data' / 'training' / 'models'
-            
-            model_path = None
-            
-            # 优先加载最新的训练模型
             if training_model_dir.exists():
                 model_files = list(training_model_dir.glob('xgboost_timeseries_v2_*.json'))
                 if model_files:
                     model_path = max(model_files, key=lambda x: x.stat().st_mtime)
-                    log.info(f"加载最新训练模型: {model_path.name}")
+                    booster = xgb.Booster()
+                    booster.load_model(str(model_path))
+                    
+                    feature_names = booster.feature_names
+                    if feature_names is None:
+                        metrics_file = project_root / 'data' / 'training' / 'metrics' / 'xgboost_timeseries_v2_metrics.json'
+                        if metrics_file.exists():
+                            with open(metrics_file, 'r', encoding='utf-8') as f:
+                                metrics = json.load(f)
+                            if 'feature_importance' in metrics:
+                                feature_names = [item['feature'] for item in metrics['feature_importance']]
+                    
+                    if feature_names:
+                        self.model = booster
+                        self.calibrator = None
+                        self.feature_names = feature_names
+                        self.model_info = {
+                            'model_path': str(model_path),
+                            'model_name': 'breakout_launch_scorer',
+                            'version': '训练模型（最新）',
+                            'feature_count': len(feature_names)
+                        }
+                        log.info(f"✓ 训练模型加载成功: {model_path.name}, 特征数: {len(feature_names)}")
+                        return
             
-            # 其次加载版本模型
-            if model_path is None and version_model_path.exists():
-                model_path = version_model_path
-                log.info(f"加载版本模型: v1.4.0")
-            
-            if model_path is None:
-                log.warning("未找到高级模型文件，将使用简化预测")
-                return
-            
-            # 加载 Booster
-            booster = xgb.Booster()
-            booster.load_model(str(model_path))
-            
-            # 获取特征名称
-            feature_names = booster.feature_names
-            if feature_names is None:
-                # 尝试从 metrics 文件获取
-                metrics_file = project_root / 'data' / 'training' / 'metrics' / 'xgboost_timeseries_v2_metrics.json'
-                if metrics_file.exists():
-                    with open(metrics_file, 'r', encoding='utf-8') as f:
-                        metrics = json.load(f)
-                    if 'feature_importance' in metrics:
-                        feature_names = [item['feature'] for item in metrics['feature_importance']]
-            
-            if feature_names:
-                self.model = booster
-                self.feature_names = feature_names
-                self.model_info = {
-                    'model_path': str(model_path),
-                    'model_name': 'breakout_launch_scorer',
-                    'version': 'v1.4.0 (高级技术因子版)',
-                    'feature_count': len(feature_names)
-                }
-                log.info(f"✓ 高级模型加载成功，特征数: {len(feature_names)}")
-            else:
-                log.warning("无法获取模型特征名称")
+            log.warning("未找到高级模型文件，将使用简化预测")
                 
         except Exception as e:
-            log.warning(f"加载高级模型失败: {e}")
+            log.warning(f"加载高级模型失败: {e}", exc_info=True)
     
     def check_stock(self, stock_code: str, days: int = 252) -> dict:
         """
@@ -191,19 +266,44 @@ class StockHealthChecker:
         try:
             # 获取股票基本信息 - 使用 get_stock_list() 因为它包含行业信息
             stock_list = self.dm.get_stock_list()
+            
+            if stock_list.empty:
+                log.warning(f"股票列表为空，无法获取 {stock_code} 的基本信息")
+                return info
+            
+            # 检查是否有industry列
+            if 'industry' not in stock_list.columns:
+                log.warning(f"股票列表中没有industry列，可能数据源配置有问题")
+            
             stock_info = stock_list[stock_list['ts_code'] == stock_code]
             
-            if not stock_info.empty:
+            if stock_info.empty:
+                log.warning(f"未在股票列表中找到 {stock_code}，可能是新上市股票或代码格式不正确")
+                # 尝试从日线数据获取基本信息
+                end_date = datetime.now().strftime('%Y%m%d')
+                start_date = (datetime.now() - timedelta(days=15)).strftime('%Y%m%d')
+                df_daily = self.dm.get_daily_data(stock_code, start_date, end_date)
+                if df_daily is not None and not df_daily.empty:
+                    # 至少可以获取价格信息
+                    pass
+            else:
                 row = stock_info.iloc[0]
                 info['name'] = row.get('name', '')
-                info['industry'] = row.get('industry', '')
+                info['industry'] = row.get('industry', '') if pd.notna(row.get('industry', '')) else ''
                 info['market'] = row.get('market', '')
                 info['list_date'] = row.get('list_date', '')
                 info['area'] = row.get('area', '')  # 地区
             
-            # 如果没有获取到行业信息，记录日志
+            # 如果没有获取到行业信息，记录详细日志
             if not info.get('industry'):
-                log.debug(f"未获取到 {stock_code} 的行业信息")
+                if stock_info.empty:
+                    log.warning(f"未获取到 {stock_code} 的行业信息：股票不在列表中")
+                else:
+                    industry_value = stock_info.iloc[0].get('industry', '') if not stock_info.empty else ''
+                    if pd.isna(industry_value) or industry_value == '':
+                        log.warning(f"未获取到 {stock_code} 的行业信息：数据源中industry字段为空或NaN")
+                    else:
+                        log.debug(f"未获取到 {stock_code} 的行业信息：值为'{industry_value}'")
             
             # 获取最新价格（获取更多天数确保有数据）
             end_date = datetime.now().strftime('%Y%m%d')
@@ -1213,11 +1313,23 @@ class StockHealthChecker:
             
             # 使用 XGBoost Booster 预测
             dmatrix = xgb.DMatrix([feature_vector], feature_names=self.feature_names)
-            prob = float(self.model.predict(dmatrix)[0])
+            raw_prob = float(self.model.predict(dmatrix)[0])
+            
+            # 如果模型有校准器（v2.3.0/v2.2.0），使用校准后的概率
+            if self.calibrator is not None:
+                cal_prob = float(self.calibrator.predict([raw_prob])[0])
+                prob = cal_prob
+                prediction['raw_probability'] = raw_prob
+                prediction['calibrated_probability'] = cal_prob
+                prediction['calibration_applied'] = True
+            else:
+                prob = raw_prob
+                prediction['calibration_applied'] = False
             
             prediction['probability'] = prob
             prediction['model_version'] = self.model_info.get('version', 'unknown')
             prediction['feature_count'] = len(self.feature_names)
+            prediction['calibration_method'] = self.model_info.get('calibration_method', 'none')
             prediction['confidence'] = '高' if prob > 0.7 or prob < 0.3 else '中' if prob > 0.6 or prob < 0.4 else '低'
             
             if prob > 0.8:
@@ -1252,16 +1364,22 @@ class StockHealthChecker:
         return prediction
     
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """计算基础技术指标（与训练时一致）"""
+        """计算基础技术指标（与v2.3.0训练时一致）"""
         df = df.copy()
+        n = len(df)
         
         # MA均线
-        for period in [5, 10, 20, 60]:
-            df[f'ma{period}'] = df['close'].rolling(period).mean()
+        df['ma5'] = df['close'].rolling(5).mean()
+        df['ma10'] = df['close'].rolling(10).mean()
+        df['ma_20d'] = df['close'].rolling(20).mean()
+        for period in [60]:
+            if period <= n:
+                df[f'ma{period}'] = df['close'].rolling(period).mean()
         
         # EMA
         for period in [5, 10, 20, 60]:
-            df[f'ema_{period}'] = df['close'].ewm(span=period, adjust=False).mean()
+            if period <= n:
+                df[f'ema_{period}'] = df['close'].ewm(span=period, adjust=False).mean()
         
         # 量比
         vol_ma5 = df['vol'].rolling(5).mean()
@@ -1277,38 +1395,126 @@ class StockHealthChecker:
         df['macd_dea'] = df['macd_dif'].ewm(span=9, adjust=False).mean()
         df['macd'] = (df['macd_dif'] - df['macd_dea']) * 2
         
-        # RSI
+        # RSI（v2.3.0需要6, 12, 24）
+        delta = df['close'].diff()
         for period in [6, 12, 24]:
-            delta = df['close'].diff()
-            gain = delta.where(delta > 0, 0).rolling(period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-            rs = gain / (loss + 1e-8)
-            df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
+            if period <= n:
+                gain = delta.where(delta > 0, 0).rolling(period).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+                rs = gain / (loss + 1e-10)
+                df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
         
         # KDJ
-        n, m1, m2 = 9, 3, 3
-        low_n = df['low'].rolling(n).min()
-        high_n = df['high'].rolling(n).max()
-        rsv = (df['close'] - low_n) / (high_n - low_n + 1e-8) * 100
-        df['kdj_k'] = rsv.ewm(com=m1-1, adjust=False).mean()
-        df['kdj_d'] = df['kdj_k'].ewm(com=m2-1, adjust=False).mean()
-        df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
+        n_kdj, m1, m2 = 9, 3, 3
+        if n_kdj <= n:
+            low_9 = df['low'].rolling(n_kdj).min()
+            high_9 = df['high'].rolling(n_kdj).max()
+            rsv = (df['close'] - low_9) / (high_9 - low_9 + 1e-10) * 100
+            df['kdj_k'] = rsv.ewm(com=m1-1, adjust=False).mean()
+            df['kdj_d'] = df['kdj_k'].ewm(com=m2-1, adjust=False).mean()
+            df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
         
-        # BIAS
-        df['bias_short'] = (df['close'] - df['close'].rolling(6).mean()) / df['close'].rolling(6).mean() * 100
-        df['bias_mid'] = (df['close'] - df['close'].rolling(12).mean()) / df['close'].rolling(12).mean() * 100
-        df['bias_long'] = (df['close'] - df['close'].rolling(24).mean()) / df['close'].rolling(24).mean() * 100
+        # BIAS（v2.3.0需要基于ma5, ma10, ma_20d）
+        df['bias_short'] = (df['close'] - df['ma5']) / df['ma5'] * 100
+        df['bias_mid'] = (df['close'] - df['ma10']) / df['ma10'] * 100
+        df['bias_long'] = (df['close'] - df['ma_20d']) / df['ma_20d'] * 100
         
         # OBV
         df['obv'] = (np.sign(df['close'].diff()) * df['vol']).fillna(0).cumsum()
         
-        # 涨停判断
-        df['is_limit_up'] = (df['pct_chg'] >= 9.5).astype(int)
+        # 涨停判断（v2.3.0使用9.8）
+        df['is_limit_up'] = (df['pct_chg'] >= 9.8).astype(int)
+        
+        # v2.3.0需要的多周期特征
+        for period in [8, 34, 55]:
+            if period <= n:
+                df[f'return_{period}d'] = df['close'].pct_change(period) * 100
+                df[f'ma_{period}d'] = df['close'].rolling(period).mean()
+                df[f'price_vs_ma_{period}d'] = (df['close'] - df[f'ma_{period}d']) / df[f'ma_{period}d'] * 100
+                df[f'volatility_{period}d'] = df['pct_chg'].rolling(period).std()
+                df[f'high_{period}d'] = df['high'].rolling(period).max()
+                df[f'low_{period}d'] = df['low'].rolling(period).min()
+                price_range = df[f'high_{period}d'] - df[f'low_{period}d']
+                df[f'price_position_{period}d'] = (df['close'] - df[f'low_{period}d']) / (price_range + 1e-10) * 100
+                # 趋势斜率
+                df[f'trend_slope_{period}d'] = df['close'].rolling(period).apply(
+                    lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == period else 0, raw=False
+                )
+        
+        # 动量加速度
+        if n >= 10:
+            df['momentum_acceleration'] = df['close'].pct_change(5) * 100 - df['close'].pct_change(5).shift(5) * 100
+        
+        # 价量相关性
+        if n >= 10:
+            df['price_change'] = df['close'].diff()
+            df['volume_change'] = df['vol'].diff()
+            df['volume_price_corr_10d'] = df['close'].rolling(10).corr(df['vol'])
+            if n >= 20:
+                df['volume_price_corr_20d'] = df['close'].rolling(20).corr(df['vol'])
+            df['volume_price_match'] = ((df['price_change'] > 0) & (df['volume_change'] > 0)).astype(int)
+            df['volume_price_match_sum_10d'] = df['volume_price_match'].rolling(10).sum()
+        
+        # 突破特征（v2.3.0需要）
+        for period in [10, 20, 55]:
+            if period <= n:
+                df[f'prev_high_{period}d'] = df['high'].rolling(period).max().shift(1)
+                df[f'breakout_high_{period}d'] = (df['close'] > df[f'prev_high_{period}d']).astype(int)
+                df[f'resistance_{period}d'] = df['high'].rolling(period).max()
+                df[f'support_{period}d'] = df['low'].rolling(period).min()
+                df[f'dist_to_resistance_{period}d'] = (df[f'resistance_{period}d'] - df['close']) / df['close'] * 100
+                df[f'dist_to_support_{period}d'] = (df['close'] - df[f'support_{period}d']) / df['close'] * 100
+        
+        if n >= 20:
+            df['channel_width_20d'] = (df['resistance_20d'] - df['support_20d']) / df['close'] * 100
+        
+        # MA突破
+        df['ma_5d'] = df['close'].rolling(5).mean()
+        df['breakout_ma5'] = (df['close'] > df['ma_5d']).astype(int)
+        df['ma_10d'] = df['close'].rolling(10).mean()
+        df['breakout_ma10'] = (df['close'] > df['ma_10d']).astype(int)
+        df['breakout_ma20'] = (df['close'] > df['ma_20d']).astype(int)
+        if n >= 55:
+            ma_55d = df['close'].rolling(55).mean()
+            df['breakout_ma55'] = (df['close'] > ma_55d).astype(int)
+        
+        df['breakout_volume_ratio'] = df['vol'] / (df['vol'].rolling(20).mean() + 1e-8)
+        if n >= 20:
+            df['high_volume_breakout'] = ((df['breakout_high_20d'] == 1) & (df['breakout_volume_ratio'] > 1.5)).astype(int)
+            df['consecutive_new_high'] = df['breakout_high_10d'].rolling(5).sum()
+        
+        # 成交量趋势
+        if n >= 10:
+            df['volume_trend_slope_10d'] = df['vol'].rolling(10).apply(
+                lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == 10 else 0, raw=False
+            )
+        if n >= 20:
+            df['volume_trend_slope_20d'] = df['vol'].rolling(20).apply(
+                lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == 20 else 0, raw=False
+            )
+            df['volume_breakout_count_20d'] = (df['vol'] > df['vol'].rolling(20).mean() * 1.5).rolling(20).sum()
+        
+        # OBV相关
+        if n >= 10:
+            df['obv_ma10'] = df['obv'].rolling(10).mean()
+            df['obv_trend'] = (df['obv'] > df['obv_ma10']).astype(int)
+        
+        # 成交量RSV
+        if n >= 20:
+            vol_low_20 = df['vol'].rolling(20).min()
+            vol_high_20 = df['vol'].rolling(20).max()
+            df['volume_rsv_20d'] = (df['vol'] - vol_low_20) / (vol_high_20 - vol_low_20 + 1e-10) * 100
+        
+        # 历史位置
+        if n >= 34:
+            df['price_vs_hist_mean'] = (df['close'] - df['close'].rolling(34).mean()) / df['close'].rolling(34).mean() * 100
+            df['price_vs_hist_high'] = (df['close'] - df['close'].rolling(34).max()) / df['close'].rolling(34).max() * 100
+            df['volatility_vs_hist'] = df['pct_chg'].rolling(10).std() / (df['pct_chg'].rolling(34).std() + 1e-8)
         
         return df
     
     def _calculate_advanced_factors(self, df: pd.DataFrame) -> pd.DataFrame:
-        """计算高级技术因子"""
+        """计算高级技术因子（包含v2.3.0需要的风险特征）"""
         df = df.copy()
         n = len(df)
         if n < 10:
@@ -1332,14 +1538,17 @@ class StockHealthChecker:
             if period <= n:
                 df[f'volume_change_{period}d'] = df['vol'].pct_change(period) * 100
         
-        # ATR
-        tr = pd.concat([
-            df['high'] - df['low'],
-            (df['high'] - df['close'].shift(1)).abs(),
-            (df['low'] - df['close'].shift(1)).abs()
-        ], axis=1).max(axis=1)
-        df['atr_14'] = tr.rolling(14).mean()
+        # ATR（v2.3.0需要）
+        prev_close = df['close'].shift(1)
+        tr1 = df['high'] - df['low']
+        tr2 = abs(df['high'] - prev_close)
+        tr3 = abs(df['low'] - prev_close)
+        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        df['atr_14'] = true_range.rolling(14, min_periods=1).mean()
         df['atr_percent'] = df['atr_14'] / df['close'] * 100
+        df['atr_ratio_14'] = df['atr_14'] / df['close'] * 100  # v2.3.0需要
+        atr_mean = df['atr_14'].rolling(55, min_periods=14).mean()
+        df['atr_expansion'] = df['atr_14'] / (atr_mean + 1e-10)  # v2.3.0需要
         
         # 波动率
         df['volatility_20d'] = df['pct_chg'].rolling(20).std() * np.sqrt(252)
@@ -1361,6 +1570,36 @@ class StockHealthChecker:
         # 突破因子
         df['breakout_high_20d'] = (df['close'] > df['high'].rolling(20).max().shift(1)).astype(int)
         df['breakout_low_20d'] = (df['close'] < df['low'].rolling(20).min().shift(1)).astype(int)
+        
+        # ========== v2.3.0风险特征 ==========
+        # 最大回撤（v2.3.0需要）
+        for period in [10, 20, 55]:
+            if period <= n:
+                rolling_max = df['close'].rolling(period, min_periods=1).max()
+                drawdown = (df['close'] - rolling_max) / rolling_max * 100
+                df[f'max_drawdown_{period}d'] = drawdown.rolling(period, min_periods=1).min()
+        
+        # 距高点天数（v2.3.0需要）
+        for period in [20, 55]:
+            if period <= n:
+                rolling_high = df['close'].rolling(period, min_periods=1).max()
+                is_at_high = (df['close'] == rolling_high)
+                days_list = []
+                days_since_high = 0
+                for is_high in is_at_high:
+                    if is_high:
+                        days_since_high = 0
+                    else:
+                        days_since_high += 1
+                    days_list.append(days_since_high)
+                df[f'days_from_high_{period}d'] = days_list
+        
+        # 恢复比例（v2.3.0需要）
+        if n >= 20:
+            rolling_low_20 = df['close'].rolling(20, min_periods=1).min()
+            rolling_high_20 = df['close'].rolling(20, min_periods=1).max()
+            price_range = rolling_high_20 - rolling_low_20
+            df['recovery_ratio_20d'] = (df['close'] - rolling_low_20) / (price_range + 1e-10)
         
         return df
     
@@ -1408,10 +1647,33 @@ class StockHealthChecker:
         return df
     
     def _extract_advanced_features(self, df_sample: pd.DataFrame) -> dict:
-        """提取高级特征（与训练时一致）"""
+        """提取高级特征（与v2.3.0训练时一致）"""
         feature_dict = {}
         
-        # 基础统计特征
+        # 获取最后一行（v2.3.0主要使用最后一行特征）
+        if len(df_sample) == 0:
+            return feature_dict
+        
+        last_row = df_sample.iloc[-1]
+        
+        # 提取所有数值列的特征（直接使用最后一行值，或计算统计值）
+        numeric_cols = df_sample.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # 排除不需要的列
+        exclude_cols = ['trade_date', 'ts_code', 'name', 'sample_id', 'label']
+        numeric_cols = [col for col in numeric_cols if col not in exclude_cols]
+        
+        # 对于每个特征列，提取最后一行值
+        for col in numeric_cols:
+            if col in last_row.index:
+                val = last_row[col]
+                if pd.notna(val):
+                    feature_dict[col] = float(val)
+                else:
+                    feature_dict[col] = 0.0
+        
+        # 对于某些特征，也提取统计值（如果模型需要）
+        # 基础统计特征（如果模型需要）
         for col in ['close', 'pct_chg', 'vol', 'high', 'low', 'open']:
             if col in df_sample.columns:
                 data = df_sample[col].dropna()
@@ -1432,7 +1694,7 @@ class StockHealthChecker:
                 feature_dict['close_trend'] = (close.iloc[-1] / close.iloc[0] - 1) * 100
                 feature_dict['close_range'] = (close.max() - close.min()) / close.mean() * 100
         
-        # 技术指标特征
+        # 技术指标特征（提取统计值）
         indicator_cols = ['rsi_6', 'rsi_12', 'rsi_24', 'macd', 'macd_dif', 'macd_dea',
                          'kdj_k', 'kdj_d', 'kdj_j', 'bias_short', 'bias_mid', 'bias_long',
                          'volume_ratio', 'vol_ma5_ratio', 'vol_ma20_ratio']
@@ -1445,11 +1707,14 @@ class StockHealthChecker:
                     feature_dict[f'{col}_last'] = data.iloc[-1]
                     feature_dict[f'{col}_std'] = data.std()
         
-        # 高级因子特征
+        # 高级因子特征（提取统计值）
         advanced_cols = ['momentum_5d', 'momentum_10d', 'momentum_20d',
                         'price_position_20d', 'price_position_60d',
-                        'atr_percent', 'volatility_20d', 'excess_return',
-                        'ma_slope_5d', 'ma_slope_10d', 'ma_slope_20d']
+                        'atr_percent', 'atr_ratio_14', 'atr_expansion',
+                        'volatility_20d', 'excess_return',
+                        'ma_slope_5d', 'ma_slope_10d', 'ma_slope_20d',
+                        'max_drawdown_10d', 'max_drawdown_20d', 'max_drawdown_55d',
+                        'days_from_high_20d', 'days_from_high_55d', 'recovery_ratio_20d']
         
         for col in advanced_cols:
             if col in df_sample.columns:
@@ -1924,12 +2189,22 @@ class StockHealthChecker:
         return signals
     
     def _generate_trading_plan(self, report: dict) -> dict:
-        """生成交易计划"""
+        """
+        生成交易计划（基于v2.3.0模型，盈亏比>2的交易体系）
+        
+        核心原则：
+        1. 严格控制止损，确保盈亏比≥2
+        2. 基于模型概率分级入场
+        3. 基于ATR动态设置止损止盈
+        4. 严格的交易纪律
+        """
         plan = {
-            'entry': {},
-            'exit': {},
-            'position': {},
-            'timing': {}
+            'entry': {},           # 入场计划
+            'exit': {},            # 出场计划（止盈止损）
+            'position': {},        # 仓位管理
+            'timing': {},          # 时机建议
+            'risk_reward': {},     # 盈亏比分析
+            'discipline': {}       # 交易纪律
         }
         
         try:
@@ -1937,111 +2212,287 @@ class StockHealthChecker:
             tech = report.get('technical_analysis', {})
             risk = report.get('risk_assessment', {})
             signals = report.get('trading_signals', {})
+            model = report.get('model_prediction', {})
             sr = tech.get('support_resistance', {})
+            volatility = tech.get('volatility', {})
             
-            # 获取当前价格 - 确保能正确获取
+            # 获取当前价格
             current_price = basic.get('latest_price', 0)
-            
-            # 如果 basic_info 中没有价格，尝试从 support_resistance 获取
             if current_price <= 0 and sr:
-                current_price = sr.get('fib_500', 0)  # 使用中间价位作为估计
+                current_price = sr.get('fib_500', 0)
             
             if current_price <= 0:
                 plan['entry']['note'] = '无法获取当前价格'
                 return plan
             
-            # 入场计划
+            # 获取模型概率（v2.3.0校准后的概率）
+            model_prob = model.get('probability', 0.5)
+            calibrated = model.get('calibration_applied', False)
+            
+            # 获取ATR和波动率信息
+            atr = tech.get('trend', {}).get('atr', current_price * 0.025)
+            atr_pct = volatility.get('atr_percent', 2.5)
+            
+            # ========== 1. 止损设计（核心，优先确定）==========
+            # 基于ATR的科学止损（1.5-2倍ATR）
+            atr_stop_distance = 1.5 * atr
+            
+            # 获取支撑位
+            nearest_support = sr.get('nearest_support', current_price * 0.95)
+            ma20_support = sr.get('ma20_support')
+            
+            # 止损位选择：取ATR止损和支撑位止损中更近的
+            atr_stop_price = current_price - atr_stop_distance
+            support_stop_price = nearest_support * 0.98  # 支撑位下方2%
+            
+            # 选择合理的止损位（不要过远）
+            stop_loss = max(atr_stop_price, support_stop_price)
+            stop_loss = max(stop_loss, current_price * 0.92)  # 最大止损不超过8%
+            stop_loss = round(stop_loss, 2)
+            
+            stop_loss_pct = round((stop_loss / current_price - 1) * 100, 2)
+            
+            plan['exit']['stop_loss'] = stop_loss
+            plan['exit']['stop_loss_pct'] = stop_loss_pct
+            plan['exit']['stop_loss_reason'] = f"基于1.5倍ATR({atr:.2f})和支撑位({nearest_support:.2f})"
+            
+            # ========== 2. 止盈设计（确保盈亏比≥2）==========
+            # 止损距离
+            stop_distance = current_price - stop_loss
+            
+            # 第一止盈目标：2倍止损距离（盈亏比2:1）
+            tp1 = round(current_price + stop_distance * 2, 2)
+            tp1_pct = round((tp1 / current_price - 1) * 100, 2)
+            
+            # 第二止盈目标：3倍止损距离（盈亏比3:1）
+            tp2 = round(current_price + stop_distance * 3, 2)
+            tp2_pct = round((tp2 / current_price - 1) * 100, 2)
+            
+            # 第三止盈目标：4倍止损距离或近期高点
+            recent_high = sr.get('recent_high_60', current_price * 1.20)
+            tp3 = max(round(current_price + stop_distance * 4, 2), round(recent_high, 2))
+            tp3_pct = round((tp3 / current_price - 1) * 100, 2)
+            
+            plan['exit']['take_profit_1'] = tp1
+            plan['exit']['take_profit_1_pct'] = tp1_pct
+            plan['exit']['take_profit_2'] = tp2
+            plan['exit']['take_profit_2_pct'] = tp2_pct
+            plan['exit']['take_profit_3'] = tp3
+            plan['exit']['take_profit_3_pct'] = tp3_pct
+            
+            # ========== 3. 盈亏比分析 ==========
+            risk_reward_1 = round(abs(tp1_pct / stop_loss_pct), 2)
+            risk_reward_2 = round(abs(tp2_pct / stop_loss_pct), 2)
+            risk_reward_3 = round(abs(tp3_pct / stop_loss_pct), 2)
+            
+            plan['risk_reward']['ratio_tp1'] = f"1:{risk_reward_1}"
+            plan['risk_reward']['ratio_tp2'] = f"1:{risk_reward_2}"
+            plan['risk_reward']['ratio_tp3'] = f"1:{risk_reward_3}"
+            
+            # 综合盈亏比（加权平均，考虑分批止盈）
+            # 假设50%在TP1止盈，30%在TP2止盈，20%在TP3止盈
+            weighted_rr = 0.5 * risk_reward_1 + 0.3 * risk_reward_2 + 0.2 * risk_reward_3
+            plan['risk_reward']['weighted_ratio'] = f"1:{round(weighted_rr, 2)}"
+            
+            # 基于模型概率计算期望收益
+            # E(R) = P(win) * avg_win - P(lose) * avg_lose
+            win_prob = model_prob
+            avg_win_pct = (tp1_pct * 0.5 + tp2_pct * 0.3 + tp3_pct * 0.2)
+            expected_return = win_prob * avg_win_pct - (1 - win_prob) * abs(stop_loss_pct)
+            plan['risk_reward']['expected_return'] = f"{expected_return:.2f}%"
+            plan['risk_reward']['win_probability'] = f"{win_prob*100:.1f}%"
+            
+            # 期望收益评估
+            if expected_return > 3:
+                plan['risk_reward']['assessment'] = '✅ 期望收益良好，值得交易'
+            elif expected_return > 0:
+                plan['risk_reward']['assessment'] = '⚠️ 期望收益为正，但较小，需谨慎'
+            else:
+                plan['risk_reward']['assessment'] = '❌ 期望收益为负，不建议交易'
+            
+            # ========== 4. 入场计划 ==========
             action = signals.get('action', '观望')
             
             if action == '买入':
-                # 建议买入价位
                 plan['entry']['action'] = '建议买入'
-                plan['entry']['ideal_price'] = round(sr.get('nearest_support', current_price * 0.98), 2)
-                plan['entry']['max_price'] = round(current_price * 1.02, 2)  # 最高不超过当前价+2%
-                plan['entry']['timing'] = '回调至支撑位附近或突破确认后'
                 
-                if tech.get('volume_analysis', {}).get('volume_level') == '极度缩量':
-                    plan['entry']['note'] = '当前成交低迷，建议等待放量确认'
+                # 获取最近支撑位
+                support_distance_pct = ((current_price - nearest_support) / current_price) * 100
+                
+                # 基于模型概率设置入场策略
+                if model_prob >= 0.7:
+                    # 高概率：可积极入场
+                    if support_distance_pct <= 5:
+                        plan['entry']['ideal_price'] = round(current_price * 0.99, 2)
+                        plan['entry']['strategy'] = '高概率+支撑附近，建议积极买入'
+                    else:
+                        plan['entry']['ideal_price'] = round(current_price * 0.98, 2)
+                        plan['entry']['strategy'] = '高概率，可小仓试探后加仓'
+                    plan['entry']['max_price'] = round(current_price * 1.02, 2)
+                    
+                elif model_prob >= 0.5:
+                    # 中等概率：等待更好价位
+                    if support_distance_pct <= 3:
+                        plan['entry']['ideal_price'] = round(current_price * 0.99, 2)
+                        plan['entry']['strategy'] = '支撑附近，可分批建仓'
+                    else:
+                        plan['entry']['ideal_price'] = round(nearest_support * 1.01, 2)
+                        plan['entry']['strategy'] = '等待回调至支撑位附近买入'
+                    plan['entry']['max_price'] = round(current_price * 1.01, 2)
+                    
+                else:
+                    # 低概率：谨慎入场
+                    plan['entry']['ideal_price'] = round(nearest_support, 2)
+                    plan['entry']['strategy'] = '低概率，仅在支撑位精确买入'
+                    plan['entry']['max_price'] = round(nearest_support * 1.01, 2)
+                
+                plan['entry']['support_level'] = round(nearest_support, 2)
+                plan['entry']['model_probability'] = f"{model_prob*100:.1f}%"
                 
             elif action == '卖出':
                 plan['entry']['action'] = '建议卖出或减仓'
-                plan['entry']['note'] = '不建议新建仓位'
+                plan['entry']['strategy'] = '不建议新建仓位，已持有者考虑减仓'
             else:
                 plan['entry']['action'] = '观望等待'
                 plan['entry']['buy_trigger'] = round(sr.get('nearest_resistance', current_price * 1.05), 2)
-                plan['entry']['sell_trigger'] = round(sr.get('nearest_support', current_price * 0.95), 2)
+                plan['entry']['sell_trigger'] = round(nearest_support * 0.98, 2)
+                plan['entry']['strategy'] = '等待明确信号再行动'
             
-            # 出场计划（止盈止损）
-            atr = tech.get('trend', {}).get('atr', current_price * 0.02)
-            atr_pct = tech.get('volatility', {}).get('atr_percent', 2)
+            # ========== 5. 仓位管理 ==========
+            # 基于凯利公式的简化仓位计算
+            # f = (p * b - q) / b，其中 p=胜率, q=1-p, b=盈亏比
+            p = model_prob
+            q = 1 - p
+            b = weighted_rr
+            kelly_pct = max(0, (p * b - q) / b) * 100
             
-            # 止损位（基于ATR或支撑位）
-            atr_stop = current_price - 2 * atr
-            support_stop = sr.get('nearest_support', current_price * 0.95) * 0.98
-            plan['exit']['stop_loss'] = round(max(atr_stop, support_stop), 2)
-            plan['exit']['stop_loss_pct'] = round((plan['exit']['stop_loss'] / current_price - 1) * 100, 2)
+            # 使用1/4凯利（保守策略）
+            kelly_quarter = kelly_pct / 4
             
-            # 止盈位（分批止盈）
-            plan['exit']['take_profit_1'] = round(current_price * 1.05, 2)  # 第一目标5%
-            plan['exit']['take_profit_2'] = round(current_price * 1.10, 2)  # 第二目标10%
-            plan['exit']['take_profit_3'] = round(sr.get('recent_high_60', current_price * 1.15), 2)  # 第三目标
-            
-            plan['exit']['strategy'] = f"建议分批止盈：50%仓位在{plan['exit']['take_profit_1']}止盈，" \
-                                       f"30%仓位在{plan['exit']['take_profit_2']}止盈，" \
-                                       f"剩余跟踪止盈"
-            
-            # 仓位建议
+            # 基于风险等级调整
             risk_level = risk.get('overall_risk', '中等风险')
-            market_score = report.get('market_context', {}).get('market_score', 50)
-            
-            # 基础仓位
-            if signals.get('confidence') == '高':
-                base_position = 30
-            elif signals.get('confidence') == '中':
-                base_position = 20
-            else:
-                base_position = 10
-            
-            # 根据风险调整
             if risk_level == '低风险':
-                position_multiplier = 1.2
+                risk_adj = 1.2
             elif risk_level == '中等风险':
-                position_multiplier = 1.0
+                risk_adj = 1.0
             elif risk_level == '较高风险':
-                position_multiplier = 0.7
+                risk_adj = 0.7
             else:
-                position_multiplier = 0.5
+                risk_adj = 0.5
             
-            # 根据市场环境调整
+            # 基于市场环境调整
+            market_score = report.get('market_context', {}).get('market_score', 50)
             if market_score >= 60:
-                market_multiplier = 1.2
+                market_adj = 1.2
             elif market_score >= 40:
-                market_multiplier = 1.0
+                market_adj = 1.0
             else:
-                market_multiplier = 0.7
+                market_adj = 0.7
             
-            suggested_position = min(base_position * position_multiplier * market_multiplier, 30)
+            # 综合仓位（上限30%）
+            suggested_position = min(kelly_quarter * risk_adj * market_adj, 30)
+            suggested_position = max(5, suggested_position)  # 最小5%
             
             plan['position']['suggested'] = f"{suggested_position:.0f}%"
+            plan['position']['kelly_full'] = f"{kelly_pct:.1f}%"
+            plan['position']['kelly_quarter'] = f"{kelly_quarter:.1f}%"
             plan['position']['max'] = "30%（单只股票仓位上限）"
-            plan['position']['risk_ratio'] = f"1:{round(abs(plan['exit']['take_profit_1'] - current_price) / abs(current_price - plan['exit']['stop_loss']), 1)}"
             
-            # 时机建议
-            if action == '买入':
-                momentum = tech.get('momentum', {}).get('strength', '')
-                if '下跌' in momentum:
-                    plan['timing']['suggestion'] = '等待企稳信号，不宜追高'
-                elif '上涨' in momentum:
-                    plan['timing']['suggestion'] = '趋势向上，可考虑分批建仓'
-                else:
-                    plan['timing']['suggestion'] = '震荡阶段，建议低吸'
-                
-                # 考虑大盘环境
-                if report.get('market_context', {}).get('market_state') in ['震荡偏空', '熊市']:
-                    plan['timing']['market_note'] = '⚠️ 大盘环境不佳，建议控制仓位或等待企稳'
+            # 计算单笔最大风险金额（假设总资金100万）
+            total_capital = 1000000
+            position_value = total_capital * (suggested_position / 100)
+            max_loss_per_trade = position_value * abs(stop_loss_pct / 100)
+            max_loss_pct_total = (max_loss_per_trade / total_capital) * 100
+            
+            plan['position']['max_loss_per_trade'] = f"{max_loss_pct_total:.2f}% 总资金"
+            plan['position']['risk_per_trade_rule'] = f"单笔最大亏损不超过总资金的2%"
+            
+            # ========== 6. 分批止盈策略 ==========
+            plan['exit']['strategy'] = f"""分批止盈策略（确保盈亏比≥2）：
+├─ 第一目标 {tp1}（+{tp1_pct}%）：止盈50%仓位，移动止损至成本价
+├─ 第二目标 {tp2}（+{tp2_pct}%）：止盈30%仓位，移动止损至第一目标
+├─ 第三目标 {tp3}（+{tp3_pct}%）：止盈剩余20%，或跟踪止盈
+└─ 止损纪律：跌破{stop_loss}（{stop_loss_pct}%）无条件止损"""
+            
+            # ========== 7. 时机建议 ==========
+            momentum = tech.get('momentum', {}).get('strength', '')
+            volume_level = tech.get('volume_analysis', {}).get('volume_level', '')
+            
+            timing_notes = []
+            if '下跌' in momentum:
+                timing_notes.append('⚠️ 当前动量向下，等待企稳信号')
+            elif '上涨' in momentum:
+                timing_notes.append('✅ 动量向上，顺势而为')
+            
+            if volume_level == '极度缩量':
+                timing_notes.append('⚠️ 成交极度萎缩，等待放量确认')
+            elif volume_level in ['放量', '巨量']:
+                timing_notes.append('✅ 成交活跃，关注量价配合')
+            
+            market_state = report.get('market_context', {}).get('market_state', '')
+            if market_state in ['震荡偏空', '熊市']:
+                timing_notes.append('⚠️ 大盘环境不佳，仓位减半或观望')
+            elif market_state in ['牛市', '震荡偏多']:
+                timing_notes.append('✅ 大盘环境良好，可正常操作')
+            
+            plan['timing']['notes'] = timing_notes
+            
+            # ========== 8. 交易纪律（核心）==========
+            plan['discipline'] = {
+                'entry_rules': [
+                    f"① 价格不高于最大买入价 {plan['entry'].get('max_price', current_price)}",
+                    f"② 模型概率 {model_prob*100:.1f}%，{'满足' if model_prob >= 0.5 else '不满足'}入场条件",
+                    "③ 严格按计划仓位执行，不追涨",
+                    "④ 分批建仓：首仓不超过计划仓位的50%"
+                ],
+                'holding_rules': [
+                    f"① 设置止损单：{stop_loss}，一旦触及无条件执行",
+                    "② 不因短期波动频繁操作",
+                    "③ 达到第一目标后，移动止损至成本价",
+                    "④ 持仓期间不加仓（除非回调至支撑位）"
+                ],
+                'exit_rules': [
+                    f"① 止损纪律：跌破{stop_loss}（{stop_loss_pct}%）立即止损，不补仓",
+                    f"② 止盈纪律：第一目标{tp1}止盈50%，第二目标{tp2}止盈30%",
+                    "③ 移动止损：达到目标后跟踪止损保护利润",
+                    "④ 时间止损：持仓超过20个交易日未达目标，重新评估"
+                ],
+                'risk_rules': [
+                    f"① 单笔最大亏损：不超过总资金的2%",
+                    "② 同时持仓：不超过5只股票",
+                    "③ 同行业持仓：不超过2只",
+                    "④ 连续止损3次后，暂停交易反思"
+                ],
+                'model_usage': [
+                    f"① 本次v2.3.0模型概率：{model_prob*100:.1f}%（{'已校准' if calibrated else '未校准'}）",
+                    "② 概率>70%：积极交易；50-70%：谨慎交易；<50%：观望为主",
+                    "③ 模型预测周期：34个交易日",
+                    "④ 定期复盘模型准确率，及时调整策略"
+                ]
+            }
+            
+            # ========== 9. 交易检查清单 ==========
+            plan['checklist'] = {
+                'before_entry': [
+                    f"□ 当前价格 {current_price} ≤ 最大买入价 {plan['entry'].get('max_price', current_price)}？",
+                    f"□ 模型概率 {model_prob*100:.1f}% ≥ 50%？",
+                    f"□ 盈亏比 {risk_reward_1} ≥ 2？",
+                    f"□ 已设置止损单 @ {stop_loss}？",
+                    "□ 仓位不超过计划的30%？",
+                    "□ 同时持仓不超过5只？"
+                ],
+                'after_entry': [
+                    f"□ 记录买入价格和时间",
+                    f"□ 确认止损单已生效 @ {stop_loss}",
+                    f"□ 设置价格提醒 @ {tp1}（第一目标）",
+                    "□ 记录入场理由"
+                ]
+            }
             
         except Exception as e:
             log.warning(f"交易计划生成失败: {e}")
+            import traceback
+            traceback.print_exc()
         
         return plan
     
