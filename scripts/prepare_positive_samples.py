@@ -75,9 +75,24 @@ def main():
     log.info("\n[步骤1] 初始化数据管理器...")
     dm = DataManager(source='tushare')
     
-    # 2. 初始化筛选器
+    # 2. 初始化筛选器（从配置文件读取正样本筛选参数）
     log.info("\n[步骤2] 初始化正样本筛选器...")
-    screener = PositiveSampleScreener(dm)
+    
+    # v2.4.0: 从配置文件读取正样本筛选参数
+    positive_criteria = settings.get('data.sample_preparation.positive_criteria', {})
+    screener_config = {
+        'consecutive_weeks': positive_criteria.get('consecutive_weeks', 3),
+        'total_return_threshold': positive_criteria.get('total_return_threshold', 50),
+        'max_return_threshold': positive_criteria.get('max_return_threshold', 70),
+        'min_listing_days': positive_criteria.get('min_listing_days', 180),
+        # v2.4.0新增：反追龙头约束
+        'pre_t1_return_max': positive_criteria.get('pre_t1_return_max', 25),
+        'pre_t1_volatility_max': positive_criteria.get('pre_t1_volatility_max', 4),
+        'enable_anti_chasing': positive_criteria.get('enable_anti_chasing', True),
+    }
+    
+    log.info(f"筛选配置: {screener_config}")
+    screener = PositiveSampleScreener(dm, config=screener_config)
     
     # 3. 筛选正样本（仅当没有本地数据时）
     if df_samples is None:

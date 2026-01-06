@@ -2,9 +2,11 @@
 硬负样本筛选器 - 筛选"接近但未达标"的股票
 
 硬负样本定义：
-- 34日涨幅在20-45%之间（接近50%阈值但未达标）
-- 这些股票"看起来像牛股"，但实际上不是
-- 用于提高模型的区分能力，减少过拟合
+- 类型1（near_miss）：34日涨幅在20-45%之间（接近50%阈值但未达标）
+- 类型2（high_position_fail）：T1前已涨较多，但T1后下跌（高位追涨失败）
+  
+这些股票"看起来像牛股"，但实际上不是
+用于提高模型的区分能力，减少过拟合，特别是防止追龙头
 
 与普通负样本的区别：
 - 普通负样本：随机选择的股票，特征与正样本差异大，容易区分
@@ -19,6 +21,20 @@ from src.utils.logger import log
 
 class HardNegativeSampleScreener:
     """硬负样本筛选器 - 筛选接近但未达标的股票"""
+    
+    # 硬负样本类型配置
+    HARD_NEGATIVE_TYPES = {
+        'near_miss': {
+            'description': '涨幅接近但未达标',
+            'min_return': 20,
+            'max_return': 45,
+        },
+        'high_position_fail': {
+            'description': '高位启动后下跌',
+            'pre_return_min': 25,  # T1前34天涨幅至少25%
+            'post_return_max': 0,   # T1后表现为负
+        }
+    }
     
     def __init__(self, data_manager):
         """
@@ -35,10 +51,11 @@ class HardNegativeSampleScreener:
         min_return: float = 20.0,
         max_return: float = 45.0,
         samples_per_date: int = 5,
-        random_seed: int = 42
+        random_seed: int = 42,
+        include_high_position_fail: bool = True
     ) -> pd.DataFrame:
         """
-        筛选硬负样本：34日涨幅接近但未达标的股票
+        筛选硬负样本：包括"涨幅接近但未达标"和"高位假启动"两种类型
         
         Args:
             positive_samples_df: 正样本DataFrame（用于获取T1日期）
@@ -46,6 +63,7 @@ class HardNegativeSampleScreener:
             max_return: 最大34日涨幅阈值（默认45%，低于正样本的50%）
             samples_per_date: 每个T1日期采样的硬负样本数量
             random_seed: 随机种子
+            include_high_position_fail: 是否包含高位假启动类型（v2.4.0新增）
             
         Returns:
             硬负样本DataFrame
@@ -53,7 +71,9 @@ class HardNegativeSampleScreener:
         log.info("="*80)
         log.info("硬负样本筛选器 - 筛选接近但未达标的股票")
         log.info("="*80)
-        log.info(f"筛选条件: 34日涨幅在 {min_return}% - {max_return}% 之间")
+        log.info(f"类型1(near_miss): 34日涨幅在 {min_return}% - {max_return}% 之间")
+        if include_high_position_fail:
+            log.info(f"类型2(high_position_fail): T1前已涨>25%，但T1后下跌")
         log.info(f"每个T1日期采样: {samples_per_date} 只")
         log.info("")
         
@@ -74,8 +94,10 @@ class HardNegativeSampleScreener:
         
         # 收集硬负样本
         hard_negatives = []
+        high_pos_negatives = []  # 高位假启动类型
         processed_dates = 0
         found_count = 0
+        high_pos_count = 0
         
         log.info("开始筛选硬负样本...")
         log.info("="*80)
@@ -87,11 +109,11 @@ class HardNegativeSampleScreener:
             if processed_dates % 50 == 0 or processed_dates == 1:
                 log.info(
                     f"进度: {processed_dates}/{len(t1_dates)} | "
-                    f"已找到硬负样本: {found_count}"
+                    f"near_miss: {found_count} | high_pos_fail: {high_pos_count}"
                 )
             
             try:
-                # 筛选该T1日期的硬负样本
+                # 类型1: 筛选涨幅接近但未达标的股票
                 samples = self._screen_hard_negatives_for_date(
                     t1_date=str(t1_date),
                     all_stocks=all_stocks,
@@ -105,6 +127,21 @@ class HardNegativeSampleScreener:
                 if samples:
                     hard_negatives.extend(samples)
                     found_count += len(samples)
+                
+                # 类型2: 筛选高位假启动的股票（v2.4.0新增）
+                # v2.4.0优化：将高位假启动负样本比例从1:2提升到1:1，强化模型对高位陷阱的识别
+                if include_high_position_fail:
+                    high_pos_samples = self._screen_high_position_fail_for_date(
+                        t1_date=str(t1_date),
+                        all_stocks=all_stocks,
+                        positive_stocks=positive_stocks,
+                        samples_per_date=samples_per_date,  # 1:1比例
+                        random_seed=random_seed + processed_dates + 10000
+                    )
+                    
+                    if high_pos_samples:
+                        high_pos_negatives.extend(high_pos_samples)
+                        high_pos_count += len(high_pos_samples)
                     
             except Exception as e:
                 log.warning(f"T1={t1_date}: 筛选失败 - {e}")
@@ -113,9 +150,15 @@ class HardNegativeSampleScreener:
         log.info("")
         log.info("="*80)
         
-        if hard_negatives:
-            df_hard_neg = pd.DataFrame(hard_negatives)
-            log.success(f"✅ 硬负样本筛选完成！共 {len(df_hard_neg)} 个")
+        # 合并两种类型的硬负样本
+        all_hard_negatives = hard_negatives + high_pos_negatives
+        
+        if all_hard_negatives:
+            df_hard_neg = pd.DataFrame(all_hard_negatives)
+            log.success(f"✅ 硬负样本筛选完成！")
+            log.info(f"  - near_miss类型: {len(hard_negatives)} 个")
+            log.info(f"  - high_position_fail类型: {len(high_pos_negatives)} 个")
+            log.info(f"  - 总计: {len(df_hard_neg)} 个")
             
             # 统计涨幅分布
             if 'return_34d' in df_hard_neg.columns:
@@ -206,7 +249,7 @@ class HardNegativeSampleScreener:
                         't1_date': str(t1_date),
                         'return_34d': round(return_34d, 2),
                         'days_since_list': (t1_datetime - stock_row['list_date']).days,
-                        'sample_type': 'hard_negative'
+                        'sample_type': 'near_miss'  # v2.4.0: 更明确的类型标识
                     })
                     
                     # 达到目标数量后停止
@@ -217,6 +260,126 @@ class HardNegativeSampleScreener:
                 continue
         
         return hard_negatives
+    
+    def _screen_high_position_fail_for_date(
+        self,
+        t1_date: str,
+        all_stocks: pd.DataFrame,
+        positive_stocks: set,
+        samples_per_date: int = 2,
+        random_seed: int = 42
+    ) -> List[Dict]:
+        """
+        筛选高位假启动类型的硬负样本（v2.4.0新增）
+        
+        条件：
+        - T1前34天涨幅 >= 25%（已经涨了不少）
+        - T1后21天涨幅 <= 0%（启动失败，下跌）
+        
+        这类样本帮助模型学习"不要追高位启动的股票"
+        
+        Args:
+            t1_date: T1日期
+            all_stocks: 所有有效股票
+            positive_stocks: 正样本股票集合（排除）
+            samples_per_date: 采样数量
+            random_seed: 随机种子
+            
+        Returns:
+            高位假启动负样本列表
+        """
+        t1_datetime = pd.to_datetime(str(t1_date))
+        
+        # 计算日期范围
+        lookback_days = 34
+        forward_days = 21  # 向前看21天来判断是否启动失败
+        
+        # T1前的日期范围
+        pre_start_date = (t1_datetime - timedelta(days=lookback_days + 10)).strftime('%Y%m%d')
+        pre_end_date = (t1_datetime - timedelta(days=1)).strftime('%Y%m%d')
+        
+        # T1后的日期范围
+        post_start_date = t1_datetime.strftime('%Y%m%d')
+        post_end_date = (t1_datetime + timedelta(days=forward_days + 10)).strftime('%Y%m%d')
+        
+        # 筛选在T1日期之前已上市足够长时间的股票
+        min_listing_days = 180
+        eligible_stocks = all_stocks[
+            (all_stocks['list_date'] < t1_datetime - timedelta(days=min_listing_days)) &
+            (~all_stocks['ts_code'].isin(positive_stocks))
+        ]
+        
+        if len(eligible_stocks) == 0:
+            return []
+        
+        # 随机采样候选股票
+        sample_size = min(50, len(eligible_stocks))
+        np.random.seed(random_seed)
+        candidate_stocks = eligible_stocks.sample(n=sample_size, random_state=random_seed)
+        
+        high_pos_negatives = []
+        
+        for _, stock_row in candidate_stocks.iterrows():
+            ts_code = stock_row['ts_code']
+            name = stock_row['name']
+            
+            try:
+                # 1. 获取T1前的数据，计算pre_return
+                df_pre = self.dm.get_daily_data(ts_code, pre_start_date, pre_end_date, adjust='qfq')
+                
+                if df_pre.empty or len(df_pre) < 20:
+                    continue
+                
+                df_pre = df_pre.sort_values('trade_date').tail(lookback_days)
+                if len(df_pre) < 20:
+                    continue
+                
+                pre_start_price = df_pre.iloc[0]['close']
+                pre_end_price = df_pre.iloc[-1]['close']
+                pre_return = (pre_end_price - pre_start_price) / pre_start_price * 100
+                
+                # 条件1: T1前涨幅 >= 25%
+                if pre_return < 25:
+                    continue
+                
+                # 2. 获取T1后的数据，计算post_return
+                df_post = self.dm.get_daily_data(ts_code, post_start_date, post_end_date, adjust='qfq')
+                
+                if df_post.empty or len(df_post) < 15:
+                    continue
+                
+                df_post = df_post.sort_values('trade_date').head(forward_days)
+                if len(df_post) < 10:
+                    continue
+                
+                post_start_price = df_post.iloc[0]['close']
+                post_end_price = df_post.iloc[-1]['close']
+                post_return = (post_end_price - post_start_price) / post_start_price * 100
+                
+                # 条件2: T1后涨幅 <= 0%（启动失败）
+                if post_return > 0:
+                    continue
+                
+                # 符合条件，添加为高位假启动负样本
+                high_pos_negatives.append({
+                    'ts_code': ts_code,
+                    'name': name,
+                    't1_date': str(t1_date),
+                    'return_34d': round(pre_return, 2),  # 使用pre_return作为return_34d
+                    'pre_return': round(pre_return, 2),
+                    'post_return': round(post_return, 2),
+                    'days_since_list': (t1_datetime - stock_row['list_date']).days,
+                    'sample_type': 'high_position_fail'
+                })
+                
+                # 达到目标数量后停止
+                if len(high_pos_negatives) >= samples_per_date:
+                    break
+                    
+            except Exception as e:
+                continue
+        
+        return high_pos_negatives
     
     def _get_valid_stock_list(self) -> pd.DataFrame:
         """

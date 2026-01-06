@@ -24,11 +24,20 @@ data:
       total_return_threshold: 50 # 总涨幅阈值(%)
       max_return_threshold: 70   # 最高涨幅阈值(%)
       min_listing_days: 180      # 最小上市天数
+      # v2.4.0新增：反追龙头约束（基于样本分布分析优化）
+      # 分析结果：T1前涨幅中位数15.63%，波动率中位数2.66%
+      pre_t1_return_max: 20      # T1前34天涨幅上限(%)，保留约57.7%样本
+      pre_t1_volatility_max: 3   # T1前日均波动率上限(%)，保留约60.9%样本
+      enable_anti_chasing: true  # 是否启用反追龙头约束
     
     # 负样本条件
     negative_criteria:
       method: "same_period_other_stocks"  # 同期其他股票法
       sample_ratio: 1.0          # 负样本/正样本比例
+      # v2.4.0新增：硬负样本类型
+      hard_negative_types:
+        - near_miss              # 涨幅接近但未达标
+        - high_position_fail     # 高位假启动
   
   # 特征配置
   feature_extraction:

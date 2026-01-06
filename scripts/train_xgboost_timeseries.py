@@ -1006,8 +1006,9 @@ def save_to_version_directory(model, metrics, version, model_name, feature_names
     
     log.info("")
     log.success(f"✅ 版本 {version} 已保存到: {version_dir}")
-    log.info("   下一步可以使用以下命令提升版本状态:")
-    log.info(f"   python -c \"from src.models.lifecycle import ModelIterator; mi = ModelIterator('{model_name}'); mi.set_current_version('{version}', 'production')\"")
+    log.info("   下一步:")
+    log.info(f"   1. 查看训练指标: cat {version_dir}/training/metrics.json")
+    log.info(f"   2. 运行预测: python scripts/predict_v240.py --date YYYYMMDD")
 
 
 def main():

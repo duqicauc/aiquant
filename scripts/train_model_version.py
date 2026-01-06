@@ -530,9 +530,7 @@ python scripts/train_xgboost_timeseries.py \\
         log.info("💡 下一步:")
         log.info(f"   1. 查看版本报告: cat {self.version_dir}/version_report.json")
         log.info(f"   2. 查看训练指标: cat {self.version_dir}/training/metrics.json")
-        log.info(f"   3. 提升版本状态:")
-        log.info(f"      python -c \"from src.models.lifecycle import ModelIterator; mi = ModelIterator('{self.model_name}'); mi.set_current_version('{self.version}', 'production')\"")
-        log.info(f"   4. 运行预测: python scripts/score_current_stocks.py --version {self.version}")
+        log.info(f"   3. 运行预测: python scripts/predict_v240.py --date YYYYMMDD")
         log.info("")
 
 

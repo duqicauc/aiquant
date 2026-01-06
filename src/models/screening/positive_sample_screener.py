@@ -6,6 +6,8 @@
 2. 总涨幅超50%
 3. 最高涨幅超70%
 4. 上市超过半年（180天）
+5. T1前34天涨幅不超过阈值（防止追龙头）
+6. T1前波动率不超过阈值（优选盘整态启动）
 
 过滤规则：
 - ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
@@ -24,15 +26,32 @@ from src.utils.logger import log
 class PositiveSampleScreener:
     """正样本筛选器"""
     
-    def __init__(self, data_manager):
+    def __init__(self, data_manager, config: dict = None):
         """
         初始化筛选器
         
         Args:
             data_manager: 数据管理器实例
+            config: 配置字典，包含正样本筛选条件
         """
         self.dm = data_manager
         self.positive_samples = []
+        
+        # 默认配置
+        self.config = {
+            'consecutive_weeks': 3,
+            'total_return_threshold': 50,
+            'max_return_threshold': 70,
+            'min_listing_days': 180,
+            # v2.4.0新增：防止追龙头的约束
+            'pre_t1_return_max': 25,      # T1前34天涨幅上限(%)
+            'pre_t1_volatility_max': 4,   # T1前日均波动率上限(%)
+            'enable_anti_chasing': True,  # 是否启用反追龙头约束
+        }
+        
+        # 合并用户配置
+        if config:
+            self.config.update(config)
     
     def screen_all_stocks(
         self,
@@ -389,8 +408,25 @@ class PositiveSampleScreener:
             # 如果查询停牌信息失败，记录警告但不影响筛选
             log.warning(f"查询停牌信息失败 {ts_code} {t1_date_str}: {e}")
         
+        # v2.4.0新增：反追龙头约束（条件5和条件6）
+        pre_t1_return = None
+        pre_t1_volatility = None
+        
+        if self.config.get('enable_anti_chasing', True):
+            # 条件5: T1前34天涨幅不能过高
+            pre_t1_return = self._calculate_pre_t1_return(ts_code, t1_date, lookback_days=34)
+            pre_t1_return_max = self.config.get('pre_t1_return_max', 25)
+            if pre_t1_return is not None and pre_t1_return > pre_t1_return_max:
+                return None  # T1前已涨太多，排除
+            
+            # 条件6: T1前波动率不能过高（优选盘整态）
+            pre_t1_volatility = self._calculate_pre_t1_volatility(ts_code, t1_date, lookback_days=34)
+            pre_t1_volatility_max = self.config.get('pre_t1_volatility_max', 4)
+            if pre_t1_volatility is not None and pre_t1_volatility > pre_t1_volatility_max:
+                return None  # 波动太大，不是盘整态
+        
         # 符合所有条件，返回样本信息
-        return {
+        result = {
             'ts_code': ts_code,
             'name': name,
             't1_date': t1_date.strftime('%Y%m%d'),
@@ -403,6 +439,102 @@ class PositiveSampleScreener:
             'max_return': round(max_return, 2),
             'days_since_list': days_since_list
         }
+        
+        # v2.4.0新增：记录T1前的状态（用于分析）
+        if pre_t1_return is not None:
+            result['pre_t1_return'] = round(pre_t1_return, 2)
+        if pre_t1_volatility is not None:
+            result['pre_t1_volatility'] = round(pre_t1_volatility, 2)
+        
+        return result
+    
+    def _calculate_pre_t1_return(
+        self,
+        ts_code: str,
+        t1_date: pd.Timestamp,
+        lookback_days: int = 34
+    ) -> float:
+        """
+        计算T1前N天的涨幅
+        
+        Args:
+            ts_code: 股票代码
+            t1_date: T1日期
+            lookback_days: 回看天数
+            
+        Returns:
+            T1前N天的涨幅(%)，如果数据不足返回None
+        """
+        try:
+            # 计算日期范围（T1前1天往前推lookback_days天）
+            end_date = (t1_date - timedelta(days=1)).strftime('%Y%m%d')
+            start_date = (t1_date - timedelta(days=lookback_days + 20)).strftime('%Y%m%d')
+            
+            df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust='qfq')
+            
+            if df is None or df.empty or len(df) < lookback_days * 0.8:
+                return None
+            
+            # 取最后lookback_days天
+            df = df.sort_values('trade_date').tail(lookback_days)
+            
+            if len(df) < 20:
+                return None
+            
+            # 计算涨幅
+            start_price = df.iloc[0]['close']
+            end_price = df.iloc[-1]['close']
+            
+            if start_price <= 0:
+                return None
+            
+            return (end_price - start_price) / start_price * 100
+            
+        except Exception as e:
+            log.warning(f"计算T1前涨幅失败 {ts_code}: {e}")
+            return None
+    
+    def _calculate_pre_t1_volatility(
+        self,
+        ts_code: str,
+        t1_date: pd.Timestamp,
+        lookback_days: int = 34
+    ) -> float:
+        """
+        计算T1前N天的日均波动率（涨跌幅绝对值的均值）
+        
+        Args:
+            ts_code: 股票代码
+            t1_date: T1日期
+            lookback_days: 回看天数
+            
+        Returns:
+            日均波动率(%)，如果数据不足返回None
+        """
+        try:
+            # 计算日期范围
+            end_date = (t1_date - timedelta(days=1)).strftime('%Y%m%d')
+            start_date = (t1_date - timedelta(days=lookback_days + 20)).strftime('%Y%m%d')
+            
+            df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust='qfq')
+            
+            if df is None or df.empty or len(df) < lookback_days * 0.8:
+                return None
+            
+            # 取最后lookback_days天
+            df = df.sort_values('trade_date').tail(lookback_days)
+            
+            if len(df) < 20 or 'pct_chg' not in df.columns:
+                return None
+            
+            # 计算日均波动率（涨跌幅绝对值的均值）
+            volatility = df['pct_chg'].abs().mean()
+            
+            return volatility
+            
+        except Exception as e:
+            log.warning(f"计算T1前波动率失败 {ts_code}: {e}")
+            return None
     
     def extract_features(
         self,

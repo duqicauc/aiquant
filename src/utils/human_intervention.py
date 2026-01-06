@@ -165,14 +165,20 @@ class HumanInterventionChecker:
         Returns:
             检查结果字典
         """
-        from src.models.lifecycle.iterator import ModelIterator
-        
         try:
-            iterator = ModelIterator(model_name)
-            info = iterator.get_version_info(version)
+            # 直接读取模型目录中的指标文件
+            from pathlib import Path
+            model_dir = Path('data/models') / model_name / 'versions' / version
+            metrics_file = model_dir / 'training' / 'metrics.json'
             
-            metrics = info.get('metrics', {})
-            test_metrics = metrics.get('test', {})
+            if not metrics_file.exists():
+                raise FileNotFoundError(f"指标文件不存在: {metrics_file}")
+            
+            with open(metrics_file, 'r') as f:
+                metrics_data = json.load(f)
+            
+            metrics = metrics_data if isinstance(metrics_data, dict) else {}
+            test_metrics = metrics.get('test', metrics)
             
             warnings = []
             suggestions = []
@@ -234,15 +240,23 @@ class HumanInterventionChecker:
         Returns:
             检查结果字典
         """
-        from src.models.lifecycle.iterator import ModelIterator
-        
         try:
-            iterator = ModelIterator(model_name)
-            old_info = iterator.get_version_info(old_version)
-            new_info = iterator.get_version_info(new_version)
+            # 直接读取模型目录中的指标文件
+            from pathlib import Path
             
-            old_metrics = old_info.get('metrics', {}).get('test', {})
-            new_metrics = new_info.get('metrics', {}).get('test', {})
+            def _load_metrics(version):
+                model_dir = Path('data/models') / model_name / 'versions' / version
+                metrics_file = model_dir / 'training' / 'metrics.json'
+                if not metrics_file.exists():
+                    raise FileNotFoundError(f"指标文件不存在: {metrics_file}")
+                with open(metrics_file, 'r') as f:
+                    return json.load(f)
+            
+            old_metrics_data = _load_metrics(old_version)
+            new_metrics_data = _load_metrics(new_version)
+            
+            old_metrics = old_metrics_data.get('test', old_metrics_data) if isinstance(old_metrics_data, dict) else {}
+            new_metrics = new_metrics_data.get('test', new_metrics_data) if isinstance(new_metrics_data, dict) else {}
             
             warnings = []
             suggestions = []

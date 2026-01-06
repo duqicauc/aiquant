@@ -241,6 +241,54 @@ def get_stock_features(dm, ts_code, predict_date):
         price_range = rolling_high_20 - rolling_low_20
         df['recovery_ratio_20d'] = (df['close'] - rolling_low_20) / (price_range + 1e-10)
         
+        # ========== v2.3.1新增：收益预测特征 ==========
+        # 1. 动量强度（多周期动量的加权平均）
+        df['momentum_strength'] = (
+            df['momentum_5d'] * 0.3 + 
+            df['momentum_10d'] * 0.4 + 
+            df['momentum_20d'] * 0.3
+        )
+        
+        # 2. 突破强度（突破多个阻力位的程度）
+        breakout_count = (
+            df['breakout_high_10d'].astype(int) + 
+            df['breakout_high_20d'].astype(int) + 
+            df['breakout_high_55d'].astype(int) +
+            df['breakout_ma5'].astype(int) +
+            df['breakout_ma10'].astype(int) +
+            df['breakout_ma20'].astype(int) +
+            df['breakout_ma55'].astype(int)
+        )
+        df['breakout_strength'] = breakout_count / 7.0  # 归一化到0-1
+        
+        # 3. 成交量放大倍数（相对于均量的倍数）
+        vol_ma20 = df['vol'].rolling(20, min_periods=1).mean()
+        df['volume_expansion_ratio'] = df['vol'] / (vol_ma20 + 1e-8)
+        # 限制最大值，避免极端值
+        df['volume_expansion_ratio'] = df['volume_expansion_ratio'].clip(upper=10.0)
+        
+        # 4. 价格位置评分（在通道中的位置，0-1之间）
+        df['price_position_score'] = df['price_position_20d']
+        
+        # 5. 综合收益潜力评分（结合多个因子）
+        # 动量强度（归一化到0-1，假设最大动量为50%）
+        momentum_norm = (df['momentum_strength'] / 50.0).clip(0, 1)
+        # 突破强度（已经是0-1）
+        # 成交量放大（归一化，假设>2倍为满分）
+        volume_norm = (df['volume_expansion_ratio'] / 2.0).clip(0, 1)
+        # 价格位置（已经是0-1）
+        # 价量匹配度
+        price_vol_match = df['volume_price_match_sum_10d'] / 10.0
+        
+        # 综合评分（加权平均）
+        df['expected_return_score'] = (
+            momentum_norm * 0.3 +
+            df['breakout_strength'] * 0.25 +
+            volume_norm * 0.2 +
+            df['price_position_score'] * 0.15 +
+            price_vol_match * 0.1
+        )
+        
         # 取最后一行
         last_row = df.iloc[-1]
         predict_price = last_row['close']
