@@ -65,7 +65,7 @@ def calculate_all_advanced_factors(df: pd.DataFrame) -> pd.DataFrame:
             df['volume_price_match_sum_10d'] = df['volume_price_match'].rolling(10).sum()
     
     # ==================== 3. 多时间框架特征 ====================
-    for tf in [8, 34, 55]:
+    for tf in [8, 34, 55, 233]:  # 添加233日周期（斐波那契数列，约11个月）
         if n >= tf:
             # 收益率
             df[f'return_{tf}d'] = (df['close'] - df['close'].shift(tf)) / df['close'].shift(tf) * 100
@@ -102,13 +102,13 @@ def calculate_all_advanced_factors(df: pd.DataFrame) -> pd.DataFrame:
             df[f'trend_slope_{tf}d'] = slopes
     
     # ==================== 4. 突破形态 ====================
-    for period in [10, 20, 55]:
+    for period in [10, 20, 55, 233]:  # 添加233日周期
         if n >= period:
             df[f'prev_high_{period}d'] = df['close'].shift(1).rolling(period).max()
             df[f'breakout_high_{period}d'] = (df['close'] > df[f'prev_high_{period}d']).astype(int)
     
     # 均线突破
-    for ma_period in [5, 10, 20, 55]:
+    for ma_period in [5, 10, 20, 55, 233]:  # 添加233日均线突破
         ma_col = f'ma_{ma_period}d'
         if ma_col not in df.columns and n >= ma_period:
             df[ma_col] = df['close'].rolling(ma_period).mean()
@@ -138,7 +138,7 @@ def calculate_all_advanced_factors(df: pd.DataFrame) -> pd.DataFrame:
         df['consecutive_new_high'] = consecutive
     
     # ==================== 5. 支撑/阻力位 ====================
-    for period in [10, 20, 55]:
+    for period in [10, 20, 55, 233]:  # 添加233日周期
         if n >= period:
             df[f'resistance_{period}d'] = df['close'].shift(1).rolling(period).max()
             df[f'support_{period}d'] = df['close'].shift(1).rolling(period).min()

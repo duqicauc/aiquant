@@ -16,7 +16,8 @@ data:
       consecutive_weeks: 3       # 连续阳线周数
       total_return_threshold: 50 # 总涨幅阈值(%)
       max_return_threshold: 70   # 最高涨幅阈值(%)
-      min_listing_days: 180      # 最小上市天数
+      min_listing_days: 300      # 最小上市天数（提升到300天，确保能计算233日均线）
+      enable_anti_chasing: false # 关闭防追龙头约束（在v2.4.0训练脚本中再启用）
     
     # 负样本条件
     negative_criteria:
@@ -67,7 +68,7 @@ prediction:
   exclusion_rules:
     exclude_st: true             # 排除ST股票
     exclude_new_listed: true     # 排除新股
-    min_listing_days: 180
+    min_listing_days: 300        # 提升到300天，与正样本标准一致
     exclude_suspended: true      # 排除停牌
   
   

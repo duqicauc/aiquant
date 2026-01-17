@@ -4,9 +4,9 @@
 双模型配合选股策略
 
 支持三种策略：
-1. 交集优选：找出v2.3.1和v2.4.0都看好的股票
+1. 交集优选：找出v2.3.2和v2.4.0都看好的股票
 2. 市场环境择时：根据市场状态自动选择主力模型
-4. 信号验证：v2.4.0低位候选池 + v2.3.1触发确认
+4. 信号验证：v2.4.0低位候选池 + v2.3.2触发确认
 
 使用方法：
   python scripts/dual_model_strategy.py --strategy intersection --date 20260105
@@ -39,7 +39,8 @@ def load_predictions(date, version):
     
     if not file_path.exists():
         log.error(f"预测结果不存在: {file_path}")
-        log.info(f"请先运行: python scripts/predict_{version.replace('.', '')}_top10.py --date {date}")
+        version_script = version.replace('.', '')
+        log.info(f"请先运行: python scripts/predict_{version_script}_top10.py --date {date}")
         return None
     
     df = pd.read_csv(file_path)
@@ -51,7 +52,7 @@ def strategy_intersection(date, top_n=100, output_top=20):
     """
     策略1：交集优选
     
-    找出同时出现在v2.3.1 TopN和v2.4.0 TopN中的股票
+    找出同时出现在v2.3.2 TopN和v2.4.0 TopN中的股票
     这类股票：既有突破信号 + 位置相对合理
     """
     log.info("="*80)
@@ -62,27 +63,27 @@ def strategy_intersection(date, top_n=100, output_top=20):
     
     # 加载预测结果
     log.info("加载预测结果...")
-    df_231 = load_predictions(date, 'v2.3.1')
+    df_232 = load_predictions(date, 'v2.3.2')
     df_240 = load_predictions(date, 'v2.4.0')
     
-    if df_231 is None or df_240 is None:
+    if df_232 is None or df_240 is None:
         return None
     
     # 获取各自TopN
-    # v2.3.1按final_score排序
-    if 'final_score' in df_231.columns:
-        df_231 = df_231.sort_values('final_score', ascending=False)
+    # v2.3.2按final_score排序
+    if 'final_score' in df_232.columns:
+        df_232 = df_232.sort_values('final_score', ascending=False)
     else:
-        df_231 = df_231.sort_values('calibrated_probability', ascending=False)
-    top_231 = set(df_231.head(top_n)['ts_code'].tolist())
+        df_232 = df_232.sort_values('calibrated_probability', ascending=False)
+    top_232 = set(df_232.head(top_n)['ts_code'].tolist())
     
     # v2.4.0按calibrated_probability排序
     df_240 = df_240.sort_values('calibrated_probability', ascending=False)
     top_240 = set(df_240.head(top_n)['ts_code'].tolist())
     
     # 计算交集
-    intersection = top_231 & top_240
-    log.info(f"\nv2.3.1 Top{top_n}: {len(top_231)} 只")
+    intersection = top_232 & top_240
+    log.info(f"\nv2.3.2 Top{top_n}: {len(top_232)} 只")
     log.info(f"v2.4.0 Top{top_n}: {len(top_240)} 只")
     log.info(f"交集: {len(intersection)} 只")
     
@@ -91,17 +92,17 @@ def strategy_intersection(date, top_n=100, output_top=20):
         return None
     
     # 获取交集股票的详细信息
-    df_231_inter = df_231[df_231['ts_code'].isin(intersection)].copy()
+    df_232_inter = df_232[df_232['ts_code'].isin(intersection)].copy()
     df_240_inter = df_240[df_240['ts_code'].isin(intersection)].copy()
     
     # 合并信息
-    result = df_231_inter[['ts_code', 'name', 'close']].copy()
+    result = df_232_inter[['ts_code', 'name', 'close']].copy()
     result = result.merge(
-        df_231_inter[['ts_code', 'calibrated_probability', 'final_score', 'return_34d']].rename(
+        df_232_inter[['ts_code', 'calibrated_probability', 'final_score', 'return_34d']].rename(
             columns={
-                'calibrated_probability': 'v231_prob',
-                'final_score': 'v231_score',
-                'return_34d': 'v231_return_34d'
+                'calibrated_probability': 'v232_prob',
+                'final_score': 'v232_score',
+                'return_34d': 'v232_return_34d'
             }
         ),
         on='ts_code'
@@ -117,7 +118,7 @@ def strategy_intersection(date, top_n=100, output_top=20):
     )
     
     # 计算综合得分（两个模型的加权平均）
-    result['dual_score'] = result['v231_prob'] * 0.5 + result['v240_prob'] * 0.5
+    result['dual_score'] = result['v232_prob'] * 0.5 + result['v240_prob'] * 0.5
     result = result.sort_values('dual_score', ascending=False)
     
     # 输出结果
@@ -125,14 +126,14 @@ def strategy_intersection(date, top_n=100, output_top=20):
     log.info(f"🏆 双模型交集优选 Top{min(output_top, len(result))}")
     log.info("="*80)
     
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.1概率':<10} {'v2.4.0概率':<10} {'综合得分':<10} {'T1前涨幅':<10}")
+    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2概率':<10} {'v2.4.0概率':<10} {'综合得分':<10} {'T1前涨幅':<10}")
     log.info("-" * 75)
     
     for i, (_, row) in enumerate(result.head(output_top).iterrows(), 1):
         # 使用v2.4.0的return_34d（更准确反映低位情况）
         log.info(
             f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
-            f"{row['v231_prob']:<10.4f} {row['v240_prob']:<10.4f} "
+            f"{row['v232_prob']:<10.4f} {row['v240_prob']:<10.4f} "
             f"{row['dual_score']:<10.4f} {row['v240_return_34d']:>+8.1f}%"
         )
     
@@ -206,9 +207,9 @@ def strategy_market_timing(date, output_top=10):
     策略2：市场环境择时
     
     根据市场状态自动选择主力模型：
-    - 牛市: v2.3.1 80% + v2.4.0 20%
+    - 牛市: v2.3.2 80% + v2.4.0 20%
     - 震荡: 各50%
-    - 弱势: v2.4.0 80% + v2.3.1 20%
+    - 弱势: v2.4.0 80% + v2.3.2 20%
     """
     log.info("="*80)
     log.info("策略2：市场环境择时")
@@ -217,10 +218,10 @@ def strategy_market_timing(date, output_top=10):
     
     # 加载预测结果
     log.info("加载预测结果...")
-    df_231 = load_predictions(date, 'v2.3.1')
+    df_232 = load_predictions(date, 'v2.3.2')
     df_240 = load_predictions(date, 'v2.4.0')
     
-    if df_231 is None or df_240 is None:
+    if df_232 is None or df_240 is None:
         return None
     
     # 判断市场状态
@@ -230,40 +231,40 @@ def strategy_market_timing(date, output_top=10):
     
     # 设置权重
     if market_status == 'bull':
-        w231, w240 = 0.8, 0.2
+        w232, w240 = 0.8, 0.2
         status_desc = "🔥 牛市/题材热炒"
     elif market_status == 'bear':
-        w231, w240 = 0.2, 0.8
+        w232, w240 = 0.2, 0.8
         status_desc = "❄️ 弱势/调整"
     else:
-        w231, w240 = 0.5, 0.5
+        w232, w240 = 0.5, 0.5
         status_desc = "⚖️ 震荡市"
     
     log.info(f"\n市场状态: {status_desc}")
-    log.info(f"模型权重: v2.3.1={w231*100:.0f}%, v2.4.0={w240*100:.0f}%")
+    log.info(f"模型权重: v2.3.2={w232*100:.0f}%, v2.4.0={w240*100:.0f}%")
     
     # 排序
-    if 'final_score' in df_231.columns:
-        df_231 = df_231.sort_values('final_score', ascending=False)
+    if 'final_score' in df_232.columns:
+        df_232 = df_232.sort_values('final_score', ascending=False)
     else:
-        df_231 = df_231.sort_values('calibrated_probability', ascending=False)
+        df_232 = df_232.sort_values('calibrated_probability', ascending=False)
     df_240 = df_240.sort_values('calibrated_probability', ascending=False)
     
     # 按权重分配名额
-    n231 = int(output_top * w231)
-    n240 = output_top - n231
+    n232 = int(output_top * w232)
+    n240 = output_top - n232
     
     # 获取股票
-    top_231 = df_231.head(n231)[['ts_code', 'name', 'close', 'calibrated_probability', 'return_34d']].copy()
-    top_231['source'] = 'v2.3.1'
-    top_231['weight'] = w231
+    top_232 = df_232.head(n232)[['ts_code', 'name', 'close', 'calibrated_probability', 'return_34d']].copy()
+    top_232['source'] = 'v2.3.2'
+    top_232['weight'] = w232
     
     top_240 = df_240.head(n240)[['ts_code', 'name', 'close', 'calibrated_probability', 'return_34d']].copy()
     top_240['source'] = 'v2.4.0'
     top_240['weight'] = w240
     
     # 合并
-    result = pd.concat([top_231, top_240], ignore_index=True)
+    result = pd.concat([top_232, top_240], ignore_index=True)
     
     # 输出结果
     log.info("\n" + "="*80)
@@ -293,9 +294,9 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
     """
     策略4：信号验证
     
-    v2.4.0作为"候选池"，v2.3.1作为"触发器"：
+    v2.4.0作为"候选池"，v2.3.2作为"触发器"：
     1. v2.4.0选出低位潜力股（候选池）
-    2. 检查v2.3.1是否也给出信号
+    2. 检查v2.3.2是否也给出信号
     3. 双信号确认后买入
     """
     log.info("="*80)
@@ -305,10 +306,10 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
     
     # 加载预测结果
     log.info("加载预测结果...")
-    df_231 = load_predictions(date, 'v2.3.1')
+    df_232 = load_predictions(date, 'v2.3.2')
     df_240 = load_predictions(date, 'v2.4.0')
     
-    if df_231 is None or df_240 is None:
+    if df_232 is None or df_240 is None:
         return None
     
     # 获取v2.4.0的候选池
@@ -323,17 +324,17 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
         candidates = set(df_240_sorted.head(top_n)['ts_code'].tolist())
         log.info(f"使用v2.4.0 Top{top_n}作为候选池")
     
-    # 检查v2.3.1是否也给出信号
-    df_231_high_prob = df_231[df_231['calibrated_probability'] >= prob_threshold]
-    triggered = candidates & set(df_231_high_prob['ts_code'].tolist())
+    # 检查v2.3.2是否也给出信号
+    df_232_high_prob = df_232[df_232['calibrated_probability'] >= prob_threshold]
+    triggered = candidates & set(df_232_high_prob['ts_code'].tolist())
     
     log.info(f"\n候选池: {len(candidates)} 只")
-    log.info(f"v2.3.1概率>={prob_threshold}的股票: {len(df_231_high_prob)} 只")
+    log.info(f"v2.3.2概率>={prob_threshold}的股票: {len(df_232_high_prob)} 只")
     log.info(f"双信号触发: {len(triggered)} 只")
     
     if not triggered:
         log.warning("\n没有双信号触发的股票")
-        log.info("候选池股票正在低位蓄势，等待v2.3.1突破信号...")
+        log.info("候选池股票正在低位蓄势，等待v2.3.2突破信号...")
         
         # 输出候选池状态
         log.info("\n" + "="*80)
@@ -343,23 +344,23 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
         df_240_candidates = df_240[df_240['ts_code'].isin(candidates)].copy()
         df_240_candidates = df_240_candidates.sort_values('calibrated_probability', ascending=False)
         
-        # 添加v2.3.1的概率
-        df_231_prob = df_231[['ts_code', 'calibrated_probability']].rename(
-            columns={'calibrated_probability': 'v231_prob'}
+        # 添加v2.3.2的概率
+        df_232_prob = df_232[['ts_code', 'calibrated_probability']].rename(
+            columns={'calibrated_probability': 'v232_prob'}
         )
-        df_240_candidates = df_240_candidates.merge(df_231_prob, on='ts_code', how='left')
+        df_240_candidates = df_240_candidates.merge(df_232_prob, on='ts_code', how='left')
         
-        log.info(f"\n{'代码':<12} {'名称':<10} {'v2.4.0概率':<12} {'v2.3.1概率':<12} {'状态':<10}")
+        log.info(f"\n{'代码':<12} {'名称':<10} {'v2.4.0概率':<12} {'v2.3.2概率':<12} {'状态':<10}")
         log.info("-" * 60)
         
         for _, row in df_240_candidates.head(20).iterrows():
-            v231_prob = row.get('v231_prob', 0)
-            if pd.isna(v231_prob):
-                v231_prob = 0
-            status = "⚡待触发" if v231_prob >= 0.5 else "💤蓄势中"
+            v232_prob = row.get('v232_prob', 0)
+            if pd.isna(v232_prob):
+                v232_prob = 0
+            status = "⚡待触发" if v232_prob >= 0.5 else "💤蓄势中"
             log.info(
                 f"{row['ts_code']:<12} {row['name']:<10} "
-                f"{row['calibrated_probability']:<12.4f} {v231_prob:<12.4f} {status}"
+                f"{row['calibrated_probability']:<12.4f} {v232_prob:<12.4f} {status}"
             )
         
         # 保存候选池
@@ -371,7 +372,7 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
         return df_240_candidates
     
     # 获取触发股票的详细信息
-    df_231_triggered = df_231[df_231['ts_code'].isin(triggered)].copy()
+    df_232_triggered = df_232[df_232['ts_code'].isin(triggered)].copy()
     df_240_triggered = df_240[df_240['ts_code'].isin(triggered)].copy()
     
     result = df_240_triggered[['ts_code', 'name', 'close', 'return_34d']].copy()
@@ -382,13 +383,13 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
         on='ts_code'
     )
     result = result.merge(
-        df_231_triggered[['ts_code', 'calibrated_probability']].rename(
-            columns={'calibrated_probability': 'v231_prob'}
+        df_232_triggered[['ts_code', 'calibrated_probability']].rename(
+            columns={'calibrated_probability': 'v232_prob'}
         ),
         on='ts_code'
     )
     
-    result['dual_prob'] = (result['v240_prob'] + result['v231_prob']) / 2
+    result['dual_prob'] = (result['v240_prob'] + result['v232_prob']) / 2
     result = result.sort_values('dual_prob', ascending=False)
     
     # 输出结果
@@ -396,13 +397,13 @@ def strategy_signal_verification(date, watchlist_file=None, top_n=50, prob_thres
     log.info(f"🎯 双信号触发 - 买入信号！")
     log.info("="*80)
     
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.4.0概率':<10} {'v2.3.1概率':<10} {'T1前涨幅':<10}")
+    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.4.0概率':<10} {'v2.3.2概率':<10} {'T1前涨幅':<10}")
     log.info("-" * 65)
     
     for i, (_, row) in enumerate(result.iterrows(), 1):
         log.info(
             f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
-            f"{row['v240_prob']:<10.4f} {row['v231_prob']:<10.4f} "
+            f"{row['v240_prob']:<10.4f} {row['v232_prob']:<10.4f} "
             f"{row['return_34d']:>+8.1f}%"
         )
     

@@ -539,7 +539,7 @@ class PositiveSampleScreener:
     def extract_features(
         self,
         samples_df: pd.DataFrame,
-        lookback_days: int = 34
+        lookback_days: int = 70
     ) -> pd.DataFrame:
         """
         提取样本的特征数据（T1前N天）
@@ -593,6 +593,8 @@ class PositiveSampleScreener:
     ) -> pd.DataFrame:
         """
         提取单个样本的特征（优先使用Tushare Pro的技术因子API）
+        
+        v6修复：确保OHLCV数据完整，不使用估算值
 
         Args:
             ts_code: 股票代码
@@ -604,28 +606,62 @@ class PositiveSampleScreener:
         Returns:
             特征DataFrame
         """
-        # 计算开始日期（T1前100天，确保有足够数据）
-        # 确保 t1_date 是字符串格式（从CSV读取可能是整数）
-        t1 = pd.to_datetime(str(t1_date), format='%Y%m%d')
+        # 计算开始日期（T1前150天，确保有足够数据）
+        # 确保 t1_date 是字符串格式，支持多种日期格式
+        t1_str = str(t1_date)
+        try:
+            # 尝试 YYYYMMDD 格式
+            t1 = pd.to_datetime(t1_str, format='%Y%m%d')
+        except:
+            try:
+                # 尝试 YYYY-MM-DD 格式
+                t1 = pd.to_datetime(t1_str, format='%Y-%m-%d')
+            except:
+                # 自动解析
+                t1 = pd.to_datetime(t1_str)
         start_date = (t1 - timedelta(days=150)).strftime('%Y%m%d')
         end_date = (t1 - timedelta(days=1)).strftime('%Y%m%d')  # T1的前一天
         
-        # 1. 获取基础行情数据
+        # 1. 获取基础行情数据（包含完整OHLCV）
         df = self.dm.get_complete_data(ts_code, start_date, end_date)
         
         if df.empty:
             return pd.DataFrame()
         
-        # 2. 尝试获取Tushare的技术因子（包含MA、MACD等）
+        # 2. 确保OHLCV数据完整（v6修复：不使用估算值）
+        required_ohlcv = ['open', 'high', 'low', 'close', 'vol']
+        missing_ohlcv = [c for c in required_ohlcv if c not in df.columns]
+        
+        if missing_ohlcv:
+            # 尝试从日线数据补充
+            df_daily = self.dm.get_daily_data(ts_code, start_date, end_date)
+            if not df_daily.empty:
+                for col in missing_ohlcv:
+                    if col in df_daily.columns:
+                        # 按trade_date对齐
+                        df = pd.merge(
+                            df, 
+                            df_daily[['trade_date', col]], 
+                            on='trade_date', 
+                            how='left',
+                            suffixes=('', '_daily')
+                        )
+                        if col + '_daily' in df.columns:
+                            df[col] = df[col + '_daily']
+                            df.drop(col + '_daily', axis=1, inplace=True)
+        
+        # 3. 尝试获取Tushare的技术因子（包含MA、MACD等）
         try:
             df_factor = self.dm.get_stk_factor(ts_code, start_date, end_date)
             
             if not df_factor.empty:
                 # Tushare技术因子包含: macd_dif, macd_dea, macd, kdj_k, kdj_d, kdj_j, rsi等
                 # 合并技术因子到主数据
+                factor_cols = ['trade_date', 'macd_dif', 'macd_dea', 'macd', 'rsi_6', 'rsi_12', 'rsi_24']
+                available_factor_cols = [c for c in factor_cols if c in df_factor.columns]
                 df = pd.merge(
                     df,
-                    df_factor[['trade_date', 'macd_dif', 'macd_dea', 'macd', 'rsi_6', 'rsi_12', 'rsi_24']],
+                    df_factor[available_factor_cols],
                     on='trade_date',
                     how='left'
                 )
@@ -633,22 +669,22 @@ class PositiveSampleScreener:
         except Exception as e:
             log.warning(f"{ts_code}: 技术因子获取失败，将本地计算: {e}")
         
-        # 3. 计算MA5和MA10（如果Tushare没有提供，则本地计算）
+        # 4. 计算MA5和MA10（如果Tushare没有提供，则本地计算）
         if 'ma5' not in df.columns:
             df['ma5'] = df['close'].rolling(window=5).mean()
         if 'ma10' not in df.columns:
             df['ma10'] = df['close'].rolling(window=10).mean()
         
-        # 4. 只取T1前的最后N天（N个交易日）
+        # 5. 只取T1前的最后N天（N个交易日）
         df = df.tail(lookback_days)
         
         if len(df) < lookback_days:
             log.warning(f"{ts_code}: 数据不足{lookback_days}天，实际{len(df)}天")
         
-        # 5. 选择需要的字段
+        # 6. 选择需要的字段（v6修复：包含完整OHLCV）
         base_fields = [
-            'trade_date', 'ts_code', 'close', 'pct_chg',
-            'total_mv', 'circ_mv', 'ma5', 'ma10', 'volume_ratio'
+            'trade_date', 'ts_code', 'open', 'high', 'low', 'close', 'vol',
+            'pct_chg', 'total_mv', 'circ_mv', 'ma5', 'ma10', 'volume_ratio'
         ]
         
         # 如果有技术因子，也包含进来
@@ -662,11 +698,11 @@ class PositiveSampleScreener:
         
         df_features = df[available_fields].copy()
         
-        # 6. 添加样本ID和股票名称
+        # 7. 添加样本ID和股票名称
         df_features.insert(0, 'sample_id', sample_id)
         df_features.insert(2, 'name', name)
         
-        # 7. 添加相对T1的天数（-34, -33, ..., -1）
+        # 8. 添加相对T1的天数（-34, -33, ..., -1）
         df_features['days_to_t1'] = range(-len(df_features), 0)
         
         log.info(f"{ts_code}: 提取特征 {len(df_features)} 天，包含 {len(available_fields)} 个指标")

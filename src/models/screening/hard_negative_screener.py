@@ -33,7 +33,20 @@ class HardNegativeSampleScreener:
             'description': '高位启动后下跌',
             'pre_return_min': 25,  # T1前34天涨幅至少25%
             'post_return_max': 0,   # T1后表现为负
+        },
+        'false_breakout': {
+            'description': '伪突破（突破后快速回落）',
+            'breakout_threshold': 0,      # 突破20日高点
+            'pullback_days': 5,           # 5日内
+            'pullback_threshold': -5,     # 回落>5%
         }
+    }
+    
+    # v3优化：增加硬负样本采样数量
+    DEFAULT_SAMPLES_PER_DATE = {
+        'near_miss': 15,           # 从5增加到15
+        'high_position_fail': 15,  # 从5增加到15
+        'false_breakout': 10,      # 新增类型
     }
     
     def __init__(self, data_manager):
@@ -50,31 +63,39 @@ class HardNegativeSampleScreener:
         positive_samples_df: pd.DataFrame,
         min_return: float = 20.0,
         max_return: float = 45.0,
-        samples_per_date: int = 5,
+        samples_per_date: int = None,  # v3: 改为None，使用类型默认值
         random_seed: int = 42,
-        include_high_position_fail: bool = True
+        include_high_position_fail: bool = True,
+        include_false_breakout: bool = True  # v3新增：是否包含伪突破类型
     ) -> pd.DataFrame:
         """
-        筛选硬负样本：包括"涨幅接近但未达标"和"高位假启动"两种类型
+        筛选硬负样本：包括"涨幅接近但未达标"、"高位假启动"和"伪突破"三种类型
         
         Args:
             positive_samples_df: 正样本DataFrame（用于获取T1日期）
             min_return: 最小34日涨幅阈值（默认20%）
             max_return: 最大34日涨幅阈值（默认45%，低于正样本的50%）
-            samples_per_date: 每个T1日期采样的硬负样本数量
+            samples_per_date: 每个T1日期采样的硬负样本数量（None则使用默认值）
             random_seed: 随机种子
             include_high_position_fail: 是否包含高位假启动类型（v2.4.0新增）
+            include_false_breakout: 是否包含伪突破类型（v3新增）
             
         Returns:
             硬负样本DataFrame
         """
+        # v3: 使用类型默认采样数量
+        near_miss_per_date = samples_per_date or self.DEFAULT_SAMPLES_PER_DATE['near_miss']
+        high_pos_per_date = samples_per_date or self.DEFAULT_SAMPLES_PER_DATE['high_position_fail']
+        false_breakout_per_date = self.DEFAULT_SAMPLES_PER_DATE['false_breakout']
+        
         log.info("="*80)
-        log.info("硬负样本筛选器 - 筛选接近但未达标的股票")
+        log.info("硬负样本筛选器 v3 - 筛选接近但未达标的股票")
         log.info("="*80)
-        log.info(f"类型1(near_miss): 34日涨幅在 {min_return}% - {max_return}% 之间")
+        log.info(f"类型1(near_miss): 34日涨幅在 {min_return}% - {max_return}% 之间, 每日{near_miss_per_date}只")
         if include_high_position_fail:
-            log.info(f"类型2(high_position_fail): T1前已涨>25%，但T1后下跌")
-        log.info(f"每个T1日期采样: {samples_per_date} 只")
+            log.info(f"类型2(high_position_fail): T1前已涨>25%，但T1后下跌, 每日{high_pos_per_date}只")
+        if include_false_breakout:
+            log.info(f"类型3(false_breakout): 突破20日高点后5日内回落>5%, 每日{false_breakout_per_date}只")
         log.info("")
         
         np.random.seed(random_seed)
@@ -95,9 +116,11 @@ class HardNegativeSampleScreener:
         # 收集硬负样本
         hard_negatives = []
         high_pos_negatives = []  # 高位假启动类型
+        false_breakout_negatives = []  # v3新增：伪突破类型
         processed_dates = 0
         found_count = 0
         high_pos_count = 0
+        false_breakout_count = 0
         
         log.info("开始筛选硬负样本...")
         log.info("="*80)
@@ -109,7 +132,8 @@ class HardNegativeSampleScreener:
             if processed_dates % 50 == 0 or processed_dates == 1:
                 log.info(
                     f"进度: {processed_dates}/{len(t1_dates)} | "
-                    f"near_miss: {found_count} | high_pos_fail: {high_pos_count}"
+                    f"near_miss: {found_count} | high_pos_fail: {high_pos_count} | "
+                    f"false_breakout: {false_breakout_count}"
                 )
             
             try:
@@ -120,7 +144,7 @@ class HardNegativeSampleScreener:
                     positive_stocks=positive_stocks,
                     min_return=min_return,
                     max_return=max_return,
-                    samples_per_date=samples_per_date,
+                    samples_per_date=near_miss_per_date,
                     random_seed=random_seed + processed_dates
                 )
                 
@@ -129,19 +153,32 @@ class HardNegativeSampleScreener:
                     found_count += len(samples)
                 
                 # 类型2: 筛选高位假启动的股票（v2.4.0新增）
-                # v2.4.0优化：将高位假启动负样本比例从1:2提升到1:1，强化模型对高位陷阱的识别
                 if include_high_position_fail:
                     high_pos_samples = self._screen_high_position_fail_for_date(
                         t1_date=str(t1_date),
                         all_stocks=all_stocks,
                         positive_stocks=positive_stocks,
-                        samples_per_date=samples_per_date,  # 1:1比例
+                        samples_per_date=high_pos_per_date,
                         random_seed=random_seed + processed_dates + 10000
                     )
                     
                     if high_pos_samples:
                         high_pos_negatives.extend(high_pos_samples)
                         high_pos_count += len(high_pos_samples)
+                
+                # 类型3: 筛选伪突破的股票（v3新增）
+                if include_false_breakout:
+                    false_breakout_samples = self._screen_false_breakout_for_date(
+                        t1_date=str(t1_date),
+                        all_stocks=all_stocks,
+                        positive_stocks=positive_stocks,
+                        samples_per_date=false_breakout_per_date,
+                        random_seed=random_seed + processed_dates + 20000
+                    )
+                    
+                    if false_breakout_samples:
+                        false_breakout_negatives.extend(false_breakout_samples)
+                        false_breakout_count += len(false_breakout_samples)
                     
             except Exception as e:
                 log.warning(f"T1={t1_date}: 筛选失败 - {e}")
@@ -150,14 +187,15 @@ class HardNegativeSampleScreener:
         log.info("")
         log.info("="*80)
         
-        # 合并两种类型的硬负样本
-        all_hard_negatives = hard_negatives + high_pos_negatives
+        # 合并所有类型的硬负样本
+        all_hard_negatives = hard_negatives + high_pos_negatives + false_breakout_negatives
         
         if all_hard_negatives:
             df_hard_neg = pd.DataFrame(all_hard_negatives)
             log.success(f"✅ 硬负样本筛选完成！")
             log.info(f"  - near_miss类型: {len(hard_negatives)} 个")
             log.info(f"  - high_position_fail类型: {len(high_pos_negatives)} 个")
+            log.info(f"  - false_breakout类型: {len(false_breakout_negatives)} 个")
             log.info(f"  - 总计: {len(df_hard_neg)} 个")
             
             # 统计涨幅分布
@@ -381,6 +419,124 @@ class HardNegativeSampleScreener:
         
         return high_pos_negatives
     
+    def _screen_false_breakout_for_date(
+        self,
+        t1_date: str,
+        all_stocks: pd.DataFrame,
+        positive_stocks: set,
+        samples_per_date: int = 10,
+        random_seed: int = 42
+    ) -> List[Dict]:
+        """
+        筛选伪突破类型的硬负样本（v3新增）
+        
+        条件：
+        - T1前某日突破20日高点
+        - 突破后5日内回落>5%
+        
+        这类样本帮助模型学习"识别假突破陷阱"
+        
+        Args:
+            t1_date: T1日期
+            all_stocks: 所有有效股票
+            positive_stocks: 正样本股票集合（排除）
+            samples_per_date: 采样数量
+            random_seed: 随机种子
+            
+        Returns:
+            伪突破负样本列表
+        """
+        t1_datetime = pd.to_datetime(str(t1_date))
+        
+        # 计算日期范围（需要更长的历史数据来检测突破和回落）
+        lookback_days = 40  # 需要34天 + 额外天数来检测突破后的回落
+        start_date = (t1_datetime - timedelta(days=lookback_days + 30)).strftime('%Y%m%d')
+        end_date = (t1_datetime - timedelta(days=1)).strftime('%Y%m%d')
+        
+        # 筛选在T1日期之前已上市足够长时间的股票
+        min_listing_days = 180
+        eligible_stocks = all_stocks[
+            (all_stocks['list_date'] < t1_datetime - timedelta(days=min_listing_days)) &
+            (~all_stocks['ts_code'].isin(positive_stocks))
+        ]
+        
+        if len(eligible_stocks) == 0:
+            return []
+        
+        # 随机采样候选股票
+        sample_size = min(80, len(eligible_stocks))  # 增加候选数量，因为伪突破条件更严格
+        np.random.seed(random_seed)
+        candidate_stocks = eligible_stocks.sample(n=sample_size, random_state=random_seed)
+        
+        false_breakout_negatives = []
+        
+        for _, stock_row in candidate_stocks.iterrows():
+            ts_code = stock_row['ts_code']
+            name = stock_row['name']
+            
+            try:
+                # 获取该股票的历史数据
+                df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust='qfq')
+                
+                if df.empty or len(df) < 30:
+                    continue
+                
+                df = df.sort_values('trade_date').reset_index(drop=True)
+                
+                # 计算20日高点
+                df['high_20d'] = df['high'].rolling(20).max().shift(1)
+                
+                # 检测突破点（收盘价突破20日高点）
+                df['is_breakout'] = df['close'] > df['high_20d']
+                
+                # 寻找突破后回落的情况
+                breakout_indices = df[df['is_breakout']].index.tolist()
+                
+                found_false_breakout = False
+                breakout_return = 0
+                pullback_pct = 0
+                
+                for breakout_idx in breakout_indices:
+                    if breakout_idx + 5 >= len(df):
+                        continue
+                    
+                    breakout_price = df.loc[breakout_idx, 'close']
+                    
+                    # 检查突破后5日内的最低价
+                    future_5d = df.loc[breakout_idx:breakout_idx+5, 'low'].min()
+                    pullback = (future_5d - breakout_price) / breakout_price * 100
+                    
+                    # 条件：回落>5%
+                    if pullback < -5:
+                        found_false_breakout = True
+                        # 计算34日涨幅（用于记录）
+                        if len(df) >= 34:
+                            start_price = df.iloc[-34]['close']
+                            end_price = df.iloc[-1]['close']
+                            breakout_return = (end_price - start_price) / start_price * 100
+                        pullback_pct = pullback
+                        break
+                
+                if found_false_breakout:
+                    false_breakout_negatives.append({
+                        'ts_code': ts_code,
+                        'name': name,
+                        't1_date': str(t1_date),
+                        'return_34d': round(breakout_return, 2),
+                        'pullback_pct': round(pullback_pct, 2),
+                        'days_since_list': (t1_datetime - stock_row['list_date']).days,
+                        'sample_type': 'false_breakout'
+                    })
+                    
+                    # 达到目标数量后停止
+                    if len(false_breakout_negatives) >= samples_per_date:
+                        break
+                        
+            except Exception as e:
+                continue
+        
+        return false_breakout_negatives
+    
     def _get_valid_stock_list(self) -> pd.DataFrame:
         """
         获取有效的股票列表（与正样本筛选器相同的规则）
@@ -418,7 +574,7 @@ class HardNegativeSampleScreener:
     def extract_features(
         self,
         hard_negative_samples_df: pd.DataFrame,
-        lookback_days: int = 34
+        lookback_days: int = 70
     ) -> pd.DataFrame:
         """
         提取硬负样本的特征数据
