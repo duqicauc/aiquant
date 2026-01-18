@@ -467,24 +467,32 @@ def evaluate_predictions(dm, top10, predict_date, eval_date):
 
 
 def main():
-    # 预测日期: 2025年12月31日收盘后
-    predict_date = '20251231'
-    # 评估日期: 2026年1月16日收盘后
-    eval_date = '20260116'
+    import sys
+    
+    # 从命令行参数获取预测日期，默认为20260116
+    if len(sys.argv) > 1:
+        predict_date = sys.argv[1]
+    else:
+        # 预测日期: 2026年1月16日收盘后（用于1月19日操作）
+        predict_date = '20260116'
+    
+    # 是否评估（如果有评估日期参数）
+    eval_date = sys.argv[2] if len(sys.argv) > 2 else None
     
     # 1. 预测Top10
     top10 = predict_top10(predict_date)
     
-    # 2. 评估结果
-    dm = DataManager()
-    df_eval = evaluate_predictions(dm, top10, predict_date, eval_date)
-    
-    if df_eval is not None:
-        # 保存评估结果
-        eval_file = PROJECT_ROOT / 'data' / 'prediction' / 'evaluation' / f'v270_ensemble_eval_{predict_date}_to_{eval_date}.csv'
-        eval_file.parent.mkdir(parents=True, exist_ok=True)
-        df_eval.to_csv(eval_file, index=False)
-        log.info(f"\n评估结果已保存: {eval_file}")
+    # 2. 评估结果（如果提供了评估日期）
+    if eval_date:
+        dm = DataManager()
+        df_eval = evaluate_predictions(dm, top10, predict_date, eval_date)
+        
+        if df_eval is not None:
+            # 保存评估结果
+            eval_file = PROJECT_ROOT / 'data' / 'prediction' / 'evaluation' / f'v270_ensemble_eval_{predict_date}_to_{eval_date}.csv'
+            eval_file.parent.mkdir(parents=True, exist_ok=True)
+            df_eval.to_csv(eval_file, index=False)
+            log.info(f"\n评估结果已保存: {eval_file}")
 
 
 if __name__ == '__main__':
