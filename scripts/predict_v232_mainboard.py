@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-v2.3.2模型预测脚本 - 追高控制优化版
+v2.3.2模型预测脚本 - 沪深主板专版
 
-相比v2.3.1的改进：
-1. 追高惩罚：当日涨幅>15%的股票final_score乘以0.5
-2. 涨停过滤：当日涨停(>9.8%)但校准概率<0.8的股票降权
-3. 调整评分公式：0.6*校准概率 + 0.4*预期收益（更重视模型判断）
-4. 添加成交额过滤：过滤成交额<3000万的股票
-5. RSI过热惩罚：RSI>95的股票降低权重
+功能增强：
+1. 仅筛选沪深主板股票（过滤创业板、科创板、北交所）
+2. RSI健康筛选：从Top50中选RSI 40-70的股票
+3. 显示板块信息，便于与热门板块对照
+4. 追高控制惩罚（继承v2.3.2）
 """
 
 import sys
@@ -18,6 +17,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 
 import pandas as pd
 import numpy as np
@@ -32,6 +32,32 @@ warnings.filterwarnings('ignore')
 from src.utils.logger import log
 from src.data.data_manager import DataManager
 from src.models.screening.fundamental_screener import FundamentalScreener
+
+
+def is_main_board(ts_code):
+    """
+    判断是否为沪深主板股票
+    
+    沪深主板：
+    - 上海主板：600xxx, 601xxx, 603xxx, 605xxx
+    - 深圳主板：000xxx, 001xxx, 002xxx, 003xxx
+    
+    过滤掉：
+    - 创业板：300xxx
+    - 科创板：688xxx
+    - 北交所：8xxxxx, 4xxxxx, 920xxx
+    """
+    code = ts_code.split('.')[0]
+    
+    # 上海主板
+    if code.startswith(('600', '601', '603', '605')):
+        return True
+    
+    # 深圳主板
+    if code.startswith(('000', '001', '002', '003')):
+        return True
+    
+    return False
 
 
 def load_model():
@@ -51,7 +77,7 @@ def load_model():
 
 def extract_features(df):
     """
-    提取特征（与v2.3.1相同）
+    提取特征（与v2.3.2相同）
     """
     df = df.copy()
     
@@ -289,13 +315,6 @@ def extract_features(df):
 def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount, consecutive_limit_up):
     """
     v2.3.2评分公式
-    
-    改进：
-    1. 调整权重：0.6*校准概率 + 0.4*预期收益
-    2. 追高惩罚：当日涨幅>15%，分数乘以0.5
-    3. 涨停低概率惩罚：涨停但校准概率<0.8，分数乘以0.7
-    4. RSI过热惩罚：RSI>95，分数乘以0.8
-    5. 连续涨停惩罚：连续3天涨停，分数乘以0.6
     """
     # 基础评分：0.6*校准概率 + 0.4*预期收益
     base_score = 0.6 * cal_prob + 0.4 * expected_return_score
@@ -307,12 +326,11 @@ def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount
     if pct_chg > 15:
         penalty *= 0.5
         penalty_reasons.append(f"追高惩罚(涨幅{pct_chg:.1f}%)")
-    # 涨幅10-15%轻度惩罚
     elif pct_chg > 10:
         penalty *= 0.8
         penalty_reasons.append(f"轻度追高(涨幅{pct_chg:.1f}%)")
     
-    # 2. 涨停低概率惩罚：涨停但校准概率<0.8
+    # 2. 涨停低概率惩罚
     if pct_chg >= 9.8 and cal_prob < 0.8:
         penalty *= 0.7
         penalty_reasons.append(f"涨停低概率({cal_prob:.2f})")
@@ -375,7 +393,7 @@ def process_single_stock(dm, ts_code, name, predict_date, feature_names, booster
         
         pct_chg = float(last_row.get('pct_chg', 0))
         rsi_6 = float(last_row.get('rsi_6', 50))
-        amount = float(last_row.get('amount', 0))  # 成交额（千元）
+        amount = float(last_row.get('amount', 0))
         consecutive_limit_up = float(last_row.get('consecutive_limit_up', 0))
         
         # v2.3.2评分
@@ -409,22 +427,32 @@ def process_single_stock(dm, ts_code, name, predict_date, feature_names, booster
 
 
 def main():
-    parser = argparse.ArgumentParser(description='v2.3.2模型预测 - 追高控制优化版')
-    parser.add_argument('--date', type=str, default='20260109', help='预测日期 (YYYYMMDD)')
+    parser = argparse.ArgumentParser(description='v2.3.2模型预测 - 沪深主板专版')
+    parser.add_argument('--date', type=str, default='20260121', help='预测日期 (YYYYMMDD)')
     parser.add_argument('--min-amount', type=float, default=30000, help='最小成交额（千元），默认3000万')
+    parser.add_argument('--rsi-min', type=float, default=40, help='RSI下限，默认40')
+    parser.add_argument('--rsi-max', type=float, default=70, help='RSI上限，默认70')
+    parser.add_argument('--top-n', type=int, default=50, help='从Top N中筛选，默认50')
+    parser.add_argument('--output-n', type=int, default=10, help='输出股票数量，默认10')
     parser.add_argument('--fundamental', action='store_true', 
-                       help='启用基本面筛选（市值10-100亿，营收>1亿，净利润>200万，ROE>0，ROA>0）')
+                       help='启用基本面筛选')
     args = parser.parse_args()
     
     predict_date = args.date
     min_amount = args.min_amount
+    rsi_min = args.rsi_min
+    rsi_max = args.rsi_max
+    top_n = args.top_n
+    output_n = args.output_n
     
     log.info("="*80)
-    log.info(f"v2.3.2模型预测 - 追高控制优化版 - {predict_date}")
-    if args.fundamental:
-        log.info("【启用基本面筛选】")
+    log.info(f"v2.3.2模型预测 - 沪深主板专版 - {predict_date}")
     log.info("="*80)
-    log.info(f"最小成交额要求: {min_amount/1000:.0f}百万元")
+    log.info(f"筛选条件：")
+    log.info(f"  - 仅沪深主板（过滤创业板、科创板、北交所）")
+    log.info(f"  - RSI区间: {rsi_min}-{rsi_max}")
+    log.info(f"  - 从Top{top_n}中筛选RSI健康的股票")
+    log.info(f"  - 最小成交额: {min_amount/1000:.0f}百万元")
     
     # 初始化
     dm = DataManager()
@@ -436,12 +464,16 @@ def main():
     
     # 获取股票列表
     stock_list = dm.get_stock_list()
+    
+    # 第一步：过滤ST和新股
     valid = stock_list[
-        ~stock_list['name'].str.contains('ST|退', na=False) &
-        ~stock_list['ts_code'].str.startswith('688') &
-        ~stock_list['ts_code'].str.startswith('8')
+        ~stock_list['name'].str.contains('ST|退', na=False)
     ].copy()
-    log.info(f"📊 有效股票: {len(valid)} 只")
+    log.info(f"📊 过滤ST后: {len(valid)} 只")
+    
+    # 第二步：仅保留沪深主板
+    valid = valid[valid['ts_code'].apply(is_main_board)].copy()
+    log.info(f"📊 沪深主板股票: {len(valid)} 只")
     
     # 基本面筛选（可选）
     if args.fundamental:
@@ -450,12 +482,12 @@ def main():
             dm,
             config={
                 'enabled': True,
-                'market_cap_min': 100000,      # 10亿（万元）
-                'market_cap_max': 1000000,     # 100亿（万元）
-                'revenue_min': 5e8,            # 营业收入>5亿（元）- 标准方案
-                'net_profit_min': 5000000,     # 净利润>500万（元）- 标准方案
-                'roe_min': 5,                  # ROE>5% - 标准方案
-                'roa_min': 2,                  # ROA>2% - 标准方案
+                'market_cap_min': 100000,
+                'market_cap_max': 1000000,
+                'revenue_min': 5e8,
+                'net_profit_min': 5000000,
+                'roe_min': 5,
+                'roa_min': 2,
             }
         )
         valid = fundamental_screener.filter_stocks(valid, predict_date)
@@ -499,58 +531,88 @@ def main():
     # 流动性过滤
     before_filter = len(df_results)
     df_results = df_results[df_results['amount'] >= min_amount]
-    log.info(f"流动性过滤: {before_filter} -> {len(df_results)} (过滤掉成交额<{min_amount/1000:.0f}百万的股票)")
+    log.info(f"流动性过滤: {before_filter} -> {len(df_results)}")
     
     # 按final_score排序
     df_results = df_results.sort_values('final_score', ascending=False).reset_index(drop=True)
     
-    # Top10
-    df_top10 = df_results.head(10)
+    # 取Top N
+    df_top_n = df_results.head(top_n)
+    log.info(f"Top{top_n}分数范围: {df_top_n['final_score'].max():.4f} - {df_top_n['final_score'].min():.4f}")
     
-    log.success(f"\n✓ 预测完成: {len(df_results)} 只股票（流动性过滤后）")
+    # RSI健康筛选
+    df_healthy = df_top_n[
+        (df_top_n['rsi_6'] >= rsi_min) & 
+        (df_top_n['rsi_6'] <= rsi_max)
+    ].copy()
+    log.info(f"RSI {rsi_min}-{rsi_max} 筛选: {len(df_top_n)} -> {len(df_healthy)}")
     
-    # 显示Top10
-    log.info("\n" + "="*100)
-    log.info("🏆 v2.3.2 Top10 推荐（追高控制优化版）")
-    log.info("="*100)
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'综合评分':<10} {'校准概率':<10} {'当日涨幅':<10} {'惩罚系数':<10} {'惩罚原因':<30}")
-    log.info("-" * 110)
+    # 添加板块信息
+    industry_map = stock_list.set_index('ts_code')['industry'].to_dict()
+    df_healthy['industry'] = df_healthy['ts_code'].map(industry_map)
     
-    for i, (_, row) in enumerate(df_top10.iterrows(), 1):
-        penalty_str = f"{row['penalty']:.2f}" if row['penalty'] < 1.0 else "无"
-        reasons = row['penalty_reasons'] if row['penalty_reasons'] else "-"
+    # 添加原始排名
+    df_healthy['original_rank'] = df_healthy.index + 1
+    
+    # 取输出数量
+    df_output = df_healthy.head(output_n)
+    
+    log.success(f"\n✓ 筛选完成: {len(df_healthy)} 只符合条件的股票")
+    
+    # 显示结果
+    log.info("\n" + "="*120)
+    log.info(f"🏆 v2.3.2 沪深主板 Top{output_n}（RSI {rsi_min}-{rsi_max}健康区间）")
+    log.info("="*120)
+    log.info(f"\n{'排名':<4} {'原排名':<6} {'代码':<12} {'名称':<10} {'板块':<12} {'综合评分':<10} {'RSI':<8} {'涨幅':<10} {'惩罚':<8}")
+    log.info("-" * 120)
+    
+    for i, (_, row) in enumerate(df_output.iterrows(), 1):
+        penalty_str = f"{row['penalty']:.2f}" if row['penalty'] < 1.0 else "-"
+        industry = row.get('industry', '未知') or '未知'
         log.info(
-            f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
-            f"{row['final_score']:<10.4f} {row['calibrated_probability']:<10.4f} "
-            f"{row['pct_chg']:>+9.2f}% {penalty_str:<10} {reasons:<30}"
+            f"{i:<4} [{row['original_rank']:>3}名] {row['ts_code']:<12} {row['name']:<10} "
+            f"{industry:<12} {row['final_score']:<10.4f} {row['rsi_6']:<8.1f} "
+            f"{row['pct_chg']:>+8.2f}% {penalty_str:<8}"
         )
+    
+    # 板块统计
+    if len(df_healthy) > 0:
+        log.info("\n" + "="*80)
+        log.info("📊 板块分布（可与同花顺热门板块对照）")
+        log.info("="*80)
+        
+        industry_counts = Counter(df_healthy['industry'].dropna())
+        sorted_industries = industry_counts.most_common(10)
+        
+        for industry, count in sorted_industries:
+            stocks = df_healthy[df_healthy['industry'] == industry]['name'].tolist()
+            stock_str = ', '.join(stocks[:5])
+            if len(stocks) > 5:
+                stock_str += f" 等{len(stocks)}只"
+            log.info(f"  {industry}: {count}只 - {stock_str}")
     
     # 保存结果
     output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    output_file = output_dir / f'v2.3.2_top10_{predict_date}.csv'
-    df_top10.to_csv(output_file, index=False, encoding='utf-8-sig')
-    log.success(f"\n💾 Top10结果已保存: {output_file}")
+    output_file = output_dir / f'v232_mainboard_rsi{int(rsi_min)}-{int(rsi_max)}_{predict_date}.csv'
+    df_output.to_csv(output_file, index=False, encoding='utf-8-sig')
+    log.success(f"\n💾 结果已保存: {output_file}")
     
-    # 保存完整结果
-    full_output_file = output_dir / f'v2.3.2_full_{predict_date}.csv'
-    df_results.to_csv(full_output_file, index=False, encoding='utf-8-sig')
-    log.info(f"💾 完整结果已保存: {full_output_file}")
+    # 保存完整Top50结果
+    full_output_file = output_dir / f'v232_mainboard_top{top_n}_{predict_date}.csv'
+    df_top_n['industry'] = df_top_n['ts_code'].map(industry_map)
+    df_top_n.to_csv(full_output_file, index=False, encoding='utf-8-sig')
+    log.info(f"💾 Top{top_n}完整结果: {full_output_file}")
     
-    # 统计对比
+    # 统计
     log.info("\n" + "="*80)
-    log.info("📊 v2.3.2 改进效果统计")
+    log.info("📊 统计信息")
     log.info("="*80)
-    
-    # 统计被惩罚的股票
-    penalized = df_top10[df_top10['penalty'] < 1.0]
-    chase_high = df_top10[df_top10['pct_chg'] > 9]
-    
-    log.info(f"Top10中被惩罚的股票: {len(penalized)}/10")
-    log.info(f"Top10中当日涨幅>9%的股票: {len(chase_high)}/10")
-    log.info(f"Top10平均当日涨幅: {df_top10['pct_chg'].mean():.2f}%")
-    log.info(f"Top10平均校准概率: {df_top10['calibrated_probability'].mean():.4f}")
+    log.info(f"沪深主板有效股票: {len(df_results)}")
+    log.info(f"Top{top_n}中RSI健康股票: {len(df_healthy)}")
+    log.info(f"输出股票平均得分: {df_output['final_score'].mean():.4f}")
+    log.info(f"输出股票平均RSI: {df_output['rsi_6'].mean():.1f}")
 
 
 if __name__ == '__main__':

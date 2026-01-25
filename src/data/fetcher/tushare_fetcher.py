@@ -528,3 +528,159 @@ class TushareFetcher(BaseFetcher):
         except Exception as e:
             log.warning(f"获取融资融券数据失败: {e}")
             return pd.DataFrame()
+    
+    def concept_detail(self, ts_code: str = None) -> pd.DataFrame:
+        """
+        获取概念板块成分股
+        
+        Args:
+            ts_code: 股票代码，如果提供则获取该股票所属的概念板块
+            
+        Returns:
+            概念板块成分股DataFrame，包含 concept_name, ts_code 等字段
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            df = self.pro.concept_detail(ts_code=ts_code)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.debug(f"获取概念板块成分股失败: {e}")
+            return pd.DataFrame()
+    
+    def get_hot_concepts(
+        self,
+        trade_date: str,
+        top_n: int = 20,
+        min_up_nums: int = 3
+    ) -> pd.DataFrame:
+        """
+        获取热门概念板块（基于涨停股票数）
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            top_n: 返回TopN热门板块
+            min_up_nums: 最少涨停股票数
+            
+        Returns:
+            热门概念板块DataFrame，包含 ts_code, name, up_nums, pct_chg, rank 等字段
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            # 使用limit_cpt_list获取最强板块统计
+            df = self.pro.limit_cpt_list(
+                trade_date=self.format_date(trade_date)
+            )
+            
+            if df is not None and not df.empty:
+                # 过滤最少涨停股票数
+                df = df[df['up_nums'] >= min_up_nums].copy()
+                # 按涨停数排序
+                df = df.sort_values('up_nums', ascending=False).head(top_n)
+                # 添加热度得分（涨停数 + 涨幅加权）
+                df['heat_score'] = df['up_nums'] * 0.7 + df['pct_chg'].abs() * 0.3
+                df = df.sort_values('heat_score', ascending=False)
+                
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取热门概念板块失败: {e}")
+            return pd.DataFrame()
+    
+    def get_hot_industries(
+        self,
+        trade_date: str,
+        top_n: int = 20,
+        min_pct_chg: float = 1.0
+    ) -> pd.DataFrame:
+        """
+        获取热门行业板块（基于申万行业涨幅）
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            top_n: 返回TopN热门行业
+            min_pct_chg: 最小涨幅要求（%）
+            
+        Returns:
+            热门行业板块DataFrame，包含 ts_code, name, pct_chg 等字段
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            # 使用sw_daily获取申万行业日线行情
+            df = self.pro.sw_daily(
+                trade_date=self.format_date(trade_date)
+            )
+            
+            if df is not None and not df.empty:
+                # 过滤最小涨幅
+                df = df[df['pct_chg'] >= min_pct_chg].copy()
+                # 按涨幅排序
+                df = df.sort_values('pct_chg', ascending=False).head(top_n)
+                
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取热门行业板块失败: {e}")
+            return pd.DataFrame()
+    
+    def get_ths_hot(
+        self,
+        trade_date: str = None,
+        market: str = '概念板块',
+        is_new: str = 'Y',
+        top_n: int = 50
+    ) -> pd.DataFrame:
+        """
+        获取同花顺热榜数据（推荐使用）
+        
+        接口说明：https://tushare.pro/document/2?doc_id=320
+        获取同花顺App热榜数据，包括热股、概念板块、ETF、可转债、港美股等
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)，如果为None则使用最新数据
+            market: 热榜类型，可选值：
+                - '热股': 热门股票
+                - '概念板块': 热门概念板块（推荐）
+                - '行业板块': 热门行业板块
+                - 'ETF': 热门ETF
+                - '可转债': 热门可转债
+                - '港股': 热门港股
+                - '美股': 热门美股
+                - '热基': 热门基金
+            is_new: 是否最新（默认Y，如果为N则为盘中和盘后阶段采集）
+            top_n: 返回TopN热门数据
+            
+        Returns:
+            热榜数据DataFrame，包含：
+            - ts_code: 代码
+            - ts_name: 名称
+            - rank: 排行
+            - pct_change: 涨跌幅%
+            - hot: 热度值
+            - concept: 标签/概念
+            - rank_reason: 上榜解读
+        """
+        self.rate_limiter.wait_if_needed()
+        
+        try:
+            params = {
+                'market': market,
+                'is_new': is_new
+            }
+            
+            if trade_date:
+                params['trade_date'] = self.format_date(trade_date)
+            
+            df = self.pro.ths_hot(**params)
+            
+            if df is not None and not df.empty:
+                # 按热度值排序
+                df = df.sort_values('hot', ascending=False).head(top_n)
+                # 确保列名统一
+                if 'pct_change' in df.columns:
+                    df.rename(columns={'pct_change': 'pct_chg'}, inplace=True)
+                
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取同花顺热榜失败 ({market}): {e}")
+            return pd.DataFrame()
