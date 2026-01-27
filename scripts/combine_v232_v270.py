@@ -668,21 +668,21 @@ def calculate_risk_level(row):
         return 'low'
 
 
-def strategy_complementary(date, base_top_n=50, v232_top_n=100, output_top=10, 
+def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10, 
                           enable_fundamental_screening=False, 
                           max_high_risk=3, max_medium_risk=5):
     """
     策略4：互补策略（推荐）
     
     核心思路：
-    1. v2.7.0作为稳定基础池（Top50），提供稳健标的
+    1. v2.7.0作为稳定基础池（Top100），提供稳健标的
     2. v2.3.2作为热门板块补充，捕捉强势龙头股
     3. 对v2.3.2推荐的股票进行风险分层
     4. 识别热门板块，给予额外权重
     5. 控制高风险股票数量
     
     参数：
-    - base_top_n: v2.7.0基础池数量（默认50）
+    - base_top_n: v2.7.0基础池数量（默认100）
     - v232_top_n: v2.3.2候选池数量（默认100）
     - max_high_risk: 最多包含的高风险股票数（默认3）
     - max_medium_risk: 最多包含的中风险股票数（默认5）
@@ -1072,7 +1072,7 @@ def main():
     parser.add_argument('--w232', type=float, default=0.5, help='v2.3.2权重(默认0.5)')
     parser.add_argument('--w270', type=float, default=0.5, help='v2.7.0权重(默认0.5)')
     parser.add_argument('--top-n', type=int, default=100, help='交集策略的TopN参数(默认100)')
-    parser.add_argument('--base-top-n', type=int, default=50, help='互补策略的v2.7.0基础池数量(默认50)')
+    parser.add_argument('--base-top-n', type=int, default=100, help='互补策略的v2.7.0基础池数量(默认100)')
     parser.add_argument('--v232-top-n', type=int, default=100, help='互补策略的v2.3.2候选池数量(默认100)')
     parser.add_argument('--max-high-risk', type=int, default=3, help='互补策略最多包含的高风险股票数(默认3)')
     parser.add_argument('--max-medium-risk', type=int, default=5, help='互补策略最多包含的中风险股票数(默认5)')

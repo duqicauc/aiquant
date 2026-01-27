@@ -11,7 +11,7 @@
 
 **策略4：互补策略（推荐）**
 
-1. **v2.7.0作为稳定基础池**（Top50）
+1. **v2.7.0作为稳定基础池**（Top100）
    - 提供稳健标的，确保组合的稳定性
    - 默认低风险等级
 
@@ -51,7 +51,7 @@ python scripts/combine_v232_v270.py \
   --date 20260116 \
   --strategy complementary \
   --top 10 \
-  --base-top-n 50 \
+  --base-top-n 100 \
   --v232-top-n 100 \
   --max-high-risk 3 \
   --max-medium-risk 5 \
@@ -65,7 +65,7 @@ python scripts/combine_v232_v270.py \
 | `--date` | 必填 | 预测日期 (YYYYMMDD) |
 | `--strategy` | `complementary` | 策略类型：`complementary`（互补策略） |
 | `--top` | `10` | 输出TopN股票 |
-| `--base-top-n` | `50` | v2.7.0稳定基础池数量 |
+| `--base-top-n` | `100` | v2.7.0稳定基础池数量 |
 | `--v232-top-n` | `100` | v2.3.2候选池数量 |
 | `--max-high-risk` | `3` | 最多包含的高风险股票数 |
 | `--max-medium-risk` | `5` | 最多包含的中风险股票数 |
@@ -139,7 +139,7 @@ python scripts/combine_v232_v270.py \
   --date 20260116 \
   --strategy complementary \
   --top 10 \
-  --base-top-n 50 \
+  --base-top-n 100 \
   --v232-top-n 50 \
   --max-high-risk 1 \
   --max-medium-risk 3 \
@@ -150,6 +150,7 @@ python scripts/combine_v232_v270.py \
 - 更多依赖v2.7.0稳定标的
 - 严格控制高风险股票数量
 - 启用基本面筛选
+- 使用较高的评分阈值，确保选股质量
 
 ### 2. 平衡型配置（推荐）
 
@@ -158,7 +159,7 @@ python scripts/combine_v232_v270.py \
   --date 20260116 \
   --strategy complementary \
   --top 10 \
-  --base-top-n 50 \
+  --base-top-n 100 \
   --v232-top-n 100 \
   --max-high-risk 3 \
   --max-medium-risk 5
@@ -168,6 +169,7 @@ python scripts/combine_v232_v270.py \
 - 平衡稳定性和收益潜力
 - 适度捕捉热门板块机会
 - 风险控制适中
+- 使用默认评分阈值，平衡选股数量和质量
 
 ### 3. 激进型配置（适合经验丰富的投资者）
 
@@ -176,7 +178,7 @@ python scripts/combine_v232_v270.py \
   --date 20260116 \
   --strategy complementary \
   --top 10 \
-  --base-top-n 30 \
+  --base-top-n 70 \
   --v232-top-n 150 \
   --max-high-risk 5 \
   --max-medium-risk 7
@@ -186,6 +188,7 @@ python scripts/combine_v232_v270.py \
 - 更多依赖v2.3.2捕捉热门板块
 - 允许更多高风险股票
 - 追求更高收益潜力
+- 使用较低的评分阈值，扩大选股范围
 
 ---
 
@@ -212,6 +215,7 @@ python scripts/combine_v232_v270.py \
    - 可根据风险偏好调整参数
    - 支持基本面筛选
    - 可控制各风险等级股票数量
+   - 可调整评分阈值
 
 ---
 
@@ -247,14 +251,14 @@ python scripts/combine_v232_v270.py \
 策略4：互补策略（推荐）
 ================================================================================
 核心思路：v2.7.0稳定基础 + v2.3.2热门板块补充 + 风险分层
-参数: v2.7.0基础池=50, v2.3.2候选池=100, 输出Top10
+参数: v2.7.0基础池=100, v2.3.2候选池=100, 输出Top10
 风险控制: 最多3只高风险, 最多5只中风险
 
 加载预测结果...
   v2.3.2: 1200 只股票
   v2.7.0: 3500 只股票
 
-✓ v2.7.0稳定基础池: 50 只
+✓ v2.7.0稳定基础池: 100 只
 
 识别热门板块...
 获取同花顺热榜数据（20260116）...
