@@ -4,11 +4,11 @@
 v232_v270互补策略回测脚本
 
 策略：
-1. 第1天（1月5日）：买入互补策略top10，每支30万
-2. 后续每日：
-   - 检查持仓股票是否在top50内，如果跌出top50则卖出
-   - 检查是否有新股票进入top10（且不在持仓中），如果有且现金>=30万，则买入
-   - 继续买入新股票直到现金不足30万
+1. 选股与买入日对应：当日买入使用「前一交易日」的互补结果（如29号买入用28号选股结果），避免未来数据。
+2. 第1天：若前一交易日互补结果不存在（如1月5日前为元旦假期无1月2日文件），则当日跳过，实际首日建仓为次日（如1月6日）。
+3. 后续每日：当日顺序为「先买后卖」。T日卖出所得资金，T+1日开盘用于买。
+   - 买入：前一日选出的Top10，当日开盘价买；选股日Top10中不在持仓的按顺序买直至现金不足30万/只。
+   - 卖出：排名50名之后 且 连续两日（T1、T2）收盘价低于五日均价，在T2收盘价卖。
 
 初始资金：1000万
 """
@@ -22,6 +22,15 @@ from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    _HAS_MATPLOTLIB = True
+except ImportError:
+    _HAS_MATPLOTLIB = False
+
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -29,9 +38,22 @@ from src.utils.logger import log
 from src.data.data_manager import DataManager
 
 
+def get_prev_trading_date(date_str: str) -> str:
+    """
+    返回指定日期的前一交易日（仅按工作日，不考虑节假日）。
+    用于确定「选股日」：当日买入应使用前一交易日的选股结果。
+    """
+    dt = datetime.strptime(date_str, '%Y%m%d')
+    while True:
+        dt -= timedelta(days=1)
+        if dt.weekday() < 5:  # 周一=0, 周五=4
+            return dt.strftime('%Y%m%d')
+
+
 def load_complementary_predictions(date: str, top_n: int = 50) -> Optional[pd.DataFrame]:
     """
-    加载互补策略预测结果
+    加载互补策略预测结果。
+    排序字段与互补策略生成一致：优先 sort_key（dual_score+热门加成），否则 dual_score，再否则 final_score。
     
     Args:
         date: 日期 (YYYYMMDD)
@@ -52,11 +74,16 @@ def load_complementary_predictions(date: str, top_n: int = 50) -> Optional[pd.Da
     try:
         df = pd.read_csv(file_path, encoding='utf-8-sig')
         
-        # 按dual_score排序，取top_n
-        if 'dual_score' in df.columns:
-            df = df.sort_values('dual_score', ascending=False).head(top_n)
+        # 选股排序与互补策略生成一致：优先 sort_key（含热门加成），否则 dual_score，再否则 final_score
+        sort_col = None
+        if 'sort_key' in df.columns:
+            sort_col = 'sort_key'
+        elif 'dual_score' in df.columns:
+            sort_col = 'dual_score'
         elif 'final_score' in df.columns:
-            df = df.sort_values('final_score', ascending=False).head(top_n)
+            sort_col = 'final_score'
+        if sort_col:
+            df = df.sort_values(sort_col, ascending=False).head(top_n)
         
         return df
     except Exception as e:
@@ -135,20 +162,30 @@ def get_stock_price(date: str, ts_code: str, dm: DataManager,
     return None
 
 
+def get_stock_open(date: str, ts_code: str, dm: DataManager) -> Optional[float]:
+    """
+    获取股票在指定日期的开盘价（用于当日开盘价买入）
+    """
+    try:
+        df_daily = dm.get_daily_data(ts_code, date, date)
+        if df_daily is not None and not df_daily.empty and 'open' in df_daily.columns:
+            open_price = df_daily.iloc[-1]['open']
+            if pd.notna(open_price) and open_price > 0:
+                return float(open_price)
+    except Exception as e:
+        log.debug(f"获取{ts_code}在{date}的开盘价失败: {e}")
+    return None
+
+
 def calculate_position_value(holdings: Dict, date: str, dm: DataManager, 
                             predictions_cache: Dict[str, pd.DataFrame]) -> float:
     """
-    计算持仓市值
+    计算持仓市值（使用当日行情价，不从预测文件取价）
     """
     total_value = 0.0
     
     for ts_code, position in holdings.items():
-        # 尝试从缓存中获取价格
-        price = None
-        if date in predictions_cache:
-            price = get_stock_price(date, ts_code, dm, predictions_cache[date])
-        else:
-            price = get_stock_price(date, ts_code, dm)
+        price = get_stock_price(date, ts_code, dm, None)
         
         if price is not None:
             total_value += position['quantity'] * price
@@ -191,7 +228,7 @@ def backtest_complementary_strategy(
     log.info(f"每支股票买入金额: {stock_amount:,.0f}元")
     log.info(f"买入Top{top_n_buy}")
     if use_ma5_sell:
-        log.info(f"卖出策略: 跌破5日线后第二日若收盘仍在5日线下则卖出")
+        log.info(f"卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖")
     else:
         log.info(f"卖出策略: 跌出Top{top_n_hold}则卖出")
     log.info("")
@@ -229,19 +266,18 @@ def backtest_complementary_strategy(
         log.info(f"日期: {date} ({i+1}/{len(trading_dates)})")
         log.info(f"{'='*80}")
         
-        # 加载当日预测结果
-        df_pred = load_complementary_predictions(date, top_n=top_n_hold)
+        # 加载「前一交易日」的互补结果，用于当日买入（选股日=前一交易日，买入日=当日）
+        # 首日若无前一交易日文件（如1月5日前为元旦假期），则跳过，实际首日建仓为次日
+        signal_date = trading_dates[i - 1] if i > 0 else get_prev_trading_date(trading_dates[0])
+        df_pred = load_complementary_predictions(signal_date, top_n=top_n_hold)
         if df_pred is None or df_pred.empty:
-            log.warning(f"日期{date}的预测结果不存在或为空，跳过")
-            # 使用前一日价格更新持仓市值
-            if i > 0:
-                prev_date = trading_dates[i-1]
-                if prev_date in predictions_cache:
-                    df_pred = predictions_cache[prev_date]
-                else:
-                    continue
+            log.warning(f"选股日{signal_date}的互补结果不存在或为空，当日{date}无法买入/调仓，跳过")
+            if i > 0 and trading_dates[i - 1] in predictions_cache:
+                df_pred = predictions_cache[trading_dates[i - 1]]
             else:
                 continue
+        else:
+            log.info(f"选股日: {signal_date} -> 买入日: {date} (使用 v232_v270_complementary_{signal_date}.csv)")
         
         predictions_cache[date] = df_pred
         
@@ -251,41 +287,99 @@ def backtest_complementary_strategy(
         
         log.info(f"Top10股票: {', '.join(top10_stocks[:5])}...")
         log.info(f"Top50股票数量: {len(top50_stocks)}")
+        log.info(f"当日顺序: 先买后卖（开盘价买入，收盘价卖出；T日卖出资金T+1日开盘用于买）")
         
-        # 第一步：检查持仓股票，使用5日均线卖出策略
+        # 第一步：买入（选股日Top10，当日开盘价买）
+        stocks_to_buy = [ts_code for ts_code in top10_stocks if ts_code not in holdings]
+        for ts_code in stocks_to_buy:
+            if cash < stock_amount:
+                log.info(f"现金不足，无法继续买入（剩余现金: {cash:,.0f}元）")
+                break
+            
+            price = get_stock_open(date, ts_code, dm)
+            if price is None or price <= 0:
+                log.warning(f"无法获取{ts_code}当日开盘价或价格无效，跳过买入")
+                continue
+            
+            quantity = int(stock_amount / price / 100) * 100  # 按手买入（100股为1手）
+            if quantity < 100:
+                log.warning(f"{ts_code}价格过高，无法买入1手（开盘价: {price:.2f}元）")
+                continue
+            
+            buy_amount = quantity * price
+            
+            if buy_amount > cash:
+                quantity = int(cash / price / 100) * 100
+                if quantity < 100:
+                    break
+                buy_amount = quantity * price
+            
+            cash -= buy_amount
+            
+            if ts_code not in holdings:
+                holdings[ts_code] = {
+                    'quantity': quantity,
+                    'cost': buy_amount,
+                    'buy_date': date,
+                    'below_ma5_days': 0
+                }
+            else:
+                holdings[ts_code]['quantity'] += quantity
+                holdings[ts_code]['cost'] += buy_amount
+                holdings[ts_code]['below_ma5_days'] = 0
+            
+            buy_reason = f"进入Top10(选股日{signal_date})，当日开盘价买入"
+            log.info(f"买入: {ts_code} - {quantity}股 @ {price:.2f}元(开盘) = {buy_amount:,.0f}元 ({buy_reason})")
+            
+            operations_log.append({
+                'date': date,
+                'operation': '买入',
+                'ts_code': ts_code,
+                'quantity': quantity,
+                'price': price,
+                'amount': buy_amount,
+                'reason': buy_reason
+            })
+        
+        # 第二步：卖出（排名50名之后 且 连续两日收盘价低于五日均价，在D日收盘价卖）
+        # 连续两日 = D-1 跌破 MA5，D 日收盘价仍在 MA5 以下 → 按 D 日收盘价卖出
         stocks_to_sell = []
         for ts_code in list(holdings.keys()):
-            price = get_stock_price(date, ts_code, dm, df_pred)
+            price = get_stock_price(date, ts_code, dm, None)  # D 日收盘价
             if price is None:
                 continue
             
             if use_ma5_sell:
-                # 5日均线卖出策略
+                # 卖出条件：不在Top50 且 (D-1 跌破 MA5 且 D 日收盘仍在 MA5 下)，below_ma5_days>=2 即满足
+                if ts_code in top50_stocks:
+                    # 在Top50内不卖，仅更新MA5计数（便于跌出Top50后连续天数正确）
+                    ma5 = get_ma5(ts_code, date, dm)
+                    if ma5 is not None:
+                        if price < ma5:
+                            holdings[ts_code]['below_ma5_days'] = holdings[ts_code].get('below_ma5_days', 0) + 1
+                        else:
+                            holdings[ts_code]['below_ma5_days'] = 0
+                    continue
+                
                 ma5 = get_ma5(ts_code, date, dm)
                 if ma5 is None:
                     log.debug(f"无法获取{ts_code}的MA5，跳过检查")
                     continue
                 
                 if price < ma5:
-                    # 收盘价在5日线下
                     holdings[ts_code]['below_ma5_days'] = holdings[ts_code].get('below_ma5_days', 0) + 1
-                    
                     if holdings[ts_code]['below_ma5_days'] >= 2:
-                        # 跌破5日线后第二日仍在5日线下，卖出
-                        stocks_to_sell.append((ts_code, price, ma5, '跌破MA5第2天'))
+                        stocks_to_sell.append((ts_code, price, ma5, '跌出Top50且跌破MA5第2天'))
                     else:
-                        log.info(f"观察: {ts_code} 跌破MA5第1天 (收盘{price:.2f} < MA5 {ma5:.2f})")
+                        log.info(f"观察: {ts_code} 跌出Top50且跌破MA5第1天 (收盘{price:.2f} < MA5 {ma5:.2f})")
                 else:
-                    # 收盘价在5日线上，重置计数
                     if holdings[ts_code].get('below_ma5_days', 0) > 0:
                         log.info(f"恢复: {ts_code} 站上MA5 (收盘{price:.2f} >= MA5 {ma5:.2f})")
                     holdings[ts_code]['below_ma5_days'] = 0
             else:
-                # 原来的top50卖出策略
                 if ts_code not in top50_stocks:
                     stocks_to_sell.append((ts_code, price, None, f'跌出top{top_n_hold}'))
         
-        # 执行卖出
         for sell_info in stocks_to_sell:
             ts_code, price, ma5, reason = sell_info
             position = holdings[ts_code]
@@ -296,7 +390,7 @@ def backtest_complementary_strategy(
             
             cash += sell_amount
             ma5_info = f"，MA5={ma5:.2f}" if ma5 else ""
-            log.info(f"卖出: {ts_code} - {position['quantity']}股 @ {price:.2f}元{ma5_info} = {sell_amount:,.0f}元 "
+            log.info(f"卖出: {ts_code} - {position['quantity']}股 @ {price:.2f}元(收盘){ma5_info} = {sell_amount:,.0f}元 "
                     f"(盈亏: {profit:+,.0f}元, {profit_pct:+.2f}%，{reason})")
             
             operations_log.append({
@@ -310,66 +404,19 @@ def backtest_complementary_strategy(
                 'profit': profit,
                 'profit_pct': profit_pct,
                 'reason': reason,
-                'ma5': ma5
+                'ma5': ma5,
+                'buy_date': position.get('buy_date', date)
             })
             
             del holdings[ts_code]
         
-        # 第二步：检查新股票，买入top10中不在持仓的股票
-        stocks_to_buy = [ts_code for ts_code in top10_stocks if ts_code not in holdings]
-        
-        # 执行买入
-        for ts_code in stocks_to_buy:
-            if cash < stock_amount:
-                log.info(f"现金不足，无法继续买入（剩余现金: {cash:,.0f}元）")
-                break
-            
-            price = get_stock_price(date, ts_code, dm, df_pred)
-            if price is None or price <= 0:
-                log.warning(f"无法获取{ts_code}价格或价格无效，跳过买入")
-                continue
-            
-            quantity = int(stock_amount / price / 100) * 100  # 按手买入（100股为1手）
-            if quantity < 100:
-                log.warning(f"{ts_code}价格过高，无法买入1手（价格: {price:.2f}元）")
-                continue
-            
-            buy_amount = quantity * price
-            
-            if buy_amount > cash:
-                # 调整数量
-                quantity = int(cash / price / 100) * 100
-                if quantity < 100:
-                    break
-                buy_amount = quantity * price
-            
-            cash -= buy_amount
-            
-            # 如果是新买入，记录持仓
-            if ts_code not in holdings:
-                holdings[ts_code] = {
-                    'quantity': quantity,
-                    'cost': buy_amount,
-                    'buy_date': date,
-                    'below_ma5_days': 0  # 初始化跌破MA5天数为0
-                }
-            else:
-                # 加仓
-                holdings[ts_code]['quantity'] += quantity
-                holdings[ts_code]['cost'] += buy_amount
-                holdings[ts_code]['below_ma5_days'] = 0  # 重置跌破MA5天数
-            
-            log.info(f"买入: {ts_code} - {quantity}股 @ {price:.2f}元 = {buy_amount:,.0f}元")
-            
-            operations_log.append({
-                'date': date,
-                'operation': '买入',
-                'ts_code': ts_code,
-                'quantity': quantity,
-                'price': price,
-                'amount': buy_amount,
-                'reason': '进入top10'
-            })
+        # 当日买卖原因备注（用于每日记录）
+        sell_reason_counts = {}
+        for (_, _, _, r) in stocks_to_sell:
+            sell_reason_counts[r] = sell_reason_counts.get(r, 0) + 1
+        sell_reason_remark = "；".join([f"{r}: {c}只" for r, c in sell_reason_counts.items()]) if sell_reason_counts else "无"
+        buy_count_today = len([op for op in operations_log if op['date'] == date and op['operation'] == '买入'])
+        buy_reason_remark = f"选股日{signal_date}的Top10新进{buy_count_today}只" if buy_count_today else "无"
         
         # 计算当日资产
         position_value = calculate_position_value(holdings, date, dm, predictions_cache)
@@ -384,7 +431,7 @@ def backtest_complementary_strategy(
         log.info(f"  总收益: {total_return:+,.0f}元 ({total_return_pct:+.2f}%)")
         log.info(f"  持仓数量: {len(holdings)}只")
         
-        # 记录每日状态
+        # 记录每日状态（含买卖原因备注）
         daily_records.append({
             'date': date,
             'cash': cash,
@@ -393,8 +440,10 @@ def backtest_complementary_strategy(
             'total_return': total_return,
             'total_return_pct': total_return_pct,
             'holdings_count': len(holdings),
-            'buy_count': len([op for op in operations_log if op['date'] == date and op['operation'] == '买入']),
-            'sell_count': len([op for op in operations_log if op['date'] == date and op['operation'] == '卖出'])
+            'buy_count': buy_count_today,
+            'sell_count': len(stocks_to_sell),
+            'buy_reason_remark': buy_reason_remark,
+            'sell_reason_remark': sell_reason_remark
         })
     
     # 计算回测指标
@@ -420,7 +469,7 @@ def backtest_complementary_strategy(
     total_buys = len(df_operations[df_operations['operation'] == '买入'])
     total_sells = len(df_operations[df_operations['operation'] == '卖出'])
     
-    # 卖出盈亏统计
+    # 卖出盈亏统计与盈亏比
     if total_sells > 0:
         df_sells = df_operations[df_operations['operation'] == '卖出']
         win_trades = len(df_sells[df_sells['profit'] > 0])
@@ -428,12 +477,53 @@ def backtest_complementary_strategy(
         win_rate = (win_trades / total_sells * 100) if total_sells > 0 else 0
         avg_profit = df_sells['profit'].mean()
         avg_profit_pct = df_sells['profit_pct'].mean()
+        # 盈亏比：总盈利/总亏损（profit factor）、平均盈利/平均亏损
+        total_win_amount = df_sells[df_sells['profit'] > 0]['profit'].sum()
+        total_loss_amount = df_sells[df_sells['profit'] <= 0]['profit'].sum()  # 负数或0
+        profit_factor = (total_win_amount / abs(total_loss_amount)) if total_loss_amount != 0 else (float('inf') if total_win_amount > 0 else 0)
+        avg_win = df_sells[df_sells['profit'] > 0]['profit'].mean() if win_trades > 0 else 0.0
+        avg_loss = df_sells[df_sells['profit'] <= 0]['profit'].mean() if loss_trades > 0 else 0.0
+        profit_loss_ratio = (avg_win / abs(avg_loss)) if avg_loss != 0 else (float('inf') if avg_win > 0 else 0)
     else:
         win_trades = 0
         loss_trades = 0
         win_rate = 0
         avg_profit = 0
         avg_profit_pct = 0
+        total_win_amount = 0.0
+        total_loss_amount = 0.0
+        profit_factor = 0.0
+        avg_win = 0.0
+        avg_loss = 0.0
+        profit_loss_ratio = 0.0
+    
+    # 年化收益率、夏普比率（按交易日，年化因子 252）
+    n_trading_days = len(df_daily)
+    if n_trading_days > 0 and initial_cash > 0:
+        annualized_return_pct = ((final_assets / initial_cash) ** (252 / n_trading_days) - 1) * 100
+    else:
+        annualized_return_pct = 0.0
+    daily_returns = df_daily['total_assets'].pct_change().dropna()
+    if len(daily_returns) > 0 and daily_returns.std() > 0:
+        sharpe_ratio = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252)
+    else:
+        sharpe_ratio = 0.0
+    
+    # 沪深300 日线对齐到回测交易日，计算净值（首日=100）
+    csi300_curve = None
+    try:
+        df_csi = dm.get_index_daily('000300.SH', start_date, end_date)
+        if df_csi is not None and not df_csi.empty:
+            df_csi['date_str'] = df_csi['trade_date'].dt.strftime('%Y%m%d')
+            first_close = float(df_csi.iloc[0]['close'])
+            df_csi['nav_csi300'] = (df_csi['close'].astype(float) / first_close) * 100
+            # 只保留与 daily_records 日期对齐的行
+            daily_dates = set(df_daily['date'].astype(str))
+            df_csi = df_csi[df_csi['date_str'].isin(daily_dates)].copy()
+            df_csi = df_csi.sort_values('date_str')
+            csi300_curve = df_csi[['date_str', 'close', 'nav_csi300']].rename(columns={'date_str': 'date'})
+    except Exception as e:
+        log.warning(f"获取沪深300数据失败，报告中不包含指数对比: {e}")
     
     # 汇总结果
     result = {
@@ -456,12 +546,76 @@ def backtest_complementary_strategy(
         'win_rate': win_rate,
         'avg_profit': avg_profit,
         'avg_profit_pct': avg_profit_pct,
+        'total_win_amount': total_win_amount,
+        'total_loss_amount': total_loss_amount,
+        'profit_factor': profit_factor,
+        'avg_win': avg_win,
+        'avg_loss': avg_loss,
+        'profit_loss_ratio': profit_loss_ratio,
         'daily_records': df_daily,
         'operations_log': df_operations,
-        'final_holdings': holdings
+        'final_holdings': holdings,
+        'csi300_curve': csi300_curve,
+        'n_trading_days': n_trading_days,
+        'annualized_return_pct': annualized_return_pct,
+        'sharpe_ratio': sharpe_ratio
     }
     
     return result
+
+
+def _plot_equity_curve(result: Dict, output_dir: Path, df_curve: pd.DataFrame, csi300_curve: Optional[pd.DataFrame]) -> Optional[str]:
+    """绘制收益率曲线图：本策略累计收益率 + 沪深300累计收益率，Y轴按实际数据动态范围，横轴每日。"""
+    if not _HAS_MATPLOTLIB or df_curve.empty:
+        return None
+    try:
+        # 设置中文字体，避免中文显示为方块（matplotlib 会使用列表中第一个可用字体）
+        plt.rcParams['font.sans-serif'] = [
+            'PingFang SC', 'Heiti SC', 'STHeiti', 'SimHei', 'Microsoft YaHei',
+            'WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'sans-serif'
+        ]
+        plt.rcParams['axes.unicode_minus'] = False  # 负号正常显示
+
+        dates = pd.to_datetime(df_curve['date'], format='%Y%m%d')
+        strategy_return = df_curve['total_return_pct'].values
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(dates, strategy_return, color='#1f77b4', linewidth=2, label='策略累计收益率')
+        y_min = float(np.nanmin(strategy_return))
+        y_max = float(np.nanmax(strategy_return))
+        if csi300_curve is not None and not csi300_curve.empty and 'csi300_return_pct' in df_curve.columns:
+            csi_return = df_curve['csi300_return_pct'].ffill().values
+            ax.plot(dates, csi_return, color='#ff7f0e', linewidth=2, label='沪深300累计收益率')
+            y_min = min(y_min, float(np.nanmin(csi_return)))
+            y_max = max(y_max, float(np.nanmax(csi_return)))
+        # Y轴根据实际数据动态范围，留出边距，视觉效果更好
+        span = y_max - y_min
+        margin = max(span * 0.12, 1.5) if span > 0 else 2.0
+        y_lo = y_min - margin
+        y_hi = y_max + margin
+        # 若未包含 0，适当扩展以便对照零线
+        if y_lo > 0:
+            y_lo = min(y_lo, -0.5)
+        if y_hi < 0:
+            y_hi = max(y_hi, 0.5)
+        ax.set_ylim(y_lo, y_hi)
+        ax.set_ylabel('累计收益率 (%)')
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: f'{x:.0f}%'))
+        ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        # 横轴：展示每一个交易日
+        ax.set_xticks(dates)
+        ax.set_xticklabels([d.strftime('%m-%d') for d in dates], rotation=45, ha='right')
+        plt.title(f"收益率曲线：策略 vs 沪深300 ({result['start_date']} - {result['end_date']})")
+        fig.tight_layout()
+        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}.png"
+        out_path = output_dir / name
+        plt.savefig(out_path, dpi=120, bbox_inches='tight')
+        plt.close()
+        return name
+    except Exception as e:
+        log.warning(f"绘制收益率曲线图失败: {e}")
+        return None
 
 
 def generate_report(result: Dict, output_dir: Path):
@@ -492,6 +646,28 @@ def generate_report(result: Dict, output_dir: Path):
         log.info(f"  平均盈亏: {result['avg_profit']:+,.0f}元 ({result['avg_profit_pct']:+.2f}%)")
     
     log.info(f"\n最终持仓: {len(result['final_holdings'])}只")
+    if result['total_sells'] > 0:
+        pf = result.get('profit_factor', 0)
+        plr = result.get('profit_loss_ratio', 0)
+        log.info(f"\n盈亏比:")
+        log.info(f"  盈利因子(总盈利/总亏损): {pf:.2f}" if pf != float('inf') else "  —")
+        log.info(f"  平均盈利/平均亏损: {plr:.2f}" if plr != float('inf') else "  —")
+    if result.get('csi300_curve') is not None and not result['csi300_curve'].empty:
+        log.info(f"\n沪深300: 已获取，报告中叠加资金曲线")
+    
+    # 股票代码 -> 名称映射 与 DataManager（用于报告展示股票名称、最终持仓当前价）
+    stock_name_map = {}
+    dm = None
+    try:
+        dm = DataManager()
+        df_stocks = dm.get_stock_list()
+        if df_stocks is not None and not df_stocks.empty and 'name' in df_stocks.columns:
+            stock_name_map = df_stocks.set_index('ts_code')['name'].astype(str).to_dict()
+    except Exception as e:
+        log.debug(f"获取股票名称映射失败，报告中仅显示代码: {e}")
+    
+    def _name(ts_code: str) -> str:
+        return stock_name_map.get(ts_code, ts_code)
     
     # 保存结果
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -501,15 +677,35 @@ def generate_report(result: Dict, output_dir: Path):
     result['daily_records'].to_csv(daily_file, index=False, encoding='utf-8-sig')
     log.success(f"\n✓ 每日记录已保存: {daily_file}")
     
-    # 保存操作日志
+    # 保存操作日志（含股票名称列）
     if not result['operations_log'].empty:
         operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}.csv"
-        result['operations_log'].to_csv(operations_file, index=False, encoding='utf-8-sig')
+        df_op_save = result['operations_log'].copy()
+        idx = list(df_op_save.columns).index('ts_code') + 1
+        df_op_save.insert(idx, 'name', df_op_save['ts_code'].map(lambda c: stock_name_map.get(c, c)))
+        df_op_save.to_csv(operations_file, index=False, encoding='utf-8-sig')
         log.success(f"✓ 操作日志已保存: {operations_file}")
     
     # 生成文本报告
     report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}.md"
     with open(report_file, 'w', encoding='utf-8') as f:
+        df_op = result['operations_log']  # 供持仓与盈亏统计、详细买卖记录等使用
+        # 提前计算卖出记录与平均持仓时间，供「交易统计」与「持仓与盈亏统计」共用
+        df_sell = df_op[df_op['operation'] == '卖出'].copy() if not df_op.empty else pd.DataFrame()
+        avg_hold_days = None
+        if not df_sell.empty:
+            if 'buy_date' not in df_sell.columns or df_sell['buy_date'].isna().all():
+                df_buy = df_op[df_op['operation'] == '买入']
+                def _infer_buy_date(row):
+                    sub = df_buy[(df_buy['ts_code'] == row['ts_code']) & (df_buy['date'].astype(str) < str(row['date']))]
+                    return sub['date'].max() if not sub.empty else None
+                df_sell['buy_date'] = df_sell.apply(_infer_buy_date, axis=1)
+            valid_buy = df_sell['buy_date'].notna()
+            if valid_buy.any():
+                sell_dates = pd.to_datetime(df_sell.loc[valid_buy, 'date'], format='%Y%m%d')
+                buy_dates = pd.to_datetime(df_sell.loc[valid_buy, 'buy_date'].astype(str), format='%Y%m%d')
+                hold_days = (sell_dates - buy_dates).dt.days
+                avg_hold_days = float(hold_days.mean())
         f.write(f"# v232_v270互补策略回测报告\n\n")
         f.write(f"## 回测区间\n\n")
         f.write(f"- 开始日期: {result['start_date']}\n")
@@ -517,9 +713,10 @@ def generate_report(result: Dict, output_dir: Path):
         
         f.write(f"## 策略参数\n\n")
         f.write(f"- 每支股票买入金额: {result.get('stock_amount', 300000):,.0f}元\n")
-        f.write(f"- 买入Top: {result.get('top_n_buy', 10)}\n")
+        f.write(f"- 买入Top: {result.get('top_n_buy', 10)}（前一日选股，当日开盘价买）\n")
+        f.write(f"- 当日顺序: 先买后卖；T日卖出资金T+1日开盘用于买\n")
         if result.get('use_ma5_sell', True):
-            f.write(f"- 卖出策略: 跌破5日线后第二日若收盘仍在5日线下则卖出\n\n")
+            f.write(f"- 卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖\n\n")
         else:
             f.write(f"- 卖出策略: 跌出Top{result.get('top_n_hold', 50)}则卖出\n\n")
         
@@ -541,18 +738,214 @@ def generate_report(result: Dict, output_dir: Path):
         if result['total_sells'] > 0:
             f.write(f"- 盈利次数: {result['win_trades']}\n")
             f.write(f"- 亏损次数: {result['loss_trades']}\n")
-            f.write(f"- 胜率: {result['win_rate']:.2f}%\n")
-            f.write(f"- 平均盈亏: {result['avg_profit']:+,.0f}元 ({result['avg_profit_pct']:+.2f}%)\n")
+        f.write(f"- 胜率: {result['win_rate']:.2f}%\n")
+        f.write(f"- 平均盈亏: {result['avg_profit']:+,.0f}元 ({result['avg_profit_pct']:+.2f}%)\n")
+        if avg_hold_days is not None:
+            f.write(f"- 平均持仓时间: {avg_hold_days:.1f} 天\n")
         f.write(f"\n")
         
+        # 技术指标分析（年化收益率、夏普比率、盈亏比、最大回撤等）
+        f.write(f"## 技术指标分析\n\n")
+        f.write(f"| 指标 | 数值 |\n")
+        f.write(f"|------|------|\n")
+        f.write(f"| 年化收益率 | {result.get('annualized_return_pct', 0):+.2f}% |\n")
+        f.write(f"| 夏普比率(年化) | {result.get('sharpe_ratio', 0):.2f} |\n")
+        pf = result.get('profit_factor', 0)
+        plr = result.get('profit_loss_ratio', 0)
+        pf_str = f"{pf:.2f}" if pf != float('inf') else "—"
+        plr_str = f"{plr:.2f}" if plr != float('inf') else "—"
+        f.write(f"| 盈亏比(盈利因子) | {pf_str} |\n")
+        f.write(f"| 盈亏比(平均盈利/平均亏损) | {plr_str} |\n")
+        f.write(f"| 最大回撤 | {result['max_drawdown']:.2f}% |\n")
+        f.write(f"| 胜率(卖出笔) | {result['win_rate']:.2f}% |\n")
+        f.write(f"| 交易天数 | {result.get('n_trading_days', 0)} |\n")
+        avg_hold_str = f"{avg_hold_days:.1f} 天" if avg_hold_days is not None else "—"
+        f.write(f"| 平均持仓时间 | {avg_hold_str} |\n")
+        f.write(f"\n")
+        
+        # 盈亏比
+        pf = result.get('profit_factor', 0)
+        plr = result.get('profit_loss_ratio', 0)
+        total_win = result.get('total_win_amount', 0)
+        total_loss = result.get('total_loss_amount', 0)
+        avg_win = result.get('avg_win', 0)
+        avg_loss = result.get('avg_loss', 0)
+        pf_str = f"{pf:.2f}" if pf != float('inf') else "—"
+        plr_str = f"{plr:.2f}" if plr != float('inf') else "—"
+        f.write(f"## 盈亏比\n\n")
+        f.write(f"- **盈利因子(总盈利/总亏损)**：{pf_str}\n")
+        if total_loss != 0:
+            f.write(f"  - 总盈利: {total_win:+,.0f}元，总亏损: {total_loss:+,.0f}元\n")
+        f.write(f"- **平均盈利/平均亏损**：{plr_str}\n")
+        if avg_loss != 0:
+            f.write(f"  - 平均盈利: {avg_win:+,.0f}元，平均亏损: {avg_loss:+,.0f}元\n")
+        f.write(f"\n")
+        
+        # 平均持仓时间、最大收益 Top5、最大亏损 Top5（有卖出时始终输出本章节，df_sell/avg_hold_days 已在上文计算）
+        if not df_sell.empty:
+            f.write(f"## 平均持仓时间与盈亏 Top5\n\n")
+            f.write(f"- **平均持仓时间**：{f'{avg_hold_days:.1f} 天' if avg_hold_days is not None else '—（无买入日期记录）'}\n\n")
+            # 最大收益 Top5 股票
+            top5_profit = df_sell.nlargest(5, 'profit')
+            if not top5_profit.empty:
+                f.write(f"### 最大收益 Top5 股票\n\n")
+                f.write(f"| 股票代码 | 股票名称 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
+                f.write(f"|----------|----------|----------|----------|----------|----------|-------|\n")
+                for _, row in top5_profit.iterrows():
+                    bd = row.get('buy_date', '—')
+                    sd = row['date']
+                    if pd.notna(bd) and str(bd) != '—' and str(bd) != 'nan':
+                        days = (pd.to_datetime(str(sd), format='%Y%m%d') - pd.to_datetime(str(bd), format='%Y%m%d')).days
+                    else:
+                        days = '—'
+                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
+                f.write(f"\n")
+            # 最大亏损 Top5 股票
+            top5_loss = df_sell.nsmallest(5, 'profit')
+            if not top5_loss.empty:
+                f.write(f"### 最大亏损 Top5 股票\n\n")
+                f.write(f"| 股票代码 | 股票名称 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
+                f.write(f"|----------|----------|----------|----------|----------|----------|-------|\n")
+                for _, row in top5_loss.iterrows():
+                    bd = row.get('buy_date', '—')
+                    sd = row['date']
+                    if pd.notna(bd) and str(bd) != '—' and str(bd) != 'nan':
+                        days = (pd.to_datetime(str(sd), format='%Y%m%d') - pd.to_datetime(str(bd), format='%Y%m%d')).days
+                    else:
+                        days = '—'
+                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
+                f.write(f"\n")
+        
         f.write(f"## 最终持仓\n\n")
-        f.write(f"持仓数量: {len(result['final_holdings'])}只\n\n")
+        f.write(f"持仓数量: {len(result['final_holdings'])}只；以下为买入日期、当前成本、期末价、市值及盈亏状态（期末日: {result['end_date']}）。\n\n")
         if result['final_holdings']:
-            f.write(f"| 股票代码 | 持仓数量 | 成本 |\n")
-            f.write(f"|---------|---------|------|\n")
+            f.write(f"| 股票代码 | 股票名称 | 买入日期 | 持仓数量 | 成本(元) | 当前价(元) | 市值(元) | 盈亏(元) | 盈亏% | 状态 |\n")
+            f.write(f"|---------|----------|----------|----------|----------|------------|----------|----------|-------|------|\n")
             for ts_code, position in result['final_holdings'].items():
-                f.write(f"| {ts_code} | {position['quantity']}股 | {position['cost']:,.0f}元 |\n")
-    
+                buy_date = position.get('buy_date', '—')
+                cost = position['cost']
+                qty = position['quantity']
+                current_price = get_stock_price(result['end_date'], ts_code, dm, None) if dm else None
+                if current_price is not None and current_price > 0:
+                    market_value = qty * current_price
+                    profit = market_value - cost
+                    profit_pct = (profit / cost * 100) if cost > 0 else 0
+                    status = "盈利" if profit >= 0 else "亏损"
+                    f.write(f"| {ts_code} | {_name(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | {current_price:.2f} | {market_value:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {status} |\n")
+                else:
+                    f.write(f"| {ts_code} | {_name(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | — | — | — | — | — |\n")
+        f.write(f"\n")
+
+        # 详细买卖记录
+        if not df_op.empty:
+            f.write(f"## 详细买卖记录\n\n")
+            f.write(f"以下按时间顺序列出所有买入与卖出操作，含价格、金额与原因。\n\n")
+            # 买入记录表
+            df_buy = df_op[df_op['operation'] == '买入']
+            if not df_buy.empty:
+                f.write(f"### 买入记录\n\n")
+                f.write(f"| 日期 | 股票代码 | 股票名称 | 数量 | 价格(元) | 金额(元) | 买卖原因 |\n")
+                f.write(f"|------|----------|----------|------|----------|----------|----------|\n")
+                for _, row in df_buy.iterrows():
+                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {row['reason']} |\n")
+                f.write(f"\n")
+            # 卖出记录表
+            df_sell = df_op[df_op['operation'] == '卖出']
+            if not df_sell.empty:
+                f.write(f"### 卖出记录\n\n")
+                f.write(f"| 日期 | 股票代码 | 股票名称 | 数量 | 卖出价(元) | 金额(元) | 成本(元) | 盈亏(元) | 盈亏% | 卖出原因 |\n")
+                f.write(f"|------|----------|----------|------|------------|----------|----------|----------|-------|----------|\n")
+                for _, row in df_sell.iterrows():
+                    cost = row.get('cost', 0)
+                    profit = row.get('profit', 0)
+                    profit_pct = row.get('profit_pct', 0)
+                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {cost:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {row['reason']} |\n")
+                f.write(f"\n")
+
+            # 买卖原因统计
+            f.write(f"## 买卖原因统计\n\n")
+            buy_reasons = df_buy['reason'].value_counts()
+            f.write(f"### 买入原因\n\n")
+            for reason, cnt in buy_reasons.items():
+                f.write(f"- **{reason}**: {cnt} 笔\n")
+            f.write(f"\n")
+            sell_reasons = df_sell['reason'].value_counts()
+            f.write(f"### 卖出原因\n\n")
+            for reason, cnt in sell_reasons.items():
+                f.write(f"- **{reason}**: {cnt} 笔\n")
+            f.write(f"\n")
+
+            # 按卖出原因统计盈亏（可选）
+            if not df_sell.empty and 'profit' in df_sell.columns and 'reason' in df_sell.columns:
+                f.write(f"### 按卖出原因的盈亏汇总\n\n")
+                f.write(f"| 卖出原因 | 笔数 | 盈利笔数 | 亏损笔数 | 总盈亏(元) | 平均盈亏% |\n")
+                f.write(f"|----------|------|----------|----------|------------|----------|\n")
+                for reason in sell_reasons.index:
+                    sub = df_sell[df_sell['reason'] == reason]
+                    n = len(sub)
+                    win = (sub['profit'] > 0).sum()
+                    loss = (sub['profit'] <= 0).sum()
+                    total_p = sub['profit'].sum()
+                    avg_pct = sub['profit_pct'].mean() if 'profit_pct' in sub.columns else 0
+                    f.write(f"| {reason} | {n} | {win} | {loss} | {total_p:+,.0f} | {avg_pct:+.2f}% |\n")
+                f.write(f"\n")
+
+        # 资金曲线（含沪深300叠加）
+        df_daily = result['daily_records']
+        csi300_curve = result.get('csi300_curve')
+        if not df_daily.empty:
+            f.write(f"## 资金曲线\n\n")
+            # 策略净值：以初始资金为100
+            df_curve = df_daily[['date', 'total_assets', 'total_return_pct']].copy()
+            df_curve['date'] = df_curve['date'].astype(str)
+            df_curve['nav_strategy'] = (df_curve['total_assets'] / result['initial_cash']) * 100
+            if csi300_curve is not None and not csi300_curve.empty:
+                df_curve = df_curve.merge(csi300_curve, on='date', how='left')
+                df_curve['csi300_return_pct'] = np.where(df_curve['nav_csi300'].notna(), df_curve['nav_csi300'] - 100, np.nan)
+                f.write(f"| 日期 | 策略总资产(元) | 策略净值 | 策略累计收益% | 沪深300收盘 | 沪深300净值 | 沪深300累计收益% |\n")
+                f.write(f"|------|----------------|----------|---------------|--------------|--------------|------------------|\n")
+                for _, row in df_curve.iterrows():
+                    csi_close = f"{row['close']:.2f}" if pd.notna(row.get('close')) else "—"
+                    csi_nav = f"{row['nav_csi300']:.2f}" if pd.notna(row.get('nav_csi300')) else "—"
+                    csi_ret = f"{row['csi300_return_pct']:+.2f}%" if pd.notna(row.get('csi300_return_pct')) else "—"
+                    f.write(f"| {row['date']} | {row['total_assets']:,.0f} | {row['nav_strategy']:.2f} | {row['total_return_pct']:+.2f}% | {csi_close} | {csi_nav} | {csi_ret} |\n")
+            else:
+                f.write(f"| 日期 | 策略总资产(元) | 策略净值 | 策略累计收益% |\n")
+                f.write(f"|------|----------------|----------|---------------|\n")
+                for _, row in df_curve.iterrows():
+                    f.write(f"| {row['date']} | {row['total_assets']:,.0f} | {row['nav_strategy']:.2f} | {row['total_return_pct']:+.2f}% |\n")
+            f.write(f"\n")
+            # 绘制资金曲线图（策略 vs 沪深300）
+            img_name = _plot_equity_curve(result, output_dir, df_curve, csi300_curve)
+            if img_name:
+                f.write(f"### 资金曲线图（策略 vs 沪深300）\n\n![资金曲线]({img_name})\n\n")
+        
+        # 每日资产与买卖摘要
+        if not df_daily.empty:
+            f.write(f"## 每日资产与买卖摘要\n\n")
+            f.write(f"| 日期 | 现金(元) | 持仓市值(元) | 总资产(元) | 累计收益% | 持仓数 | 当日买入 | 当日卖出 | 买入原因摘要 | 卖出原因摘要 |\n")
+            f.write(f"|------|----------|--------------|------------|------------|--------|----------|----------|--------------|--------------|\n")
+            for _, row in df_daily.iterrows():
+                f.write(f"| {row['date']} | {row['cash']:,.0f} | {row['position_value']:,.0f} | {row['total_assets']:,.0f} | {row['total_return_pct']:+.2f}% | {row['holdings_count']} | {row['buy_count']} | {row['sell_count']} | {row.get('buy_reason_remark', '')} | {row.get('sell_reason_remark', '')} |\n")
+            f.write(f"\n")
+
+        # 分析报告小结
+        f.write(f"## 分析报告小结\n\n")
+        f.write(f"1. **收益与风险**：回测区间内收益率 **{result['final_return_pct']:+.2f}%**，最大回撤 **{result['max_drawdown']:.2f}%**（{result.get('max_drawdown_date', '')}）。\n\n")
+        f.write(f"2. **交易质量**：共买入 {result['total_buys']} 笔、卖出 {result['total_sells']} 笔；卖出胜率 **{result['win_rate']:.2f}%**（盈利 {result['win_trades']} 笔 / 亏损 {result['loss_trades']} 笔），平均每笔盈亏 **{result['avg_profit']:+,.0f} 元**（{result['avg_profit_pct']:+.2f}%）。\n\n")
+        pf = result.get('profit_factor', 0)
+        plr = result.get('profit_loss_ratio', 0)
+        pf_s = f"盈利因子 **{pf:.2f}**、平均盈利/平均亏损 **{plr:.2f}**" if pf != float('inf') and plr != float('inf') else "盈亏比见上文"
+        f.write(f"3. **盈亏比**：{pf_s}。\n\n")
+        csi300 = result.get('csi300_curve')
+        if csi300 is not None and not csi300.empty and len(csi300) >= 2:
+            first_nav = float(csi300.iloc[0]['nav_csi300'])
+            last_nav = float(csi300.iloc[-1]['nav_csi300'])
+            csi300_return = (last_nav / first_nav - 1) * 100 if first_nav > 0 else 0
+            f.write(f"4. **与沪深300对比**：策略收益率 **{result['final_return_pct']:+.2f}%**，同期沪深300累计收益 **{csi300_return:+.2f}%**；资金曲线图见上文。\n\n")
+        f.write(f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；卖出采用「跌出 Top50 且连续两日收盘价低于五日均价」在 T2 收盘价卖出，以控制回撤并保留趋势持仓。\n\n")
+        f.write(f"6. **数据说明**：选股数据来自每日收盘后生成的 `v232_v270_complementary_YYYYMMDD.csv`（1月29日、1月30日、2月2日、2月3日等已包含最新评分结果）。\n\n")
+
     log.success(f"✓ 回测报告已保存: {report_file}")
 
 

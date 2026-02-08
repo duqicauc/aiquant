@@ -7,7 +7,7 @@
 1. 交集优选：找出两个模型都看好的股票
 2. 加权综合：根据两个模型的评分进行加权平均
 3. 排名综合：根据两个模型的排名进行综合排序
-4. 互补策略（推荐）：v2.7.0作为稳定基础，v2.3.2补充热门板块，风险分层
+4. 互补策略（推荐）：v2.7.0稳定基础 + v2.3.2热门板块 + 同花顺热点（概念/行业/热股）+ 资金流向，风险分层
 
 使用前准备：
   1. 运行v2.3.2预测：python scripts/predict_v232_top10.py --date YYYYMMDD
@@ -478,6 +478,15 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
             is_new='Y',
             top_n=top_n
         )
+        # 若指定日期无数据，尝试拉取最新（不传 trade_date）
+        if (df_concepts is None or df_concepts.empty) and trade_date:
+            log.info("指定日期无概念板块数据，尝试拉取最新...")
+            df_concepts = dm.fetcher.get_ths_hot(
+                trade_date=None,
+                market='概念板块',
+                is_new='Y',
+                top_n=top_n
+            )
         
         if df_concepts is not None and not df_concepts.empty:
             for _, row in df_concepts.iterrows():
@@ -514,6 +523,13 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
             is_new='Y',
             top_n=top_n
         )
+        if (df_industries is None or df_industries.empty) and trade_date:
+            df_industries = dm.fetcher.get_ths_hot(
+                trade_date=None,
+                market='行业板块',
+                is_new='Y',
+                top_n=top_n
+            )
         
         if df_industries is not None and not df_industries.empty:
             for _, row in df_industries.iterrows():
@@ -539,13 +555,20 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
                         }
                 log.info(f"✓ 从备选方案获取到 {len(hot_sectors['industries'])} 个热门行业板块")
         
-        # 3. 获取热门股票（可选，用于交叉验证）
+        # 3. 获取热门股票（同花顺热股榜，用于综合得分加成）
         df_hot_stocks = dm.fetcher.get_ths_hot(
             trade_date=trade_date,
             market='热股',
             is_new='Y',
             top_n=100
         )
+        if (df_hot_stocks is None or df_hot_stocks.empty) and trade_date:
+            df_hot_stocks = dm.fetcher.get_ths_hot(
+                trade_date=None,
+                market='热股',
+                is_new='Y',
+                top_n=100
+            )
         
         if df_hot_stocks is not None and not df_hot_stocks.empty:
             for _, row in df_hot_stocks.iterrows():
@@ -567,36 +590,44 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
     return hot_sectors
 
 
-def identify_hot_sectors(concept_dict, hot_sectors_data=None):
+def identify_hot_sectors(concept_dict, hot_sectors_data=None, stock_industry_map=None):
     """
-    识别热门板块股票
+    识别热门板块股票（热点概念 + 热点行业）
     
-    优先使用Tushare动态获取的热点板块数据，如果获取失败则使用关键词匹配作为备选
+    优先使用Tushare同花顺热榜：概念板块、行业板块；若失败则用关键词匹配备选。
     
     Args:
         concept_dict: {ts_code: [concept1, concept2, ...]}
-        hot_sectors_data: 从Tushare获取的热点板块数据
+        hot_sectors_data: 从Tushare获取的热点数据（concepts, industries, hot_stocks）
+        stock_industry_map: {ts_code: industry_name} 用于行业板块匹配
         
     Returns:
         dict: {ts_code: [hot_sector1, hot_sector2, ...]}
     """
     hot_sector_dict = defaultdict(list)
+    hot_concepts = set()
     
-    # 优先使用Tushare动态数据
+    # 1. 热门概念匹配（同花顺热点概念）
     if hot_sectors_data and hot_sectors_data.get('concepts'):
         hot_concepts = set(hot_sectors_data['concepts'].keys())
-        
         for ts_code, concepts in concept_dict.items():
             for concept in concepts:
-                # 检查概念是否在热门概念列表中
-                if concept in hot_concepts:
-                    if concept not in hot_sector_dict[ts_code]:
-                        hot_sector_dict[ts_code].append(concept)
-        
-        # 如果从Tushare获取到数据，直接返回
-        if hot_sector_dict:
-            log.info(f"使用Tushare动态热点板块数据，识别到 {len(hot_sector_dict)} 只热门板块股票")
-            return dict(hot_sector_dict)
+                if concept in hot_concepts and concept not in hot_sector_dict[ts_code]:
+                    hot_sector_dict[ts_code].append(concept)
+    else:
+        hot_concepts = set()
+    
+    # 2. 热门行业匹配（同花顺热点行业 + 股票行业映射）
+    if hot_sectors_data and hot_sectors_data.get('industries') and stock_industry_map:
+        hot_industries = set(hot_sectors_data['industries'].keys())
+        for ts_code, industry in stock_industry_map.items():
+            if industry and industry in hot_industries and industry not in hot_sector_dict[ts_code]:
+                hot_sector_dict[ts_code].append(industry)
+        log.info(f"热点行业: {len(hot_industries)} 个热门行业参与匹配")
+    
+    if hot_sector_dict and hot_sectors_data and (hot_sectors_data.get('concepts') or hot_sectors_data.get('industries')):
+        log.info(f"使用同花顺热点（概念+行业）数据，识别到 {len(hot_sector_dict)} 只热门板块股票")
+        return dict(hot_sector_dict)
     
     # 备选方案：使用关键词匹配（保留原有逻辑）
     log.info("使用关键词匹配识别热门板块（备选方案）")
@@ -746,18 +777,24 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
     v232_candidates['risk_level'] = v232_candidates.apply(calculate_risk_level, axis=1)
     v232_candidates['source'] = 'v2.3.2'
     
-    # 获取概念信息，识别热门板块
-    log.info("\n识别热门板块...")
+    # 获取概念信息、行业映射，识别热门板块（同花顺热点概念+热点行业）
+    log.info("\n识别热门板块（同花顺热点概念+热点行业）...")
     
-    # 1. 从Tushare获取近期热点板块数据
+    # 1. 从Tushare获取同花顺热榜：概念板块、行业板块、热股
     hot_sectors_data = get_hot_sectors_from_tushare(dm, date, top_n=30)
     
-    # 2. 获取股票的概念信息
+    # 2. 股票行业映射（用于热点行业匹配）
+    all_ts_codes = list(set(v232_candidates['ts_code'].tolist() + base_pool['ts_code'].tolist()))
+    stock_industry_map = dm.fetcher.get_stock_industry_map(all_ts_codes)
+    if stock_industry_map:
+        log.info(f"✓ 股票行业映射: {len(stock_industry_map)} 只")
+    
+    # 3. 获取股票的概念信息
     ts_codes = v232_candidates['ts_code'].tolist()
     concept_dict = get_concept_info(dm, ts_codes)
     
-    # 3. 识别热门板块股票（优先使用Tushare动态数据）
-    hot_sector_dict = identify_hot_sectors(concept_dict, hot_sectors_data)
+    # 4. 识别热门板块股票（概念+行业）
+    hot_sector_dict = identify_hot_sectors(concept_dict, hot_sectors_data, stock_industry_map)
     
     # 标记热门板块股票
     v232_candidates['hot_sectors'] = v232_candidates['ts_code'].apply(
@@ -790,11 +827,11 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
                         heat_info = f" (涨停{heat_data.get('up_nums', 0)}只, 涨幅{heat_data.get('pct_chg', 0):.2f}%)"
             log.info(f"  - {sector}: {count} 只{heat_info}")
     
-    # 3. 为v2.7.0基础池也识别热门板块
+    # 为v2.7.0基础池也识别热门板块
     log.info("\n为v2.7.0基础池识别热门板块...")
     base_ts_codes = base_pool['ts_code'].tolist()
     base_concept_dict = get_concept_info(dm, base_ts_codes)
-    base_hot_sector_dict = identify_hot_sectors(base_concept_dict, hot_sectors_data)
+    base_hot_sector_dict = identify_hot_sectors(base_concept_dict, hot_sectors_data, stock_industry_map)
     
     # 标记v2.7.0基础池的热门板块
     base_pool['hot_sectors'] = base_pool['ts_code'].apply(
@@ -844,6 +881,37 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
     combined = pd.concat([base_pool_merge, v232_candidates_merge], ignore_index=True)
     combined = combined.drop_duplicates(subset=['ts_code'], keep='first')
     
+    # 3.4 资金流向（主力净流入，积分≥2000可用 moneyflow 接口）
+    try:
+        df_mf = dm.fetcher.get_moneyflow(trade_date=date)
+        if df_mf is not None and not df_mf.empty and 'net_mf_amount' in df_mf.columns:
+            mf_map = df_mf.set_index('ts_code')['net_mf_amount'].to_dict()
+            combined['net_mf_amount'] = combined['ts_code'].map(mf_map)
+            combined['is_net_inflow'] = (combined['net_mf_amount'].fillna(0) > 0)
+            inflow_count = combined['is_net_inflow'].sum()
+            log.info(f"✓ 资金流向: {inflow_count} 只主力净流入，将获得综合得分加成")
+        else:
+            combined['net_mf_amount'] = np.nan
+            combined['is_net_inflow'] = False
+    except Exception as e:
+        log.warning(f"资金流向获取失败: {e}")
+        combined['net_mf_amount'] = np.nan
+        combined['is_net_inflow'] = False
+    
+    # 3.5 同花顺热股榜标记（积分≥6000可用 ths_hot 接口）
+    hot_stocks = hot_sectors_data.get('hot_stocks', {})
+    combined['is_ths_hot_stock'] = combined['ts_code'].isin(hot_stocks.keys())
+    rank_map = {}
+    hot_map = {}
+    for ts_code, info in hot_stocks.items():
+        rank_map[ts_code] = info.get('rank', 999)
+        hot_map[ts_code] = info.get('hot', 0)
+    combined['ths_hot_rank'] = combined['ts_code'].map(rank_map).fillna(999).astype(int)
+    combined['ths_hot_value'] = combined['ts_code'].map(hot_map).fillna(0)
+    ths_hot_count = combined['is_ths_hot_stock'].sum()
+    if ths_hot_count > 0:
+        log.info(f"✓ 同花顺热股榜: {ths_hot_count} 只股票上榜，将获得综合得分加成")
+    
     # 4. 计算综合得分
     # 对于v2.7.0的股票，使用v2.7.0概率
     # 对于v2.3.2的股票，需要合并v2.7.0的概率（如果有）
@@ -878,14 +946,22 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
                 else:
                     combined.loc[v232_mask, 'v232_score_norm'] = 0.5
     
-    # 计算综合得分
+    # 计算综合得分（含同花顺热点概念/行业/热股 + 资金流向）
     def calculate_dual_score(row):
         if row['source'] == 'v2.7.0':
             # v2.7.0股票：使用v2.7.0概率 + 热门板块加成
             base_score = row.get('v270_prob', 0)
-            # 热门板块加成（+0.05，比v2.3.2的+0.1稍低，因为v2.7.0本身概率就高）
+            # 热门板块加成（概念/行业，+0.05）
             if row.get('is_hot_sector', False):
                 base_score += 0.05
+            # 同花顺热股榜加成：上榜+0.02，前20名再+0.01
+            if row.get('is_ths_hot_stock', False):
+                base_score += 0.02
+                if row.get('ths_hot_rank', 999) <= 20:
+                    base_score += 0.01
+            # 资金流向加成：主力净流入+0.02
+            if row.get('is_net_inflow', False):
+                base_score += 0.02
             return min(base_score, 1.0)
         else:
             # v2.3.2股票：结合两个模型的评分
@@ -897,7 +973,6 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
             elif 'v232_prob' in row and pd.notna(row.get('v232_prob', None)):
                 v232_score = row['v232_prob']
             elif 'v232_score' in row and pd.notna(row.get('v232_score', None)):
-                # 如果没有归一化，临时归一化
                 v232_score = row['v232_score']
             else:
                 v232_score = 0
@@ -908,6 +983,16 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
             # 热门板块加成（+0.1）
             if row.get('is_hot_sector', False):
                 base_score += 0.1
+            
+            # 同花顺热股榜加成：上榜+0.02，前20名再+0.01
+            if row.get('is_ths_hot_stock', False):
+                base_score += 0.02
+                if row.get('ths_hot_rank', 999) <= 20:
+                    base_score += 0.01
+            
+            # 资金流向加成：主力净流入+0.02
+            if row.get('is_net_inflow', False):
+                base_score += 0.02
             
             # 风险调整
             risk_level = row.get('risk_level', 'low')
@@ -1015,6 +1100,9 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
                 interleaved.append(df_v232.iloc[i].to_dict())
         
         result_df = pd.DataFrame(interleaved).head(output_top)
+        # 按实际排序字段从高到低重排，使 CSV 中行序 = 真实排名（便于阅读与下游使用）
+        sort_col = 'sort_key' if 'sort_key' in result_df.columns else 'dual_score'
+        result_df = result_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
     
     # 6. 输出结果
     log.info("\n" + "="*80)
@@ -1049,6 +1137,10 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
         log.info(f"  - 中风险: {(result_df['risk_level'] == 'medium').sum()} 只")
         log.info(f"  - 高风险: {(result_df['risk_level'] == 'high').sum()} 只")
         log.info(f"  - 热门板块: {result_df.get('is_hot_sector', pd.Series([False] * len(result_df))).sum()} 只")
+        if 'is_net_inflow' in result_df.columns:
+            log.info(f"  - 主力净流入: {result_df['is_net_inflow'].fillna(False).sum()} 只")
+        if 'is_ths_hot_stock' in result_df.columns:
+            log.info(f"  - 同花顺热股榜: {result_df['is_ths_hot_stock'].fillna(False).sum()} 只")
         
         # 保存结果
         output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'

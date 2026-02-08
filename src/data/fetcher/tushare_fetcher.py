@@ -529,6 +529,68 @@ class TushareFetcher(BaseFetcher):
             log.warning(f"获取融资融券数据失败: {e}")
             return pd.DataFrame()
     
+    def get_moneyflow(
+        self,
+        trade_date: str,
+        ts_codes: Optional[list] = None
+    ) -> pd.DataFrame:
+        """
+        获取个股资金流向数据（主力净流入等）
+        
+        接口说明：https://tushare.pro/document/2?doc_id=170
+        用户积分≥2000可调取
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            ts_codes: 股票代码列表，若为None则拉取当日全市场
+            
+        Returns:
+            DataFrame 含 ts_code, trade_date, net_mf_amount(净流入额万元),
+            buy_elg_amount(特大单买入), sell_elg_amount(特大单卖出) 等
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {'trade_date': self.format_date(trade_date)}
+            df = self.pro.moneyflow(**params)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # 可选：只保留指定股票
+            if ts_codes:
+                ts_set = set(self.format_stock_code(c) for c in ts_codes)
+                df = df[df['ts_code'].isin(ts_set)].copy()
+            return df
+        except Exception as e:
+            log.warning(f"获取资金流向失败: {e}")
+            return pd.DataFrame()
+    
+    def get_stock_industry_map(self, ts_codes: Optional[list] = None) -> dict:
+        """
+        获取股票与行业映射（用于热点行业匹配）
+        
+        Args:
+            ts_codes: 股票代码列表，若为None则返回全市场
+            
+        Returns:
+            dict: {ts_code: industry_name}
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            df = self.pro.stock_basic(
+                list_status='L',
+                fields='ts_code,industry'
+            )
+            if df is None or df.empty:
+                return {}
+            df = df.dropna(subset=['industry'])
+            out = df.set_index('ts_code')['industry'].astype(str).to_dict()
+            if ts_codes:
+                ts_set = set(self.format_stock_code(c) for c in ts_codes)
+                out = {k: v for k, v in out.items() if k in ts_set}
+            return out
+        except Exception as e:
+            log.warning(f"获取股票行业映射失败: {e}")
+            return {}
+    
     def concept_detail(self, ts_code: str = None) -> pd.DataFrame:
         """
         获取概念板块成分股
