@@ -8,7 +8,8 @@ v232_v270互补策略回测脚本
 2. 第1天：若前一交易日互补结果不存在（如1月5日前为元旦假期无1月2日文件），则当日跳过，实际首日建仓为次日（如1月6日）。
 3. 后续每日：当日顺序为「先买后卖」。T日卖出所得资金，T+1日开盘用于买。
    - 买入：前一日选出的Top10，当日开盘价买；选股日Top10中不在持仓的按顺序买直至现金不足30万/只。
-   - 卖出：排名50名之后 且 连续两日（T1、T2）收盘价低于五日均价，在T2收盘价卖。
+   - 卖出：（可选）4%止损；或 排名50名之后 且 连续两日（T1、T2）收盘价低于五日均价，在T2收盘价卖。
+   - T+1：当日买入的标的当日不可卖出（不触发4%止损），但从买入当日起参与MA5计数。
 
 初始资金：1000万
 """
@@ -177,6 +178,24 @@ def get_stock_open(date: str, ts_code: str, dm: DataManager) -> Optional[float]:
     return None
 
 
+def get_stock_close_and_low(date: str, ts_code: str, dm: DataManager) -> Tuple[Optional[float], Optional[float]]:
+    """
+    获取股票在指定日期的收盘价与当日最低价（一次请求，用于止损判断）。
+    返回 (close, low)，若某字段缺失则为 None。
+    """
+    try:
+        df_daily = dm.get_daily_data(ts_code, date, date)
+        if df_daily is None or df_daily.empty:
+            return (None, None)
+        row = df_daily.iloc[-1]
+        close = float(row['close']) if 'close' in df_daily.columns and pd.notna(row.get('close')) and row['close'] > 0 else None
+        low = float(row['low']) if 'low' in df_daily.columns and pd.notna(row.get('low')) and row['low'] > 0 else None
+        return (close, low)
+    except Exception as e:
+        log.debug(f"获取{ts_code}在{date}的收盘/最低价失败: {e}")
+    return (None, None)
+
+
 def calculate_position_value(holdings: Dict, date: str, dm: DataManager, 
                             predictions_cache: Dict[str, pd.DataFrame]) -> float:
     """
@@ -204,7 +223,9 @@ def backtest_complementary_strategy(
     stock_amount: float = 300000.0,    # 每支股票30万
     top_n_buy: int = 10,               # 买入top10
     top_n_hold: int = 50,              # 持有top50（仅用于买入判断）
-    use_ma5_sell: bool = True          # 使用5日均线卖出策略
+    use_ma5_sell: bool = True,         # 使用5日均线卖出策略
+    stop_loss_pct: float = 4.0,        # 单标亏损达此比例即卖（默认4%）
+    stop_loss_mode: str = 'none'  # 4%止损模式: 'none'=不加(默认) | 'close'=收盘价触发按收盘卖 | 'intraday_low'=日内最低触及按止损价卖
 ) -> Dict:
     """
     回测互补策略
@@ -227,10 +248,12 @@ def backtest_complementary_strategy(
     log.info(f"初始资金: {initial_cash:,.0f}元")
     log.info(f"每支股票买入金额: {stock_amount:,.0f}元")
     log.info(f"买入Top{top_n_buy}")
-    if use_ma5_sell:
-        log.info(f"卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖")
+    if stop_loss_mode == 'none':
+        log.info(f"卖出策略: 无4%硬止损；" + ("排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖" if use_ma5_sell else f"跌出Top{top_n_hold}则卖出"))
+    elif stop_loss_mode == 'close':
+        log.info(f"卖出策略: 4%止损(收盘价触发、按收盘价卖)；" + ("或 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖" if use_ma5_sell else f"或 跌出Top{top_n_hold}则卖出"))
     else:
-        log.info(f"卖出策略: 跌出Top{top_n_hold}则卖出")
+        log.info(f"卖出策略: 4%止损(当日最低价触及则按止损价日内卖)；" + ("或 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖" if use_ma5_sell else f"或 跌出Top{top_n_hold}则卖出"))
     log.info("")
     
     dm = DataManager()
@@ -291,6 +314,7 @@ def backtest_complementary_strategy(
         
         # 第一步：买入（选股日Top10，当日开盘价买）
         stocks_to_buy = [ts_code for ts_code in top10_stocks if ts_code not in holdings]
+        today_bought = set()  # 当日有买入的标的（含新开仓与加仓），T+1 当日不可卖
         for ts_code in stocks_to_buy:
             if cash < stock_amount:
                 log.info(f"现金不足，无法继续买入（剩余现金: {cash:,.0f}元）")
@@ -327,6 +351,7 @@ def backtest_complementary_strategy(
                 holdings[ts_code]['quantity'] += quantity
                 holdings[ts_code]['cost'] += buy_amount
                 holdings[ts_code]['below_ma5_days'] = 0
+            today_bought.add(ts_code)
             
             buy_reason = f"进入Top10(选股日{signal_date})，当日开盘价买入"
             log.info(f"买入: {ts_code} - {quantity}股 @ {price:.2f}元(开盘) = {buy_amount:,.0f}元 ({buy_reason})")
@@ -341,16 +366,48 @@ def backtest_complementary_strategy(
                 'reason': buy_reason
             })
         
-        # 第二步：卖出（排名50名之后 且 连续两日收盘价低于五日均价，在D日收盘价卖）
+        # 第二步：卖出（可选4%止损；或 排名50名之后 且 连续两日收盘价低于五日均价，在D日收盘价卖）
+        # T+1 规则：当日买入的标的不可卖出（不触发4%止损），但参与MA5计数（从买入当日开始累计）
         # 连续两日 = D-1 跌破 MA5，D 日收盘价仍在 MA5 以下 → 按 D 日收盘价卖出
         stocks_to_sell = []
         for ts_code in list(holdings.keys()):
-            price = get_stock_price(date, ts_code, dm, None)  # D 日收盘价
-            if price is None:
+            position = holdings[ts_code]
+            can_sell = ts_code not in today_bought  # T+1：当日买入的不可卖出
+
+            cost_per_share = position['cost'] / position['quantity'] if position['quantity'] > 0 else None
+            if cost_per_share is None or cost_per_share <= 0:
                 continue
-            
+
+            # --- 获取当日价格 ---
+            if stop_loss_mode != 'none' and can_sell:
+                close_price, low_price = get_stock_close_and_low(date, ts_code, dm)
+                if close_price is None:
+                    continue
+                price = close_price
+                stop_price = cost_per_share * (1 - stop_loss_pct / 100.0)  # 4% 止损价
+
+                # 4% 止损（仅非当日买入标的可触发）
+                if stop_loss_mode == 'close':
+                    profit_pct = (close_price - cost_per_share) / cost_per_share * 100
+                    if profit_pct <= -stop_loss_pct:
+                        stocks_to_sell.append((ts_code, close_price, None, f'单标亏损达{stop_loss_pct:.0f}%'))
+                        continue
+                elif stop_loss_mode == 'intraday_low':
+                    if low_price is not None and low_price <= stop_price:
+                        stocks_to_sell.append((ts_code, stop_price, None, f'单标亏损达{stop_loss_pct:.0f}%(日内最低触及)'))
+                        continue
+                    if low_price is None:
+                        profit_pct = (close_price - cost_per_share) / cost_per_share * 100
+                        if profit_pct <= -stop_loss_pct:
+                            stocks_to_sell.append((ts_code, close_price, None, f'单标亏损达{stop_loss_pct:.0f}%'))
+                            continue
+            else:
+                price = get_stock_price(date, ts_code, dm, None)
+                if price is None:
+                    continue
+
+            # --- MA5 判断（当日买入标的也参与计数，但不实际卖出） ---
             if use_ma5_sell:
-                # 卖出条件：不在Top50 且 (D-1 跌破 MA5 且 D 日收盘仍在 MA5 下)，below_ma5_days>=2 即满足
                 if ts_code in top50_stocks:
                     # 在Top50内不卖，仅更新MA5计数（便于跌出Top50后连续天数正确）
                     ma5 = get_ma5(ts_code, date, dm)
@@ -368,16 +425,18 @@ def backtest_complementary_strategy(
                 
                 if price < ma5:
                     holdings[ts_code]['below_ma5_days'] = holdings[ts_code].get('below_ma5_days', 0) + 1
-                    if holdings[ts_code]['below_ma5_days'] >= 2:
+                    if holdings[ts_code]['below_ma5_days'] >= 2 and can_sell:
                         stocks_to_sell.append((ts_code, price, ma5, '跌出Top50且跌破MA5第2天'))
+                    elif holdings[ts_code]['below_ma5_days'] >= 2 and not can_sell:
+                        log.info(f"T+1限制: {ts_code} 已连续{holdings[ts_code]['below_ma5_days']}天跌破MA5，但当日买入不可卖")
                     else:
-                        log.info(f"观察: {ts_code} 跌出Top50且跌破MA5第1天 (收盘{price:.2f} < MA5 {ma5:.2f})")
+                        log.info(f"观察: {ts_code} 跌出Top50且跌破MA5第{holdings[ts_code]['below_ma5_days']}天 (收盘{price:.2f} < MA5 {ma5:.2f})")
                 else:
                     if holdings[ts_code].get('below_ma5_days', 0) > 0:
                         log.info(f"恢复: {ts_code} 站上MA5 (收盘{price:.2f} >= MA5 {ma5:.2f})")
                     holdings[ts_code]['below_ma5_days'] = 0
             else:
-                if ts_code not in top50_stocks:
+                if ts_code not in top50_stocks and can_sell:
                     stocks_to_sell.append((ts_code, price, None, f'跌出top{top_n_hold}'))
         
         for sell_info in stocks_to_sell:
@@ -534,6 +593,8 @@ def backtest_complementary_strategy(
         'top_n_buy': top_n_buy,
         'top_n_hold': top_n_hold,
         'use_ma5_sell': use_ma5_sell,
+        'stop_loss_mode': stop_loss_mode,
+        'stop_loss_pct': stop_loss_pct,
         'final_assets': final_assets,
         'final_return': final_return,
         'final_return_pct': final_return_pct,
@@ -608,7 +669,8 @@ def _plot_equity_curve(result: Dict, output_dir: Path, df_curve: pd.DataFrame, c
         ax.set_xticklabels([d.strftime('%m-%d') for d in dates], rotation=45, ha='right')
         plt.title(f"收益率曲线：策略 vs 沪深300 ({result['start_date']} - {result['end_date']})")
         fig.tight_layout()
-        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}.png"
+        sl_tag = result.get('stop_loss_mode', 'none')
+        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.png"
         out_path = output_dir / name
         plt.savefig(out_path, dpi=120, bbox_inches='tight')
         plt.close()
@@ -672,14 +734,16 @@ def generate_report(result: Dict, output_dir: Path):
     # 保存结果
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    sl_tag = result.get('stop_loss_mode', 'none')
+    
     # 保存每日记录
-    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}.csv"
+    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.csv"
     result['daily_records'].to_csv(daily_file, index=False, encoding='utf-8-sig')
     log.success(f"\n✓ 每日记录已保存: {daily_file}")
     
     # 保存操作日志（含股票名称列）
     if not result['operations_log'].empty:
-        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}.csv"
+        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.csv"
         df_op_save = result['operations_log'].copy()
         idx = list(df_op_save.columns).index('ts_code') + 1
         df_op_save.insert(idx, 'name', df_op_save['ts_code'].map(lambda c: stock_name_map.get(c, c)))
@@ -687,7 +751,7 @@ def generate_report(result: Dict, output_dir: Path):
         log.success(f"✓ 操作日志已保存: {operations_file}")
     
     # 生成文本报告
-    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}.md"
+    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.md"
     with open(report_file, 'w', encoding='utf-8') as f:
         df_op = result['operations_log']  # 供持仓与盈亏统计、详细买卖记录等使用
         # 提前计算卖出记录与平均持仓时间，供「交易统计」与「持仓与盈亏统计」共用
@@ -706,7 +770,12 @@ def generate_report(result: Dict, output_dir: Path):
                 buy_dates = pd.to_datetime(df_sell.loc[valid_buy, 'buy_date'].astype(str), format='%Y%m%d')
                 hold_days = (sell_dates - buy_dates).dt.days
                 avg_hold_days = float(hold_days.mean())
-        f.write(f"# v232_v270互补策略回测报告\n\n")
+        sl_mode = result.get('stop_loss_mode', 'none')
+        sl_pct = result.get('stop_loss_pct', 4.0)
+        sl_labels = {'none': '无4%硬止损', 'close': f'{sl_pct:.0f}%止损(收盘价触发)', 'intraday_low': f'{sl_pct:.0f}%止损(日内最低价触及)'}
+        sl_label = sl_labels.get(sl_mode, sl_mode)
+        
+        f.write(f"# v232_v270互补策略回测报告（{sl_label}）\n\n")
         f.write(f"## 回测区间\n\n")
         f.write(f"- 开始日期: {result['start_date']}\n")
         f.write(f"- 结束日期: {result['end_date']}\n\n")
@@ -715,6 +784,7 @@ def generate_report(result: Dict, output_dir: Path):
         f.write(f"- 每支股票买入金额: {result.get('stock_amount', 300000):,.0f}元\n")
         f.write(f"- 买入Top: {result.get('top_n_buy', 10)}（前一日选股，当日开盘价买）\n")
         f.write(f"- 当日顺序: 先买后卖；T日卖出资金T+1日开盘用于买\n")
+        f.write(f"- 止损模式: {sl_label}\n")
         if result.get('use_ma5_sell', True):
             f.write(f"- 卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖\n\n")
         else:
@@ -943,7 +1013,7 @@ def generate_report(result: Dict, output_dir: Path):
             last_nav = float(csi300.iloc[-1]['nav_csi300'])
             csi300_return = (last_nav / first_nav - 1) * 100 if first_nav > 0 else 0
             f.write(f"4. **与沪深300对比**：策略收益率 **{result['final_return_pct']:+.2f}%**，同期沪深300累计收益 **{csi300_return:+.2f}%**；资金曲线图见上文。\n\n")
-        f.write(f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；卖出采用「跌出 Top50 且连续两日收盘价低于五日均价」在 T2 收盘价卖出，以控制回撤并保留趋势持仓。\n\n")
+        f.write(f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；卖出采用「4%止损：当日最低价触及止损位则按止损价日内卖出」，或「跌出 Top50 且连续两日收盘价低于五日均价」在 T2 收盘价卖出，以控制回撤并保留趋势持仓。\n\n")
         f.write(f"6. **数据说明**：选股数据来自每日收盘后生成的 `v232_v270_complementary_YYYYMMDD.csv`（1月29日、1月30日、2月2日、2月3日等已包含最新评分结果）。\n\n")
 
     log.success(f"✓ 回测报告已保存: {report_file}")
@@ -958,6 +1028,9 @@ def main():
     parser.add_argument('--top-buy', type=int, default=10, help='买入TopN(默认10)')
     parser.add_argument('--top-hold', type=int, default=50, help='持有TopN(默认50，仅在不使用MA5策略时生效)')
     parser.add_argument('--no-ma5-sell', action='store_true', help='不使用5日均线卖出策略，改用跌出TopN策略')
+    parser.add_argument('--stop-loss-pct', type=float, default=4.0, help='单支标的亏损达此比例即卖(默认4%%)')
+    parser.add_argument('--stop-loss-mode', type=str, default='none', choices=['none', 'close', 'intraday_low'],
+                        help='4%%止损模式: none=不加(默认), close=收盘价触发按收盘卖, intraday_low=日内最低触及按止损价卖')
     parser.add_argument('--output-dir', type=str, default=None, help='输出目录')
     
     args = parser.parse_args()
@@ -977,7 +1050,9 @@ def main():
         stock_amount=args.stock_amount,
         top_n_buy=args.top_buy,
         top_n_hold=args.top_hold,
-        use_ma5_sell=use_ma5_sell
+        use_ma5_sell=use_ma5_sell,
+        stop_loss_pct=args.stop_loss_pct,
+        stop_loss_mode=args.stop_loss_mode
     )
     
     if result:
