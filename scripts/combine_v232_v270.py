@@ -1142,11 +1142,15 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
         if 'is_ths_hot_stock' in result_df.columns:
             log.info(f"  - 同花顺热股榜: {result_df['is_ths_hot_stock'].fillna(False).sum()} 只")
         
-        # 保存结果
+        # 保存结果：写入 Top100 池子（按 dual_score 排序），供回测在排除银行/证券/白酒/房地产后取 Top10
         output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
         output_file = output_dir / f'v232_v270_complementary_{date}.csv'
-        result_df.to_csv(output_file, index=False, encoding='utf-8-sig')
-        log.success(f"\n✓ 结果已保存: {output_file}")
+        pool_100 = combined.copy()
+        if 'sort_key' not in pool_100.columns:
+            pool_100['sort_key'] = pool_100['dual_score']
+        pool_100 = pool_100.sort_values('sort_key', ascending=False).head(100)
+        pool_100.to_csv(output_file, index=False, encoding='utf-8-sig')
+        log.success(f"\n✓ 结果已保存: {output_file}（Top100 池子，供回测排除四大板块后取 Top10）")
         
         return result_df
     else:

@@ -38,16 +38,42 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.utils.logger import log
 from src.data.data_manager import DataManager
 
+# 买入时排除的板块（行业名称包含任一词即排除）
+EXCLUDED_SECTORS_FOR_BUY = ['银行', '证券', '白酒', '房地产', '地产']
+# 选股池大小：从互补策略 Top N 中排除上述板块后再取 Top10/Top50
+SECTOR_FILTER_POOL_N = 100
 
-def get_prev_trading_date(date_str: str) -> str:
+
+def _fallback_weekday_dates(start_date: str, end_date: str) -> List[str]:
+    """仅按周一～周五生成日期列表（不含节假日），用于交易日历不可用时的回退。"""
+    start = datetime.strptime(start_date, '%Y%m%d')
+    end = datetime.strptime(end_date, '%Y%m%d')
+    out = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            out.append(current.strftime('%Y%m%d'))
+        current += timedelta(days=1)
+    return out
+
+
+def get_prev_trading_date(date_str: str, trading_list: Optional[List[str]] = None) -> str:
     """
-    返回指定日期的前一交易日（仅按工作日，不考虑节假日）。
+    返回指定日期的前一交易日。
+    若提供 trading_list（升序），则从中取前一交易日；否则按工作日简单回退（不考虑节假日）。
     用于确定「选股日」：当日买入应使用前一交易日的选股结果。
     """
+    if trading_list:
+        try:
+            idx = trading_list.index(date_str)
+            if idx > 0:
+                return trading_list[idx - 1]
+        except ValueError:
+            pass
     dt = datetime.strptime(date_str, '%Y%m%d')
     while True:
         dt -= timedelta(days=1)
-        if dt.weekday() < 5:  # 周一=0, 周五=4
+        if dt.weekday() < 5:
             return dt.strftime('%Y%m%d')
 
 
@@ -225,7 +251,8 @@ def backtest_complementary_strategy(
     top_n_hold: int = 50,              # 持有top50（仅用于买入判断）
     use_ma5_sell: bool = True,         # 使用5日均线卖出策略
     stop_loss_pct: float = 4.0,        # 单标亏损达此比例即卖（默认4%）
-    stop_loss_mode: str = 'none'  # 4%止损模式: 'none'=不加(默认) | 'close'=收盘价触发按收盘卖 | 'intraday_low'=日内最低触及按止损价卖
+    stop_loss_mode: str = 'none',      # 4%止损模式: 'none'=不加(默认) | 'close'=收盘价触发按收盘卖 | 'intraday_low'=日内最低触及按止损价卖
+    exclude_sectors: bool = False      # 是否排除银行/证券/白酒/房地产后再取Top10（默认不排除）
 ) -> Dict:
     """
     回测互补策略
@@ -247,7 +274,7 @@ def backtest_complementary_strategy(
     log.info(f"回测区间: {start_date} - {end_date}")
     log.info(f"初始资金: {initial_cash:,.0f}元")
     log.info(f"每支股票买入金额: {stock_amount:,.0f}元")
-    log.info(f"买入Top{top_n_buy}")
+    log.info(f"买入Top{top_n_buy}" + ("（排除银行/证券/白酒/房地产后取）" if exclude_sectors else ""))
     if stop_loss_mode == 'none':
         log.info(f"卖出策略: 无4%硬止损；" + ("排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖" if use_ma5_sell else f"跌出Top{top_n_hold}则卖出"))
     elif stop_loss_mode == 'close':
@@ -258,18 +285,27 @@ def backtest_complementary_strategy(
     
     dm = DataManager()
     
-    # 生成交易日列表（排除周末，简单处理）
-    start = datetime.strptime(start_date, '%Y%m%d')
-    end = datetime.strptime(end_date, '%Y%m%d')
-    trading_dates = []
-    current = start
-    while current <= end:
-        # 简单判断：周一到周五
-        if current.weekday() < 5:
-            trading_dates.append(current.strftime('%Y%m%d'))
-        current += timedelta(days=1)
+    # 使用 A 股交易日历生成交易日列表（排除周末与春节等法定节假日）
+    # 多取约 30 天以便首日能取到「前一交易日」
+    start_dt = datetime.strptime(start_date, '%Y%m%d')
+    cal_start = (start_dt - timedelta(days=35)).strftime('%Y%m%d')
+    df_cal = dm.get_trade_calendar(cal_start, end_date)
+    full_trading_list: List[str] = []
+    if df_cal is not None and not df_cal.empty and 'is_open' in df_cal.columns:
+        open_dates = df_cal[df_cal['is_open'] == 1].copy()
+        open_dates['date_str'] = open_dates['cal_date'].dt.strftime('%Y%m%d')
+        full_trading_list = sorted(open_dates['date_str'].unique().tolist())
+        trading_dates = [d for d in full_trading_list if start_date <= d <= end_date]
+        if not trading_dates:
+            log.warning("交易日历在区间内无开盘日，回退为仅排除周末")
+            trading_dates = _fallback_weekday_dates(start_date, end_date)
+            full_trading_list = _fallback_weekday_dates(cal_start, end_date)
+    else:
+        log.warning("获取交易日历失败或为空，回退为仅排除周末")
+        trading_dates = _fallback_weekday_dates(start_date, end_date)
+        full_trading_list = _fallback_weekday_dates(cal_start, end_date)
     
-    log.info(f"交易日数量: {len(trading_dates)}")
+    log.info(f"交易日数量: {len(trading_dates)}（按 A 股交易日历）")
     log.info("")
     
     # 初始化
@@ -291,8 +327,9 @@ def backtest_complementary_strategy(
         
         # 加载「前一交易日」的互补结果，用于当日买入（选股日=前一交易日，买入日=当日）
         # 首日若无前一交易日文件（如1月5日前为元旦假期），则跳过，实际首日建仓为次日
-        signal_date = trading_dates[i - 1] if i > 0 else get_prev_trading_date(trading_dates[0])
-        df_pred = load_complementary_predictions(signal_date, top_n=top_n_hold)
+        signal_date = trading_dates[i - 1] if i > 0 else get_prev_trading_date(trading_dates[0], full_trading_list)
+        load_top_n = SECTOR_FILTER_POOL_N if exclude_sectors else top_n_hold
+        df_pred = load_complementary_predictions(signal_date, top_n=load_top_n)
         if df_pred is None or df_pred.empty:
             log.warning(f"选股日{signal_date}的互补结果不存在或为空，当日{date}无法买入/调仓，跳过")
             if i > 0 and trading_dates[i - 1] in predictions_cache:
@@ -302,11 +339,33 @@ def backtest_complementary_strategy(
         else:
             log.info(f"选股日: {signal_date} -> 买入日: {date} (使用 v232_v270_complementary_{signal_date}.csv)")
         
-        predictions_cache[date] = df_pred
+        # 可选：从选股池中排除银行、证券、白酒、房地产板块后再取 Top10/Top50
+        if exclude_sectors:
+            try:
+                ts_codes_pool = df_pred['ts_code'].tolist()
+                industry_map = dm.fetcher.get_stock_industry_map(ts_codes_pool)
+                df_pred = df_pred.copy()
+                df_pred['industry'] = df_pred['ts_code'].map(lambda c: industry_map.get(c, '') or '')
+                mask = df_pred['industry'].apply(
+                    lambda x: not any(s in str(x) for s in EXCLUDED_SECTORS_FOR_BUY)
+                )
+                df_filtered = df_pred[mask].reset_index(drop=True)
+                if len(df_filtered) < top_n_buy:
+                    log.warning(f"排除四大板块后仅剩{len(df_filtered)}只，少于买入数{top_n_buy}")
+                excluded_count = len(df_pred) - len(df_filtered)
+                if excluded_count > 0:
+                    log.info(f"排除银行/证券/白酒/房地产后: 池内{len(df_pred)}只 -> {len(df_filtered)}只（排除{excluded_count}只）")
+            except Exception as e:
+                log.warning(f"板块过滤失败，使用原排序: {e}")
+                df_filtered = df_pred
+        else:
+            df_filtered = df_pred
+        
+        predictions_cache[date] = df_filtered
         
         # 获取top10和top50股票列表
-        top10_stocks = df_pred.head(top_n_buy)['ts_code'].tolist()
-        top50_stocks = df_pred.head(top_n_hold)['ts_code'].tolist()
+        top10_stocks = df_filtered.head(top_n_buy)['ts_code'].tolist()
+        top50_stocks = df_filtered.head(top_n_hold)['ts_code'].tolist()
         
         log.info(f"Top10股票: {', '.join(top10_stocks[:5])}...")
         log.info(f"Top50股票数量: {len(top50_stocks)}")
@@ -592,6 +651,7 @@ def backtest_complementary_strategy(
         'stock_amount': stock_amount,
         'top_n_buy': top_n_buy,
         'top_n_hold': top_n_hold,
+        'exclude_sectors': exclude_sectors,
         'use_ma5_sell': use_ma5_sell,
         'stop_loss_mode': stop_loss_mode,
         'stop_loss_pct': stop_loss_pct,
@@ -670,7 +730,8 @@ def _plot_equity_curve(result: Dict, output_dir: Path, df_curve: pd.DataFrame, c
         plt.title(f"收益率曲线：策略 vs 沪深300 ({result['start_date']} - {result['end_date']})")
         fig.tight_layout()
         sl_tag = result.get('stop_loss_mode', 'none')
-        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.png"
+        file_suffix = '_exclude_sectors' if result.get('exclude_sectors') else ''
+        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.png"
         out_path = output_dir / name
         plt.savefig(out_path, dpi=120, bbox_inches='tight')
         plt.close()
@@ -717,41 +778,55 @@ def generate_report(result: Dict, output_dir: Path):
     if result.get('csi300_curve') is not None and not result['csi300_curve'].empty:
         log.info(f"\n沪深300: 已获取，报告中叠加资金曲线")
     
-    # 股票代码 -> 名称映射 与 DataManager（用于报告展示股票名称、最终持仓当前价）
+    # 股票代码 -> 名称/板块映射 与 DataManager（用于报告展示股票名称、归属板块、最终持仓当前价）
     stock_name_map = {}
+    stock_sector_map: Dict[str, str] = {}
     dm = None
     try:
         dm = DataManager()
         df_stocks = dm.get_stock_list()
         if df_stocks is not None and not df_stocks.empty and 'name' in df_stocks.columns:
             stock_name_map = df_stocks.set_index('ts_code')['name'].astype(str).to_dict()
+        # 报告涉及的所有股票代码（操作记录 + 最终持仓）
+        all_ts_codes = list(set(
+            result['operations_log']['ts_code'].tolist() if not result['operations_log'].empty else []
+            + list(result.get('final_holdings', {}).keys())
+        ))
+        if all_ts_codes:
+            stock_sector_map = dm.fetcher.get_stock_industry_map(all_ts_codes) or {}
     except Exception as e:
-        log.debug(f"获取股票名称映射失败，报告中仅显示代码: {e}")
+        log.debug(f"获取股票名称/板块映射失败，报告中仅显示代码: {e}")
     
     def _name(ts_code: str) -> str:
         return stock_name_map.get(ts_code, ts_code)
+    
+    def _sector(ts_code: str) -> str:
+        return stock_sector_map.get(ts_code, '—')
     
     # 保存结果
     output_dir.mkdir(parents=True, exist_ok=True)
     
     sl_tag = result.get('stop_loss_mode', 'none')
+    # 开启排除板块时文件名加后缀，避免覆盖未排除版的结果
+    file_suffix = '_exclude_sectors' if result.get('exclude_sectors') else ''
     
     # 保存每日记录
-    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.csv"
+    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.csv"
     result['daily_records'].to_csv(daily_file, index=False, encoding='utf-8-sig')
     log.success(f"\n✓ 每日记录已保存: {daily_file}")
     
-    # 保存操作日志（含股票名称列）
+    # 保存操作日志（含股票名称、板块列）
     if not result['operations_log'].empty:
-        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.csv"
+        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.csv"
         df_op_save = result['operations_log'].copy()
         idx = list(df_op_save.columns).index('ts_code') + 1
         df_op_save.insert(idx, 'name', df_op_save['ts_code'].map(lambda c: stock_name_map.get(c, c)))
+        df_op_save.insert(idx + 1, 'sector', df_op_save['ts_code'].map(lambda c: stock_sector_map.get(c, '')))
         df_op_save.to_csv(operations_file, index=False, encoding='utf-8-sig')
         log.success(f"✓ 操作日志已保存: {operations_file}")
     
     # 生成文本报告
-    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}_sl_{sl_tag}.md"
+    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.md"
     with open(report_file, 'w', encoding='utf-8') as f:
         df_op = result['operations_log']  # 供持仓与盈亏统计、详细买卖记录等使用
         # 提前计算卖出记录与平均持仓时间，供「交易统计」与「持仓与盈亏统计」共用
@@ -783,6 +858,8 @@ def generate_report(result: Dict, output_dir: Path):
         f.write(f"## 策略参数\n\n")
         f.write(f"- 每支股票买入金额: {result.get('stock_amount', 300000):,.0f}元\n")
         f.write(f"- 买入Top: {result.get('top_n_buy', 10)}（前一日选股，当日开盘价买）\n")
+        if result.get('exclude_sectors'):
+            f.write(f"- 买入策略: 从互补策略Top{SECTOR_FILTER_POOL_N}中排除银行、证券、白酒、房地产板块后取Top{result.get('top_n_buy', 10)}\n")
         f.write(f"- 当日顺序: 先买后卖；T日卖出资金T+1日开盘用于买\n")
         f.write(f"- 止损模式: {sl_label}\n")
         if result.get('use_ma5_sell', True):
@@ -859,8 +936,8 @@ def generate_report(result: Dict, output_dir: Path):
             top5_profit = df_sell.nlargest(5, 'profit')
             if not top5_profit.empty:
                 f.write(f"### 最大收益 Top5 股票\n\n")
-                f.write(f"| 股票代码 | 股票名称 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
-                f.write(f"|----------|----------|----------|----------|----------|----------|-------|\n")
+                f.write(f"| 股票代码 | 股票名称 | 板块 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
+                f.write(f"|----------|----------|------|----------|----------|----------|----------|-------|\n")
                 for _, row in top5_profit.iterrows():
                     bd = row.get('buy_date', '—')
                     sd = row['date']
@@ -868,14 +945,14 @@ def generate_report(result: Dict, output_dir: Path):
                         days = (pd.to_datetime(str(sd), format='%Y%m%d') - pd.to_datetime(str(bd), format='%Y%m%d')).days
                     else:
                         days = '—'
-                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
+                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {_sector(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
                 f.write(f"\n")
             # 最大亏损 Top5 股票
             top5_loss = df_sell.nsmallest(5, 'profit')
             if not top5_loss.empty:
                 f.write(f"### 最大亏损 Top5 股票\n\n")
-                f.write(f"| 股票代码 | 股票名称 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
-                f.write(f"|----------|----------|----------|----------|----------|----------|-------|\n")
+                f.write(f"| 股票代码 | 股票名称 | 板块 | 买入日期 | 卖出日期 | 持仓天数 | 盈亏(元) | 盈亏% |\n")
+                f.write(f"|----------|----------|------|----------|----------|----------|----------|-------|\n")
                 for _, row in top5_loss.iterrows():
                     bd = row.get('buy_date', '—')
                     sd = row['date']
@@ -883,14 +960,14 @@ def generate_report(result: Dict, output_dir: Path):
                         days = (pd.to_datetime(str(sd), format='%Y%m%d') - pd.to_datetime(str(bd), format='%Y%m%d')).days
                     else:
                         days = '—'
-                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
+                    f.write(f"| {row['ts_code']} | {_name(row['ts_code'])} | {_sector(row['ts_code'])} | {bd} | {sd} | {days} | {row['profit']:+,.0f} | {row['profit_pct']:+.2f}% |\n")
                 f.write(f"\n")
         
         f.write(f"## 最终持仓\n\n")
         f.write(f"持仓数量: {len(result['final_holdings'])}只；以下为买入日期、当前成本、期末价、市值及盈亏状态（期末日: {result['end_date']}）。\n\n")
         if result['final_holdings']:
-            f.write(f"| 股票代码 | 股票名称 | 买入日期 | 持仓数量 | 成本(元) | 当前价(元) | 市值(元) | 盈亏(元) | 盈亏% | 状态 |\n")
-            f.write(f"|---------|----------|----------|----------|----------|------------|----------|----------|-------|------|\n")
+            f.write(f"| 股票代码 | 股票名称 | 板块 | 买入日期 | 持仓数量 | 成本(元) | 当前价(元) | 市值(元) | 盈亏(元) | 盈亏% | 状态 |\n")
+            f.write(f"|---------|----------|------|----------|----------|----------|------------|----------|----------|-------|------|\n")
             for ts_code, position in result['final_holdings'].items():
                 buy_date = position.get('buy_date', '—')
                 cost = position['cost']
@@ -901,9 +978,9 @@ def generate_report(result: Dict, output_dir: Path):
                     profit = market_value - cost
                     profit_pct = (profit / cost * 100) if cost > 0 else 0
                     status = "盈利" if profit >= 0 else "亏损"
-                    f.write(f"| {ts_code} | {_name(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | {current_price:.2f} | {market_value:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {status} |\n")
+                    f.write(f"| {ts_code} | {_name(ts_code)} | {_sector(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | {current_price:.2f} | {market_value:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {status} |\n")
                 else:
-                    f.write(f"| {ts_code} | {_name(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | — | — | — | — | — |\n")
+                    f.write(f"| {ts_code} | {_name(ts_code)} | {_sector(ts_code)} | {buy_date} | {qty}股 | {cost:,.0f} | — | — | — | — | — |\n")
         f.write(f"\n")
 
         # 详细买卖记录
@@ -914,22 +991,22 @@ def generate_report(result: Dict, output_dir: Path):
             df_buy = df_op[df_op['operation'] == '买入']
             if not df_buy.empty:
                 f.write(f"### 买入记录\n\n")
-                f.write(f"| 日期 | 股票代码 | 股票名称 | 数量 | 价格(元) | 金额(元) | 买卖原因 |\n")
-                f.write(f"|------|----------|----------|------|----------|----------|----------|\n")
+                f.write(f"| 日期 | 股票代码 | 股票名称 | 板块 | 数量 | 价格(元) | 金额(元) | 买卖原因 |\n")
+                f.write(f"|------|----------|----------|------|------|----------|----------|----------|\n")
                 for _, row in df_buy.iterrows():
-                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {row['reason']} |\n")
+                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {_sector(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {row['reason']} |\n")
                 f.write(f"\n")
             # 卖出记录表
             df_sell = df_op[df_op['operation'] == '卖出']
             if not df_sell.empty:
                 f.write(f"### 卖出记录\n\n")
-                f.write(f"| 日期 | 股票代码 | 股票名称 | 数量 | 卖出价(元) | 金额(元) | 成本(元) | 盈亏(元) | 盈亏% | 卖出原因 |\n")
-                f.write(f"|------|----------|----------|------|------------|----------|----------|----------|-------|----------|\n")
+                f.write(f"| 日期 | 股票代码 | 股票名称 | 板块 | 数量 | 卖出价(元) | 金额(元) | 成本(元) | 盈亏(元) | 盈亏% | 卖出原因 |\n")
+                f.write(f"|------|----------|----------|------|------|------------|----------|----------|----------|-------|----------|\n")
                 for _, row in df_sell.iterrows():
                     cost = row.get('cost', 0)
                     profit = row.get('profit', 0)
                     profit_pct = row.get('profit_pct', 0)
-                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {cost:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {row['reason']} |\n")
+                    f.write(f"| {row['date']} | {row['ts_code']} | {_name(row['ts_code'])} | {_sector(row['ts_code'])} | {row['quantity']} | {row['price']:.2f} | {row['amount']:,.0f} | {cost:,.0f} | {profit:+,.0f} | {profit_pct:+.2f}% | {row['reason']} |\n")
                 f.write(f"\n")
 
             # 买卖原因统计
@@ -1031,6 +1108,8 @@ def main():
     parser.add_argument('--stop-loss-pct', type=float, default=4.0, help='单支标的亏损达此比例即卖(默认4%%)')
     parser.add_argument('--stop-loss-mode', type=str, default='none', choices=['none', 'close', 'intraday_low'],
                         help='4%%止损模式: none=不加(默认), close=收盘价触发按收盘卖, intraday_low=日内最低触及按止损价卖')
+    parser.add_argument('--exclude-sectors', action='store_true',
+                        help='买入时排除银行、证券、白酒、房地产板块后再取Top10（默认不排除）')
     parser.add_argument('--output-dir', type=str, default=None, help='输出目录')
     
     args = parser.parse_args()
@@ -1052,7 +1131,8 @@ def main():
         top_n_hold=args.top_hold,
         use_ma5_sell=use_ma5_sell,
         stop_loss_pct=args.stop_loss_pct,
-        stop_loss_mode=args.stop_loss_mode
+        stop_loss_mode=args.stop_loss_mode,
+        exclude_sectors=args.exclude_sectors
     )
     
     if result:
