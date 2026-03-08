@@ -11,9 +11,9 @@ set -e
 cd "$(dirname "$0")/.."
 
 # 默认日期（可通过参数或环境变量覆盖）
-DEFAULT_SCORE="20260224"
+DEFAULT_SCORE="20260304"
 DEFAULT_START="20260105"
-DEFAULT_END="20260224"
+DEFAULT_END="20260304"
 
 # 优先：命令行参数（评分日 [回测起始 回测结束]）
 if [ -n "$1" ]; then
@@ -51,9 +51,9 @@ python scripts/predict_v270_ensemble_top50.py "$DATE_224"
 
 echo ""
 echo "=============================================="
-echo "3. 集成模型（互补策略）Top10"
+echo "3. 集成模型（互补策略）Top10（生成100行候选池供回测）"
 echo "=============================================="
-python scripts/combine_v232_v270.py --date "$DATE_224" --strategy complementary --top 10
+python scripts/combine_v232_v270.py --date "$DATE_224" --strategy complementary --top 10 --base-top-n 100 --v232-top-n 100
 
 echo ""
 echo "=============================================="

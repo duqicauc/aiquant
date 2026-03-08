@@ -137,7 +137,9 @@ class TushareFetcher(BaseFetcher):
             return df if df is not None else pd.DataFrame()
             
         except Exception as e:
-            log.warning(f"获取日线数据失败 {ts_code}: {e}")
+            log.warning(
+                f"获取日线数据失败 {ts_code} ({start_date}~{end_date}): {e}"
+            )
             return pd.DataFrame()
     
     def get_weekly_data(
@@ -563,6 +565,47 @@ class TushareFetcher(BaseFetcher):
             log.warning(f"获取资金流向失败: {e}")
             return pd.DataFrame()
     
+    def get_sector_moneyflow(
+        self,
+        trade_date: str,
+        top_n: int = 30
+    ) -> pd.DataFrame:
+        """
+        获取板块资金流向（东方财富行业/概念板块主力净流入）
+
+        接口说明：https://tushare.pro/document/2?doc_id=291
+        用户积分≥5000可调取（moneyflow_dc）
+
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            top_n: 返回主力净流入最多的 TopN 板块
+
+        Returns:
+            DataFrame，含 ts_code, ts_name, net_mf_amount(万元, 正数=净流入), pct_chg 等；
+            若接口不可用则返回空 DataFrame
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            df = self.pro.moneyflow_dc(trade_date=self.format_date(trade_date))
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # 只保留有净流入量字段的行
+            if 'net_mf_amount' not in df.columns:
+                # 尝试兼容字段名差异
+                for col in ('net_buy_amount', 'net_amount'):
+                    if col in df.columns:
+                        df = df.rename(columns={col: 'net_mf_amount'})
+                        break
+            if 'net_mf_amount' not in df.columns:
+                return pd.DataFrame()
+            df = df[df['net_mf_amount'].notna()].copy()
+            # 按净流入降序，取 TopN（净流入为正的板块）
+            df = df.sort_values('net_mf_amount', ascending=False).head(top_n)
+            return df
+        except Exception as e:
+            log.warning(f"获取板块资金流向失败: {e}")
+            return pd.DataFrame()
+
     def get_stock_industry_map(self, ts_codes: Optional[list] = None) -> dict:
         """
         获取股票与行业映射（用于热点行业匹配）

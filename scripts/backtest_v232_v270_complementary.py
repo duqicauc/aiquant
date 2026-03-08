@@ -1090,8 +1090,15 @@ def generate_report(result: Dict, output_dir: Path):
             last_nav = float(csi300.iloc[-1]['nav_csi300'])
             csi300_return = (last_nav / first_nav - 1) * 100 if first_nav > 0 else 0
             f.write(f"4. **与沪深300对比**：策略收益率 **{result['final_return_pct']:+.2f}%**，同期沪深300累计收益 **{csi300_return:+.2f}%**；资金曲线图见上文。\n\n")
-        f.write(f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；卖出采用「4%止损：当日最低价触及止损位则按止损价日内卖出」，或「跌出 Top50 且连续两日收盘价低于五日均价」在 T2 收盘价卖出，以控制回撤并保留趋势持仓。\n\n")
-        f.write(f"6. **数据说明**：选股数据来自每日收盘后生成的 `v232_v270_complementary_YYYYMMDD.csv`（1月29日、1月30日、2月2日、2月3日等已包含最新评分结果）。\n\n")
+        sl_desc_map = {
+            'none': '无4%硬止损',
+            'close': '4%止损：收盘价低于成本4%时按收盘价卖出',
+            'intraday_low': '4%止损：当日最低价触及止损位则按止损价日内卖出'
+        }
+        sl_desc = sl_desc_map.get(sl_mode, sl_mode)
+        ma5_desc = '跌出 Top50 且连续两日收盘价低于五日均价，在 T2 收盘价卖出' if result.get('use_ma5_sell', True) else f'跌出 Top{result.get("top_n_hold", 50)} 则卖出'
+        f.write(f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；止损模式：{sl_desc}；卖出策略：{ma5_desc}，以控制回撤并保留趋势持仓。\n\n")
+        f.write(f"6. **数据说明**：选股数据来自每日收盘后生成的 `v232_v270_complementary_YYYYMMDD.csv`，回测区间 {result['start_date']} ～ {result['end_date']}。\n\n")
 
     log.success(f"✓ 回测报告已保存: {report_file}")
 
