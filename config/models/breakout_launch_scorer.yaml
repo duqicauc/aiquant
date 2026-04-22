@@ -9,7 +9,7 @@ model:
   display_name: 突破起爆评分模型
   description: 基于技术指标识别股票起爆点，预测未来3周强势上涨概率的XGBoost选股模型
   type: xgboost
-  version: v1.0.0
+  version: v2.8.0
   status: development  # development, testing, staging, production
 
 # 数据配置

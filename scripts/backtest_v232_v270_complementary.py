@@ -8,27 +8,27 @@ v232_v270互补策略回测脚本
 2. 第1天：若前一交易日互补结果不存在（如1月5日前为元旦假期无1月2日文件），则当日跳过，实际首日建仓为次日（如1月6日）。
 3. 后续每日：当日顺序为「先买后卖」。T日卖出所得资金，T+1日开盘用于买。
    - 买入：前一日选出的Top10，当日开盘价买；选股日Top10中不在持仓的按顺序买直至现金不足30万/只。
-   - 卖出：（可选）4%止损；或 排名50名之后 且 连续两日（T1、T2）收盘价低于五日均价，在T2收盘价卖。
+   - 卖出：（可选）4%止损；或 排名50名之后 且 连续N日收盘价低于MA均线，在T+N日收盘价卖。
    - T+1：当日买入的标的当日不可卖出（不触发4%止损），但从买入当日起参与MA5计数。
 
 初始资金：1000万
 """
 
-import sys
 import argparse
-from pathlib import Path
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 try:
     import matplotlib
 
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
 
     _HAS_MATPLOTLIB = True
 except ImportError:
@@ -37,9 +37,13 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.logger import log
 from src.data.data_manager import DataManager
 from src.trading.ashare_rules import (
+    REASON_AUCTION_DEVIATION,
+    REASON_LIMIT_DOWN_NO_SELL,
+    REASON_LIMIT_UP_NO_BUY,
+    REASON_SUSPENDED,
+    REASON_VOLUME_INSUFFICIENT,
     calc_trade_fee,
     infer_limit_pct,
     is_limit_down,
@@ -47,15 +51,11 @@ from src.trading.ashare_rules import (
     is_suspended_or_no_trade,
     participation_ok,
     round_price_a_share,
-    REASON_AUCTION_DEVIATION,
-    REASON_LIMIT_DOWN_NO_SELL,
-    REASON_LIMIT_UP_NO_BUY,
-    REASON_SUSPENDED,
-    REASON_VOLUME_INSUFFICIENT,
 )
 from src.trading.execution_gate import ExecutionGate
 from src.trading.models import OrderIntent, OrderSide
 from src.trading.risk_engine import RiskConfig, RiskEngine
+from src.utils.logger import log
 
 # 买入时排除的板块（行业名称包含任一词即排除）
 EXCLUDED_SECTORS_FOR_BUY = ["银行", "证券", "白酒", "房地产", "地产"]
@@ -137,48 +137,49 @@ def load_complementary_predictions(date: str, top_n: int = 50) -> Optional[pd.Da
         return None
 
 
-def get_ma5(ts_code: str, date: str, dm: DataManager) -> Optional[float]:
+def get_ma(ts_code: str, date: str, dm: DataManager, ma_window: int = 5) -> Optional[float]:
     """
-    获取股票在指定日期的5日均线值
+    获取股票在指定日期的N日均线值
 
     Args:
         ts_code: 股票代码
         date: 日期 (YYYYMMDD)
         dm: DataManager实例
+        ma_window: 均线周期（默认5）
 
     Returns:
-        5日均线值，如果无法计算返回None
+        N日均线值，如果无法计算返回None
     """
     try:
-        # 获取最近10天的数据（确保有足够数据计算5日均线）
+        # 获取足够的数据计算均线
         end_date = date
-        start_dt = datetime.strptime(date, "%Y%m%d") - timedelta(days=15)
+        start_dt = datetime.strptime(date, "%Y%m%d") - timedelta(days=ma_window * 3 + 5)
         start_date = start_dt.strftime("%Y%m%d")
 
         df_daily = dm.get_daily_data(ts_code, start_date, end_date)
-        if df_daily is None or len(df_daily) < 5:
+        if df_daily is None or len(df_daily) < ma_window:
             return None
 
         # 按日期排序
         df_daily = df_daily.sort_values("trade_date")
 
-        # 计算5日均线
-        df_daily["ma5"] = df_daily["close"].rolling(window=5).mean()
+        # 计算N日均线
+        col_name = f"ma{ma_window}"
+        df_daily[col_name] = df_daily["close"].rolling(window=ma_window).mean()
 
-        # 获取指定日期的MA5
-        # 找到最接近指定日期的记录
+        # 获取指定日期的MA
         df_daily["trade_date_str"] = df_daily["trade_date"].astype(str).str.replace("-", "")
         target_row = df_daily[df_daily["trade_date_str"] <= date].tail(1)
 
         if target_row.empty:
             return None
 
-        ma5_value = target_row.iloc[0]["ma5"]
-        if pd.notna(ma5_value):
-            return float(ma5_value)
+        ma_value = target_row.iloc[0][col_name]
+        if pd.notna(ma_value):
+            return float(ma_value)
         return None
     except Exception as e:
-        log.debug(f"获取{ts_code}在{date}的MA5失败: {e}")
+        log.debug(f"获取{ts_code}在{date}的MA{ma_window}失败: {e}")
         return None
 
 
@@ -291,9 +292,14 @@ def backtest_complementary_strategy(
     stock_amount: float = 300000.0,  # 每支股票30万
     top_n_buy: int = 10,  # 买入top10
     top_n_hold: int = 50,  # 持有top50（仅用于买入判断）
-    use_ma5_sell: bool = True,  # 使用5日均线卖出策略
+    use_ma5_sell: bool = True,  # 使用MA均线卖出策略
+    ma_window: int = 5,  # MA均线周期（默认5日）
+    ma_consecutive_days: int = 2,  # 连续跌破MA天数即卖出（默认2日）
     stop_loss_pct: float = 4.0,  # 单标亏损达此比例即卖（默认4%）
     stop_loss_mode: str = "none",  # 4%止损模式: 'none'=不加(默认) | 'close'=收盘价触发按收盘卖 | 'intraday_low'=日内最低触及按止损价卖
+    trailing_stop_pct: Optional[float] = None,  # 跟踪止盈: 从最高点回撤此比例即卖（None=不启用）
+    trailing_stop_activate_pct: float = 0.0,  # 跟踪止盈激活阈值: 成本价上涨此比例后启动跟踪
+    max_sector_concentration: Optional[int] = None,  # 单行业最大持仓数（None=不限制）
     exclude_sectors: bool = False,  # 是否排除银行/证券/白酒/房地产后再取Top10（默认不排除）
     buy_slippage_bps: float = 15.0,  # 买入滑点（bp）
     sell_slippage_bps: float = 20.0,  # 卖出滑点（bp）
@@ -347,11 +353,17 @@ def backtest_complementary_strategy(
         f"佣金{commission_rate:.4%}(最低{min_commission:.2f}), 过户费{transfer_fee_rate:.4%}, "
         f"印花税(卖){stamp_tax_rate:.3%}, 参与率上限{max_participation_rate:.1%}"
     )
+    if trailing_stop_pct is not None:
+        log.info(
+            f"跟踪止盈: 成本上涨{trailing_stop_activate_pct:.1f}%后激活，" f"从最高点回撤{trailing_stop_pct:.1f}%即卖出"
+        )
+    if max_sector_concentration is not None:
+        log.info(f"板块集中度限制: 单行业最多持仓{max_sector_concentration}只")
     if stop_loss_mode == "none":
         log.info(
             "卖出策略: 无4%硬止损；"
             + (
-                "排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖"
+                f"排名50名之后 且 连续{ma_consecutive_days}日收盘价低于MA{ma_window}，在T{ma_consecutive_days}收盘价卖"
                 if use_ma5_sell
                 else f"跌出Top{top_n_hold}则卖出"
             )
@@ -360,7 +372,7 @@ def backtest_complementary_strategy(
         log.info(
             "卖出策略: 4%止损(收盘价触发、按收盘价卖)；"
             + (
-                "或 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖"
+                f"或 排名50名之后 且 连续{ma_consecutive_days}日收盘价低于MA{ma_window}，在T{ma_consecutive_days}收盘价卖"
                 if use_ma5_sell
                 else f"或 跌出Top{top_n_hold}则卖出"
             )
@@ -369,7 +381,7 @@ def backtest_complementary_strategy(
         log.info(
             "卖出策略: 4%止损(当日最低价触及则按止损价日内卖)；"
             + (
-                "或 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖"
+                f"或 排名50名之后 且 连续{ma_consecutive_days}日收盘价低于MA{ma_window}，在T{ma_consecutive_days}收盘价卖"
                 if use_ma5_sell
                 else f"或 跌出Top{top_n_hold}则卖出"
             )
@@ -492,13 +504,52 @@ def backtest_complementary_strategy(
         log.info(f"Top50股票数量: {len(top50_stocks)}")
         log.info("当日顺序: 先买后卖（开盘价买入，收盘价卖出；T日卖出资金T+1日开盘用于买）")
 
+        # 更新所有持仓的日内最高价（用于跟踪止盈）
+        if trailing_stop_pct is not None:
+            for ts_code in list(holdings.keys()):
+                snap = get_stock_snapshot(date, ts_code, dm)
+                if snap and "high" in snap and not pd.isna(snap["high"]):
+                    old_peak = holdings[ts_code].get("peak_price", 0.0)
+                    holdings[ts_code]["peak_price"] = max(old_peak, float(snap["high"]))
+
         # 第一步：买入（选股日Top10，当日开盘价买）
         stocks_to_buy = [ts_code for ts_code in top10_stocks if ts_code not in holdings]
         today_bought = set()  # 当日有买入的标的（含新开仓与加仓），T+1 当日不可卖
+
+        # 板块集中度限制：预计算当前持仓的行业分布
+        sector_counts: Dict[str, int] = {}
+        if max_sector_concentration is not None:
+            try:
+                all_holdings_codes = list(holdings.keys())
+                if all_holdings_codes:
+                    industry_map = dm.fetcher.get_stock_industry_map(all_holdings_codes)
+                    for tc in all_holdings_codes:
+                        sector = industry_map.get(tc, "未知")
+                        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                # 也获取待买入股票的行业映射（一次性批量获取）
+                stocks_to_buy_industry_map = dm.fetcher.get_stock_industry_map(stocks_to_buy)
+            except Exception as e:
+                log.warning(f"获取行业映射失败，跳过板块集中度限制: {e}")
+                max_sector_concentration = None
+
         for ts_code in stocks_to_buy:
             if cash < stock_amount:
                 log.info(f"现金不足，无法继续买入（剩余现金: {cash:,.0f}元）")
                 break
+
+            # 板块集中度检查
+            if max_sector_concentration is not None:
+                sector = stocks_to_buy_industry_map.get(ts_code, "未知")
+                current_count = sector_counts.get(sector, 0)
+                # 统计今日已买入的同行业数
+                today_sector_count = sum(
+                    1 for tc in today_bought if stocks_to_buy_industry_map.get(tc, "未知") == sector
+                )
+                if current_count + today_sector_count >= max_sector_concentration:
+                    log.info(
+                        f"跳过买入 {ts_code}: 行业'{sector}' 已达上限 ({current_count + today_sector_count}/{max_sector_concentration})"
+                    )
+                    continue
 
             raw_open = get_stock_open(date, ts_code, dm)
             if raw_open is None or raw_open <= 0:
@@ -591,12 +642,21 @@ def backtest_complementary_strategy(
                     "cost": gross + buy_fee,
                     "buy_date": date,
                     "below_ma5_days": 0,
+                    "peak_price": price,
                 }
             else:
                 holdings[ts_code]["quantity"] += quantity
                 holdings[ts_code]["cost"] += gross + buy_fee
                 holdings[ts_code]["below_ma5_days"] = 0
+                # 加仓时，peak_price 取原值与当前买入价的较大者
+                old_peak = holdings[ts_code].get("peak_price", price)
+                holdings[ts_code]["peak_price"] = max(old_peak, price)
             today_bought.add(ts_code)
+
+            # 更新板块集中度计数
+            if max_sector_concentration is not None:
+                sector = stocks_to_buy_industry_map.get(ts_code, "未知")
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
 
             buy_reason = f"进入Top10(选股日{signal_date})，当日开盘价买入"
             log.info(
@@ -655,16 +715,31 @@ def backtest_complementary_strategy(
                         if profit_pct <= -stop_loss_pct:
                             stocks_to_sell.append((ts_code, close_price, None, f"单标亏损达{stop_loss_pct:.0f}%"))
                             continue
+                # 统一 close_price 变量供后续跟踪止盈使用
+                close_price = price
             else:
                 price = get_stock_price(date, ts_code, dm, None)
                 if price is None:
                     continue
+                close_price = price
 
-            # --- MA5 判断（当日买入标的也参与计数，但不实际卖出） ---
+            # --- 跟踪止盈（在4%止损之后、MA退出之前判断） ---
+            if trailing_stop_pct is not None and can_sell:
+                peak = position.get("peak_price", cost_per_share)
+                activate_price = cost_per_share * (1 + trailing_stop_activate_pct / 100.0)
+                if peak >= activate_price:
+                    trailing_stop_price = peak * (1 - trailing_stop_pct / 100.0)
+                    if close_price <= trailing_stop_price:
+                        stocks_to_sell.append(
+                            (ts_code, close_price, None, f"跟踪止盈(最高点{peak:.2f}回撤{trailing_stop_pct:.1f}%)")
+                        )
+                        continue
+
+            # --- MA 判断（当日买入标的也参与计数，但不实际卖出） ---
             if use_ma5_sell:
                 if ts_code in top50_stocks:
-                    # 在Top50内不卖，仅更新MA5计数（便于跌出Top50后连续天数正确）
-                    ma5 = get_ma5(ts_code, date, dm)
+                    # 在Top50内不卖，仅更新MA计数（便于跌出Top50后连续天数正确）
+                    ma5 = get_ma(ts_code, date, dm, ma_window)
                     if ma5 is not None:
                         if price < ma5:
                             holdings[ts_code]["below_ma5_days"] = holdings[ts_code].get("below_ma5_days", 0) + 1
@@ -672,26 +747,28 @@ def backtest_complementary_strategy(
                             holdings[ts_code]["below_ma5_days"] = 0
                     continue
 
-                ma5 = get_ma5(ts_code, date, dm)
+                ma5 = get_ma(ts_code, date, dm, ma_window)
                 if ma5 is None:
-                    log.debug(f"无法获取{ts_code}的MA5，跳过检查")
+                    log.debug(f"无法获取{ts_code}的MA{ma_window}，跳过检查")
                     continue
 
                 if price < ma5:
                     holdings[ts_code]["below_ma5_days"] = holdings[ts_code].get("below_ma5_days", 0) + 1
-                    if holdings[ts_code]["below_ma5_days"] >= 2 and can_sell:
-                        stocks_to_sell.append((ts_code, price, ma5, "跌出Top50且跌破MA5第2天"))
-                    elif holdings[ts_code]["below_ma5_days"] >= 2 and not can_sell:
+                    if holdings[ts_code]["below_ma5_days"] >= ma_consecutive_days and can_sell:
+                        stocks_to_sell.append(
+                            (ts_code, price, ma5, f"跌出Top50且跌破MA{ma_window}第{ma_consecutive_days}天")
+                        )
+                    elif holdings[ts_code]["below_ma5_days"] >= ma_consecutive_days and not can_sell:
                         log.info(
-                            f"T+1限制: {ts_code} 已连续{holdings[ts_code]['below_ma5_days']}天跌破MA5，但当日买入不可卖"
+                            f"T+1限制: {ts_code} 已连续{holdings[ts_code]['below_ma5_days']}天跌破MA{ma_window}，但当日买入不可卖"
                         )
                     else:
                         log.info(
-                            f"观察: {ts_code} 跌出Top50且跌破MA5第{holdings[ts_code]['below_ma5_days']}天 (收盘{price:.2f} < MA5 {ma5:.2f})"
+                            f"观察: {ts_code} 跌出Top50且跌破MA{ma_window}第{holdings[ts_code]['below_ma5_days']}天 (收盘{price:.2f} < MA{ma_window} {ma5:.2f})"
                         )
                 else:
                     if holdings[ts_code].get("below_ma5_days", 0) > 0:
-                        log.info(f"恢复: {ts_code} 站上MA5 (收盘{price:.2f} >= MA5 {ma5:.2f})")
+                        log.info(f"恢复: {ts_code} 站上MA{ma_window} (收盘{price:.2f} >= MA{ma_window} {ma5:.2f})")
                     holdings[ts_code]["below_ma5_days"] = 0
             else:
                 if ts_code not in top50_stocks and can_sell:
@@ -727,7 +804,7 @@ def backtest_complementary_strategy(
 
             cash += net_proceeds
             total_sell_fees += sell_fee
-            ma5_info = f"，MA5={ma5:.2f}" if ma5 else ""
+            ma5_info = f"，MA{ma_window}={ma5:.2f}" if ma5 else ""
             log.info(
                 f"卖出: {ts_code} - {qty}股 @ {exec_price:.2f}元{ma5_info} = {sell_gross:,.0f}元"
                 + (f" 费用{sell_fee:,.2f}元 净入{net_proceeds:,.0f}元" if enable_fees else "")
@@ -907,8 +984,13 @@ def backtest_complementary_strategy(
         "top_n_hold": top_n_hold,
         "exclude_sectors": exclude_sectors,
         "use_ma5_sell": use_ma5_sell,
+        "ma_window": ma_window,
+        "ma_consecutive_days": ma_consecutive_days,
         "stop_loss_mode": stop_loss_mode,
         "stop_loss_pct": stop_loss_pct,
+        "trailing_stop_pct": trailing_stop_pct,
+        "trailing_stop_activate_pct": trailing_stop_activate_pct,
+        "max_sector_concentration": max_sector_concentration,
         "final_assets": final_assets,
         "final_return": final_return,
         "final_return_pct": final_return_pct,
@@ -1086,6 +1168,11 @@ def generate_report(result: Dict, output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sl_tag = result.get("stop_loss_mode", "none")
+    ma_tag = (
+        f"_ma{result.get('ma_window', 5)}_{result.get('ma_consecutive_days', 2)}"
+        if result.get("use_ma5_sell", True)
+        else ""
+    )
     # 开启排除板块时文件名加后缀，避免覆盖未排除版的结果
     file_suffix = "_exclude_sectors" if result.get("exclude_sectors") else ""
     friction_tag = "" if result.get("apply_frictions", True) else "_ideal"
@@ -1162,7 +1249,9 @@ def generate_report(result: Dict, output_dir: Path):
         f.write("- 当日顺序: 先买后卖；T日卖出资金T+1日开盘用于买\n")
         f.write(f"- 止损模式: {sl_label}\n")
         if result.get("use_ma5_sell", True):
-            f.write("- 卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖\n")
+            ma_win = result.get("ma_window", 5)
+            ma_cd = result.get("ma_consecutive_days", 2)
+            f.write(f"- 卖出策略: 排名50名之后 且 连续{ma_cd}日收盘价低于MA{ma_win}，在T{ma_cd}收盘价卖\n")
         else:
             f.write(f"- 卖出策略: 跌出Top{result.get('top_n_hold', 50)}则卖出\n")
         f.write(
@@ -1465,13 +1554,23 @@ def generate_report(result: Dict, output_dir: Path):
             "intraday_low": "4%止损：当日最低价触及止损位则按止损价日内卖出",
         }
         sl_desc = sl_desc_map.get(sl_mode, sl_mode)
+        ma_win = result.get("ma_window", 5)
+        ma_cd = result.get("ma_consecutive_days", 2)
         ma5_desc = (
-            "跌出 Top50 且连续两日收盘价低于五日均价，在 T2 收盘价卖出"
+            f"跌出 Top50 且连续{ma_cd}日收盘价低于MA{ma_win}，在 T{ma_cd} 收盘价卖出"
             if result.get("use_ma5_sell", True)
             else f'跌出 Top{result.get("top_n_hold", 50)} 则卖出'
         )
+        ts_pct = result.get("trailing_stop_pct")
+        ts_act = result.get("trailing_stop_activate_pct", 0.0)
+        if ts_pct is not None:
+            ts_desc = f"；跟踪止盈：成本上涨{ts_act:.1f}%后激活，从最高点回撤{ts_pct:.1f}%即卖出"
+        else:
+            ts_desc = ""
+        sec_conc = result.get("max_sector_concentration")
+        sec_desc = f"；单行业持仓上限{sec_conc}只" if sec_conc is not None else ""
         f.write(
-            f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；止损模式：{sl_desc}；卖出策略：{ma5_desc}，以控制回撤并保留趋势持仓。\n\n"
+            f"5. **策略逻辑**：买入采用「前一交易日互补策略 Top10」当日开盘价建仓；止损模式：{sl_desc}；卖出策略：{ma5_desc}{ts_desc}{sec_desc}，以控制回撤并保留趋势持仓。\n\n"
         )
         f.write(
             f"6. **数据说明**：选股数据来自每日收盘后生成的 `v232_v270_complementary_YYYYMMDD.csv`，回测区间 {result['start_date']} ～ {result['end_date']}。\n\n"
@@ -1487,8 +1586,10 @@ def main():
     parser.add_argument("--initial-cash", type=float, default=10000000.0, help="初始资金(默认1000万)")
     parser.add_argument("--stock-amount", type=float, default=300000.0, help="每支股票买入金额(默认30万)")
     parser.add_argument("--top-buy", type=int, default=10, help="买入TopN(默认10)")
-    parser.add_argument("--top-hold", type=int, default=50, help="持有TopN(默认50，仅在不使用MA5策略时生效)")
-    parser.add_argument("--no-ma5-sell", action="store_true", help="不使用5日均线卖出策略，改用跌出TopN策略")
+    parser.add_argument("--top-hold", type=int, default=50, help="持有TopN(默认50，仅在不使用MA均线策略时生效)")
+    parser.add_argument("--no-ma5-sell", action="store_true", help="不使用MA均线卖出策略，改用跌出TopN策略")
+    parser.add_argument("--ma-window", type=int, default=5, help="MA均线周期(默认5)")
+    parser.add_argument("--ma-consecutive-days", type=int, default=2, help="连续跌破MA天数即卖出(默认2)")
     parser.add_argument("--stop-loss-pct", type=float, default=4.0, help="单支标的亏损达此比例即卖(默认4%%)")
     parser.add_argument(
         "--stop-loss-mode",
@@ -1496,6 +1597,24 @@ def main():
         default="none",
         choices=["none", "close", "intraday_low"],
         help="4%%止损模式: none=不加(默认), close=收盘价触发按收盘卖, intraday_low=日内最低触及按止损价卖",
+    )
+    parser.add_argument(
+        "--trailing-stop-pct",
+        type=float,
+        default=None,
+        help="跟踪止盈: 从最高点回撤此比例即卖(%%)，如3.0表示回撤3%%卖出。None=不启用(默认)",
+    )
+    parser.add_argument(
+        "--trailing-stop-activate-pct",
+        type=float,
+        default=0.0,
+        help="跟踪止盈激活阈值: 成本价上涨此比例(%%)后启动跟踪止盈(默认0.0，即一盈利就跟踪)",
+    )
+    parser.add_argument(
+        "--max-sector-concentration",
+        type=int,
+        default=None,
+        help="单行业最大持仓数量限制（None=不限制，如3表示同一行业最多持仓3只）",
     )
     parser.add_argument(
         "--exclude-sectors", action="store_true", help="买入时排除银行、证券、白酒、房地产板块后再取Top10（默认不排除）"
@@ -1521,7 +1640,7 @@ def main():
         output_dir = PROJECT_ROOT / "data" / "prediction" / "results"
 
     # 运行回测
-    use_ma5_sell = not args.no_ma5_sell  # 默认使用MA5策略
+    use_ma5_sell = not args.no_ma5_sell  # 默认使用MA均线策略
     result = backtest_complementary_strategy(
         start_date=args.start_date,
         end_date=args.end_date,
@@ -1530,8 +1649,13 @@ def main():
         top_n_buy=args.top_buy,
         top_n_hold=args.top_hold,
         use_ma5_sell=use_ma5_sell,
+        ma_window=args.ma_window,
+        ma_consecutive_days=args.ma_consecutive_days,
         stop_loss_pct=args.stop_loss_pct,
         stop_loss_mode=args.stop_loss_mode,
+        trailing_stop_pct=args.trailing_stop_pct,
+        trailing_stop_activate_pct=args.trailing_stop_activate_pct,
+        max_sector_concentration=args.max_sector_concentration,
         exclude_sectors=args.exclude_sectors,
         apply_frictions=not args.no_frictions,
         buy_slippage_bps=args.buy_slippage_bps,
