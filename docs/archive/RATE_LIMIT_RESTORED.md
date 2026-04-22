@@ -36,7 +36,7 @@
 **代码位置**: `src/utils/rate_limiter.py:247-310`
 
 ```python
-def retry_on_error(max_retries: int = 3, base_delay: float = 1.0, 
+def retry_on_error(max_retries: int = 3, base_delay: float = 1.0,
                    retry_on_rate_limit: bool = True):
     """重试装饰器（限流错误也遵循max_retries限制）"""
     # 限流错误：适当延迟后重试（最多max_retries次）
@@ -154,6 +154,5 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0,
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-28
-

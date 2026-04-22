@@ -6,6 +6,7 @@
 - TushareFetcher: Tushare Pro 数据获取器
 - CacheManager: SQLite 缓存管理器
 """
+
 from .data_manager import DataManager
 
-__all__ = ['DataManager']
+__all__ = ["DataManager"]

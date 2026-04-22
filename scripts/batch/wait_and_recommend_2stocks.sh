@@ -16,16 +16,16 @@ while [ $wait_count -lt $MAX_WAIT ]; do
         echo "预测完成！文件已生成: $PREDICT_FILE"
         break
     fi
-    
+
     # 检查日志中是否有完成标记
     if grep -q "预测完成" "$LOG_FILE" 2>/dev/null; then
         echo "预测完成！"
         break
     fi
-    
+
     sleep 10
     wait_count=$((wait_count + 10))
-    
+
     if [ $((wait_count % 60)) -eq 0 ]; then
         echo "已等待 $((wait_count / 60)) 分钟..."
         tail -5 "$LOG_FILE" 2>/dev/null | grep "进度" || echo "等待中..."

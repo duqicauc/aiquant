@@ -21,14 +21,14 @@ data:
   sample_preparation:
     start_date: "20000101"
     end_date: null
-    
+
     # 正样本条件
     positive_criteria:
       consecutive_weeks: 3
       total_return_threshold: 50
       max_return_threshold: 70
       min_listing_days: 180
-    
+
     # 负样本条件 - 混合策略
     negative_criteria:
       method: "mixed"  # 混合普通负样本和硬负样本
@@ -37,7 +37,7 @@ data:
       hard_sample_return_range:     # 硬负样本涨幅范围
         min: 20
         max: 45
-  
+
   # 特征配置
   feature_extraction:
     lookback_days: 34
@@ -52,22 +52,22 @@ data:
 model_params:
   objective: binary:logistic
   eval_metric: auc  # 改用AUC而非logloss
-  
+
   # 树结构参数 - 降低复杂度
   n_estimators: 200           # 增加树的数量
   learning_rate: 0.03         # 降低学习率（0.1->0.03）
   max_depth: 3                # 降低深度（5->3）
-  
+
   # 正则化参数 - 增强正则化
   min_child_weight: 10        # 增加（3->10）
   gamma: 0.3                  # 增加（0.1->0.3）
   reg_alpha: 1.0              # L1正则化（0.1->1.0）
   reg_lambda: 3.0             # L2正则化（1.0->3.0）
-  
+
   # 采样参数 - 降低采样率
   subsample: 0.6              # 降低（0.8->0.6）
   colsample_bytree: 0.5       # 降低（0.8->0.5）
-  
+
   # 其他参数
   scale_pos_weight: 1.5       # 正样本权重（处理样本不平衡）
   random_state: 42
@@ -87,13 +87,13 @@ training:
 prediction:
   top_n: 50
   min_probability: 0.0
-  
+
   # 概率区间优化（避免高概率陷阱）
   probability_filter:
     optimal_min: 0.975        # 最优区间下限
     optimal_max: 0.985        # 最优区间上限
     warning_threshold: 0.99   # 警戒阈值
-  
+
   exclusion_rules:
     exclude_st: true
     exclude_new_listed: true
@@ -112,4 +112,3 @@ evaluation:
     enabled: true
     start_date: 20230101
     end_date: null
-

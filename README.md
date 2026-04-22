@@ -148,7 +148,7 @@ python scripts/walk_forward_validation.py
 python scripts/score_current_stocks.py
 ```
 
-**输出**: 
+**输出**:
 - `data/predictions/*/scored_stocks_*.csv` - 评分结果
 - `data/predictions/*/prediction_report_*.txt` - 详细报告
 

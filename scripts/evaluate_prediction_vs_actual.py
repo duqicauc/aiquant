@@ -127,15 +127,17 @@ def load_backtest_sells():
             if signal_date:
                 src_map = load_complementary_source(signal_date)
                 source = src_map.get(ts_code)
-            records.append({
-                "ts_code": ts_code,
-                "sell_date": date_str,
-                "signal_date": signal_date,
-                "source": source or "unknown",
-                "profit_pct": float(profit_pct),
-                "profit": float(profit),
-                "cost": float(cost),
-            })
+            records.append(
+                {
+                    "ts_code": ts_code,
+                    "sell_date": date_str,
+                    "signal_date": signal_date,
+                    "source": source or "unknown",
+                    "profit_pct": float(profit_pct),
+                    "profit": float(profit),
+                    "cost": float(cost),
+                }
+            )
             if (ts_code, buy_date_str) in buy_signal:
                 del buy_signal[(ts_code, buy_date_str)]
 
@@ -157,11 +159,13 @@ def main():
         v270_codes = load_v270_top10(d)
         v232_total_top10 += len(v232_codes)
         v270_total_top10 += len(v270_codes)
-        day_stats.append({
-            "predict_date": d,
-            "v232_top10_count": len(v232_codes),
-            "v270_top10_count": len(v270_codes),
-        })
+        day_stats.append(
+            {
+                "predict_date": d,
+                "v232_top10_count": len(v232_codes),
+                "v270_top10_count": len(v270_codes),
+            }
+        )
 
     # 2) 实际侧：回测卖出 + 选股日 + source
     sells = load_backtest_sells()
@@ -183,17 +187,19 @@ def main():
             continue
         n = len(sub)
         win = (sub["profit"] > 0).sum()
-        summary_rows.append({
-            "version": version,
-            "sell_count": n,
-            "win_count": int(win),
-            "win_rate_pct": round(win / n * 100, 2),
-            "avg_profit_pct": round(sub["profit_pct"].mean(), 2),
-            "median_profit_pct": round(sub["profit_pct"].median(), 2),
-            "total_profit": round(sub["profit"].sum(), 0),
-            "max_profit_pct": round(sub["profit_pct"].max(), 2),
-            "min_profit_pct": round(sub["profit_pct"].min(), 2),
-        })
+        summary_rows.append(
+            {
+                "version": version,
+                "sell_count": n,
+                "win_count": int(win),
+                "win_rate_pct": round(win / n * 100, 2),
+                "avg_profit_pct": round(sub["profit_pct"].mean(), 2),
+                "median_profit_pct": round(sub["profit_pct"].median(), 2),
+                "total_profit": round(sub["profit"].sum(), 0),
+                "max_profit_pct": round(sub["profit_pct"].max(), 2),
+                "min_profit_pct": round(sub["profit_pct"].min(), 2),
+            }
+        )
 
     df_summary = pd.DataFrame(summary_rows)
 
@@ -206,10 +212,14 @@ def main():
         row = {
             "predict_date": d,
             "v232_sold_count": len(v232_sold),
-            "v232_sold_win_rate_pct": round(v232_sold["profit"].gt(0).sum() / len(v232_sold) * 100, 2) if len(v232_sold) else None,
+            "v232_sold_win_rate_pct": (
+                round(v232_sold["profit"].gt(0).sum() / len(v232_sold) * 100, 2) if len(v232_sold) else None
+            ),
             "v232_sold_avg_pct": round(v232_sold["profit_pct"].mean(), 2) if len(v232_sold) else None,
             "v270_sold_count": len(v270_sold),
-            "v270_sold_win_rate_pct": round(v270_sold["profit"].gt(0).sum() / len(v270_sold) * 100, 2) if len(v270_sold) else None,
+            "v270_sold_win_rate_pct": (
+                round(v270_sold["profit"].gt(0).sum() / len(v270_sold) * 100, 2) if len(v270_sold) else None
+            ),
             "v270_sold_avg_pct": round(v270_sold["profit_pct"].mean(), 2) if len(v270_sold) else None,
         }
         by_day.append(row)
@@ -242,9 +252,14 @@ def main():
                 f"{row['total_profit']:+,.0f} | {row['max_profit_pct']:+.2f} | {row['min_profit_pct']:+.2f} |\n"
             )
         f.write("\n## 三、按预测日统计（该日推荐且被卖出的表现）\n\n")
-        f.write("| 预测日 | v232 卖出笔数 | v232 胜率(%) | v232 平均(%) | v270 卖出笔数 | v270 胜率(%) | v270 平均(%) |\n")
-        f.write("|--------|---------------|--------------|--------------|---------------|--------------|--------------|\n")
+        f.write(
+            "| 预测日 | v232 卖出笔数 | v232 胜率(%) | v232 平均(%) | v270 卖出笔数 | v270 胜率(%) | v270 平均(%) |\n"
+        )
+        f.write(
+            "|--------|---------------|--------------|--------------|---------------|--------------|--------------|\n"
+        )
         for _, row in df_by_day.iterrows():
+
             def _fmt(v, fmt_float="{:.2f}"):
                 if v is None or (isinstance(v, float) and pd.isna(v)):
                     return "-"
@@ -265,9 +280,13 @@ def main():
             v270_row = df_summary[df_summary["version"] == "v2.7.0"].iloc[0]
             v232_row = df_summary[df_summary["version"] == "v2.3.2"]
             v232_row = v232_row.iloc[0] if len(v232_row) else None
-            f.write(f"- **v2.7.0**：共 {v270_row['sell_count']} 笔卖出，胜率 {v270_row['win_rate_pct']}%，平均盈亏 {v270_row['avg_profit_pct']:+.2f}%，总盈亏 {v270_row['total_profit']:+,.0f} 元。\n")
+            f.write(
+                f"- **v2.7.0**：共 {v270_row['sell_count']} 笔卖出，胜率 {v270_row['win_rate_pct']}%，平均盈亏 {v270_row['avg_profit_pct']:+.2f}%，总盈亏 {v270_row['total_profit']:+,.0f} 元。\n"
+            )
             if v232_row is not None:
-                f.write(f"- **v2.3.2**：共 {v232_row['sell_count']} 笔卖出，胜率 {v232_row['win_rate_pct']}%，平均盈亏 {v232_row['avg_profit_pct']:+.2f}%，总盈亏 {v232_row['total_profit']:+,.0f} 元。\n")
+                f.write(
+                    f"- **v2.3.2**：共 {v232_row['sell_count']} 笔卖出，胜率 {v232_row['win_rate_pct']}%，平均盈亏 {v232_row['avg_profit_pct']:+.2f}%，总盈亏 {v232_row['total_profit']:+,.0f} 元。\n"
+                )
             else:
                 f.write("- **v2.3.2**：回测区间内无来自 v2.3.2 的卖出记录（互补策略下多为 v2.7.0 入选）。\n")
         f.write("\n明细见 `prediction_vs_actual_detail.csv`，按日统计见 `prediction_vs_actual_by_day.csv`。\n")
@@ -275,7 +294,9 @@ def main():
     print("\n" + "=" * 70)
     print("v232 / v270 预测结果与实际情况评估（20260105～20260302）")
     print("=" * 70)
-    print(f"\n预测日数量: {len(pred_dates)}   v232 Top10 人次: {v232_total_top10}   v270 Top10 人次: {v270_total_top10}")
+    print(
+        f"\n预测日数量: {len(pred_dates)}   v232 Top10 人次: {v232_total_top10}   v270 Top10 人次: {v270_total_top10}"
+    )
     print("\n【按模型汇总】实际卖出表现")
     for _, row in df_summary.iterrows():
         print(
@@ -284,9 +305,9 @@ def main():
         )
     print(f"\n报告与 CSV 已保存至: {OUTPUT_DIR}")
     print(f"  - {report_path.name}")
-    print(f"  - prediction_vs_actual_summary.csv")
-    print(f"  - prediction_vs_actual_by_day.csv")
-    print(f"  - prediction_vs_actual_detail.csv")
+    print("  - prediction_vs_actual_summary.csv")
+    print("  - prediction_vs_actual_by_day.csv")
+    print("  - prediction_vs_actual_detail.csv")
 
 
 if __name__ == "__main__":

@@ -68,4 +68,3 @@ bash scripts/check_v23_status.sh
 3. **结果文件**：
    - 临时文件：`data/prediction/evaluation/v2.3.0_predictions_20251212_temp.csv`
    - 最终文件：`data/prediction/evaluation/v2.3.0_full_market_20251212.csv`
-

@@ -54,4 +54,3 @@ echo "1. 确保所有敏感信息都在 .env 文件中，且 .env 已在 .gitign
 echo "2. 大型数据文件和模型文件不应提交到 Git"
 echo "3. 使用 'git status' 查看将要提交的文件"
 echo "4. 使用 'git add .' 前请仔细检查"
-

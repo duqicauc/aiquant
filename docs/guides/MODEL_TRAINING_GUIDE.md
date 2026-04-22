@@ -176,7 +176,7 @@ model = xgb.XGBClassifier(
 
 ```python
 model, metrics, X_test, y_test, y_prob = train_model(
-    df_features, 
+    df_features,
     test_size=0.2  # 改为 0.3 使用30%测试集
 )
 ```
@@ -343,8 +343,6 @@ ensemble.fit(X_train, y_train)
 
 ---
 
-**文档版本**: v1.0  
-**创建时间**: 2024-12-23  
+**文档版本**: v1.0
+**创建时间**: 2024-12-23
 **最后更新**: 2024-12-23
-
-

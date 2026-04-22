@@ -5,12 +5,12 @@
 # 数据配置
 data:
   source: tushare
-  
+
   # 样本准备配置
   sample_preparation:
     start_date: "20000101"      # 使用2000年以来的数据
     end_date: null              # null = 今天
-    
+
     # 正样本条件
     positive_criteria:
       consecutive_weeks: 3       # 连续阳线周数
@@ -18,12 +18,12 @@ data:
       max_return_threshold: 70   # 最高涨幅阈值(%)
       min_listing_days: 300      # 最小上市天数（提升到300天，确保能计算233日均线）
       enable_anti_chasing: false # 关闭防追龙头约束（在v2.4.0训练脚本中再启用）
-    
+
     # 负样本条件
     negative_criteria:
       method: "same_period_other_stocks"
       sample_ratio: 1.0          # 负样本/正样本比例
-  
+
   # 特征配置
   feature_extraction:
     lookback_days: 34            # 回看天数
@@ -32,7 +32,7 @@ data:
 model:
   type: xgboost
   version: v3                    # 新版本（使用2000年以来数据）
-  
+
   # 模型参数
   parameters:
     objective: binary:logistic
@@ -45,13 +45,13 @@ model:
     gamma: 0.1
     random_state: 42
     n_jobs: -1
-  
+
   # 训练配置
   training:
     test_size: 0.2
     time_series_split: true
     n_splits: 5
-  
+
   # 模型保存
   save:
     directory: "data/models/stock_selection"
@@ -63,15 +63,15 @@ prediction:
     top_n: 50                    # 推荐股票数量
     min_probability: 0.0         # 最小概率阈值
     max_stocks_to_score: null    # null = 全部，设置数字可限制（用于测试）
-  
+
   # 排除规则
   exclusion_rules:
     exclude_st: true             # 排除ST股票
     exclude_new_listed: true     # 排除新股
     min_listing_days: 300        # 提升到300天，与正样本标准一致
     exclude_suspended: true      # 排除停牌
-  
-  
+
+
   # 报告配置
   report:
     include_market_analysis: true
@@ -117,13 +117,13 @@ data_storage:
     enabled: true
     database: "data/cache/quant_data.db"
     expire_days: 7  # 超过7天重新获取最新数据（优化：减少API调用）
-  
+
   # CSV备份
   backup:
     enabled: true                # 启用CSV备份
     directory: "data/backup"
     auto_backup: true            # 自动备份到CSV
-  
+
   # 性能配置
   performance:
     batch_size: 100              # 批量处理大小
@@ -134,4 +134,3 @@ logging:
   level: INFO
   app_log: "logs/aiquant.log"
   scheduler_log: "logs/scheduler.log"
-

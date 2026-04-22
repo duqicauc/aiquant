@@ -1,6 +1,7 @@
 """
 数据源配置
 """
+
 import os
 from dotenv import load_dotenv
 
@@ -9,22 +10,22 @@ load_dotenv()
 
 class DataSourceConfig:
     """数据源配置"""
-    
+
     # Tushare配置
-    TUSHARE_TOKEN = os.getenv('TUSHARE_TOKEN', '')
-    TUSHARE_TIMEOUT = int(os.getenv('TUSHARE_TIMEOUT', '30'))
-    
+    TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+    TUSHARE_TIMEOUT = int(os.getenv("TUSHARE_TIMEOUT", "30"))
+
     # RQData配置
-    RQDATA_USERNAME = os.getenv('RQDATA_USERNAME', '')
-    RQDATA_PASSWORD = os.getenv('RQDATA_PASSWORD', '')
-    
+    RQDATA_USERNAME = os.getenv("RQDATA_USERNAME", "")
+    RQDATA_PASSWORD = os.getenv("RQDATA_PASSWORD", "")
+
     # JQData配置
-    JQDATA_USERNAME = os.getenv('JQDATA_USERNAME', '')
-    JQDATA_PASSWORD = os.getenv('JQDATA_PASSWORD', '')
-    
+    JQDATA_USERNAME = os.getenv("JQDATA_USERNAME", "")
+    JQDATA_PASSWORD = os.getenv("JQDATA_PASSWORD", "")
+
     # 默认数据源
-    DEFAULT_SOURCE = os.getenv('DEFAULT_DATA_SOURCE', 'tushare')
-    
+    DEFAULT_SOURCE = os.getenv("DEFAULT_DATA_SOURCE", "tushare")
+
     @classmethod
     def validate_tushare(cls):
         """验证Tushare配置"""
@@ -40,4 +41,3 @@ class DataSourceConfig:
 
 # 数据源配置实例
 data_source_config = DataSourceConfig()
-

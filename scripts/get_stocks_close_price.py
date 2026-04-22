@@ -6,6 +6,7 @@
 import sys
 import os
 from pathlib import Path
+
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -13,11 +14,11 @@ from dotenv import load_dotenv
 import tushare as ts
 
 # 加载环境变量
-env_path = PROJECT_ROOT / '.env'
+env_path = PROJECT_ROOT / ".env"
 load_dotenv(env_path)
 
 # 初始化tushare
-token = os.getenv('TUSHARE_TOKEN')
+token = os.getenv("TUSHARE_TOKEN")
 if token:
     ts.set_token(token)
     pro = ts.pro_api()
@@ -27,22 +28,22 @@ else:
 
 # 股票列表
 stocks = [
-    '002149.SZ',  # 西部材料
-    '002792.SZ',  # 通宇通讯
-    '603601.SH',  # 再升科技
-    '603698.SH',  # 航天工程
+    "002149.SZ",  # 西部材料
+    "002792.SZ",  # 通宇通讯
+    "603601.SH",  # 再升科技
+    "603698.SH",  # 航天工程
 ]
 
-print("="*80)
+print("=" * 80)
 print("获取股票1月8日收盘数据")
-print("="*80)
+print("=" * 80)
 
 for ts_code in stocks:
     try:
         # 获取最近的日线数据
-        df = pro.daily(ts_code=ts_code, start_date='20260105', end_date='20260109')
-        df = df.sort_values('trade_date', ascending=False)
-        
+        df = pro.daily(ts_code=ts_code, start_date="20260105", end_date="20260109")
+        df = df.sort_values("trade_date", ascending=False)
+
         if not df.empty:
             latest = df.iloc[0]
             print(f"\n{ts_code}:")
@@ -56,8 +57,8 @@ for ts_code in stocks:
             print(f"  成交额: {latest['amount']/1000:.0f}千元")
         else:
             print(f"\n{ts_code}: 未获取到数据")
-            
+
     except Exception as e:
         print(f"\n{ts_code}: 获取失败 - {e}")
 
-print("\n" + "="*80)
+print("\n" + "=" * 80)

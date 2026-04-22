@@ -75,17 +75,19 @@ def main():
         if not r:
             rows.append({"start": ws, "end": we, "ok": False})
             continue
-        rows.append({
-            "start": ws,
-            "end": we,
-            "ok": True,
-            "final_return_pct": r["final_return_pct"],
-            "max_drawdown": r["max_drawdown"],
-            "sharpe_ratio": r["sharpe_ratio"],
-            "win_rate": r["win_rate"],
-            "total_fees": r.get("total_fees", 0),
-            "n_days": r.get("n_trading_days", 0),
-        })
+        rows.append(
+            {
+                "start": ws,
+                "end": we,
+                "ok": True,
+                "final_return_pct": r["final_return_pct"],
+                "max_drawdown": r["max_drawdown"],
+                "sharpe_ratio": r["sharpe_ratio"],
+                "win_rate": r["win_rate"],
+                "total_fees": r.get("total_fees", 0),
+                "n_days": r.get("n_trading_days", 0),
+            }
+        )
 
     df = pd.DataFrame(rows)
     thr = {}
@@ -142,9 +144,7 @@ def main():
         ),
         encoding="utf-8",
     )
-    log.success(
-        f"已写入 {path}；失败窗占比 {fail_ratio:.1%}；收益为负窗占比 {neg:.1%}；Go={go}"
-    )
+    log.success(f"已写入 {path}；失败窗占比 {fail_ratio:.1%}；收益为负窗占比 {neg:.1%}；Go={go}")
     return 0
 
 

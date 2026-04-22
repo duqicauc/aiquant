@@ -1,7 +1,7 @@
 # xgboost_timeseries模型 vs v1.3.0模型构建逻辑对比
 
-**生成时间**: 2025-12-29  
-**对比对象**: 
+**生成时间**: 2025-12-29
+**对比对象**:
 - 旧模型: `xgboost_timeseries_v2_20251225_205905.json` (2025-12-25 20:59:05)
 - 新模型: `breakout_launch_scorer v1.3.0` (正在训练中)
 
@@ -53,15 +53,15 @@ def load_and_prepare_data(neg_version='v2'):
     # 加载正样本
     df_pos = pd.read_csv('data/training/features/feature_data_34d.csv')
     df_pos['label'] = 1
-    
+
     # 加载负样本
     if neg_version == 'v2':
         neg_file = 'data/training/features/negative_feature_data_v2_34d.csv'
     else:
         neg_file = 'data/training/features/negative_feature_data_34d.csv'
-    
+
     df_neg = pd.read_csv(neg_file)
-    
+
     # 合并
     df = pd.concat([df_pos, df_neg])
     return df
@@ -73,15 +73,15 @@ def _load_and_prepare_data(self, neg_version='v2'):
     # 加载正样本（使用与旧模型完全相同的路径）
     df_pos = pd.read_csv('data/training/features/feature_data_34d.csv')
     df_pos['label'] = 1
-    
+
     # 加载负样本（使用与旧模型完全相同的路径和逻辑）
     if neg_version == 'v2':
         neg_file = 'data/training/features/negative_feature_data_v2_34d.csv'
     else:
         neg_file = 'data/training/features/negative_feature_data_34d.csv'
-    
+
     df_neg = pd.read_csv(neg_file)
-    
+
     # 合并
     df = pd.concat([df_pos, df_neg])
     return df
@@ -158,20 +158,20 @@ X_test = X_test.fillna(0)
 def timeseries_split(df_features, train_end_date=None, test_start_date=None):
     # 确保t1_date是datetime类型
     df_features['t1_date'] = pd.to_datetime(df_features['t1_date'])
-    
+
     # 按时间排序
     df_features = df_features.sort_values('t1_date').reset_index(drop=True)
-    
+
     # 如果未指定划分点，使用80%作为训练集
     if train_end_date is None:
         n_train = int(len(df_features) * 0.8)
         train_end_date = df_features.iloc[n_train]['t1_date']
         test_start_date = df_features.iloc[n_train + 1]['t1_date']
-    
+
     # 划分训练集和测试集
     train_mask = df_features['t1_date'] <= train_end_date
     test_mask = df_features['t1_date'] >= test_start_date
-    
+
     # 处理缺失值
     X_train = X_train.fillna(0)
     X_test = X_test.fillna(0)
@@ -182,23 +182,23 @@ def timeseries_split(df_features, train_end_date=None, test_start_date=None):
 def _timeseries_split(self, df_features):
     # 确保t1_date是datetime类型
     df_features['t1_date'] = pd.to_datetime(df_features['t1_date'])
-    
+
     # 按时间排序
     df_features = df_features.sort_values('t1_date').reset_index(drop=True)
-    
+
     # 使用配置中的划分方式（如果未指定，使用80%作为训练集，与旧模型一致）
     train_end_date = self.config.get('training', {}).get('train_end_date')
     test_start_date = self.config.get('training', {}).get('test_start_date')
-    
+
     if train_end_date is None:
         n_train = int(len(df_features) * 0.8)
         train_end_date = df_features.iloc[n_train]['t1_date']
         test_start_date = df_features.iloc[n_train + 1]['t1_date']
-    
+
     # 划分训练集和测试集
     train_mask = df_features['t1_date'] <= train_end_date
     test_mask = df_features['t1_date'] >= test_start_date
-    
+
     # 处理缺失值（与旧模型完全一致）
     X_train = X_train.fillna(0)
     X_test = X_test.fillna(0)
@@ -244,7 +244,7 @@ def train_model(X_train, y_train, X_test, y_test):
         random_state=42,
         eval_metric='logloss'
     )
-    
+
     model.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
@@ -257,7 +257,7 @@ def train_model(X_train, y_train, X_test, y_test):
 def _train_model(self, X_train, y_train, X_test, y_test):
     # 从配置读取参数，但确保与旧模型完全一致
     model_params = self.config.get('model_params', {})
-    
+
     # 如果配置中没有参数，使用旧模型的默认参数
     if not model_params:
         model_params = {
@@ -273,9 +273,9 @@ def _train_model(self, X_train, y_train, X_test, y_test):
             'random_state': 42,
             'eval_metric': 'logloss'
         }
-    
+
     model = xgb.XGBClassifier(**model_params)
-    
+
     model.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
@@ -324,6 +324,5 @@ def _train_model(self, X_train, y_train, X_test, y_test):
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-29
-

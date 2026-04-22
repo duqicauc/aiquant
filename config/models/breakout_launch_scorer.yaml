@@ -17,7 +17,7 @@ data:
   sample_preparation:
     start_date: "20000101"      # 使用2000年以来的数据
     end_date: null              # null = 今天
-    
+
     # 正样本条件（三周连阳）
     positive_criteria:
       consecutive_weeks: 3       # 连续阳线周数
@@ -29,7 +29,7 @@ data:
       pre_t1_return_max: 20      # T1前34天涨幅上限(%)，保留约57.7%样本
       pre_t1_volatility_max: 3   # T1前日均波动率上限(%)，保留约60.9%样本
       enable_anti_chasing: true  # 是否启用反追龙头约束
-    
+
     # 负样本条件
     negative_criteria:
       method: "same_period_other_stocks"  # 同期其他股票法
@@ -38,7 +38,7 @@ data:
       hard_negative_types:
         - near_miss              # 涨幅接近但未达标
         - high_position_fail     # 高位假启动
-  
+
   # 特征配置
   feature_extraction:
     lookback_days: 34            # 回看天数
@@ -96,4 +96,3 @@ evaluation:
     enabled: true
     start_date: 20230101
     end_date: null              # null = 今天
-

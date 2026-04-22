@@ -191,7 +191,7 @@ MACD = 2 × (DIF - DEA)
 def _format_stock_code(self, code: str) -> str:
     """
     自动识别并添加交易所后缀
-    
+
     输入 -> 输出
     '000001' -> '000001.SZ'  (0开头=深圳)
     '600000' -> '600000.SH'  (6开头=上海)
@@ -200,7 +200,7 @@ def _format_stock_code(self, code: str) -> str:
     """
     if '.' in code:
         return code
-    
+
     if code.startswith('6'):
         return f"{code}.SH"
     elif code.startswith(('0', '3')):
@@ -315,7 +315,6 @@ start_date = start_date.replace('-', '')
 
 ---
 
-**文档版本**: v1.0  
-**最后更新**: 2024-12-22  
+**文档版本**: v1.0
+**最后更新**: 2024-12-22
 **基于**: Tushare Pro官方文档
-

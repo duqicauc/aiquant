@@ -53,7 +53,7 @@ data:
   sample_preparation:
     start_date: "20000101"
     end_date: null
-    
+
     positive_criteria:
       consecutive_weeks: 3       # 👤 人工决定：连续阳线周数
       total_return_threshold: 50 # 👤 人工决定：总涨幅阈值(%)
@@ -202,7 +202,7 @@ data:
 
 ### 3.2 配置位置
 
-**代码位置**: 
+**代码位置**:
 - `scripts/train_xgboost_timeseries.py` - `extract_features_with_time()` 函数
 - `src/models/lifecycle/trainer.py` - `_extract_features()` 方法
 
@@ -297,7 +297,7 @@ feature_dict['close_mean'] = sample_data['close'].mean()
 ```yaml
 model:
   type: xgboost  # 👤 人工决定：算法类型
-  
+
 model_params:
   n_estimators: 100      # 👤 人工决定：树的数量
   max_depth: 5            # 👤 人工决定：最大深度
@@ -440,7 +440,7 @@ training:
 
 ## 💡 最佳实践
 
-1. **正样本选择**: 
+1. **正样本选择**:
    - 从简单规则开始，逐步优化
    - 定期检查正样本质量
    - 根据市场环境调整阈值
@@ -459,4 +459,3 @@ training:
    - 每次只改变一个方面（特征/参数/算法）
    - 详细记录变更内容
    - 充分对比评估后再决策
-

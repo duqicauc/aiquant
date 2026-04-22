@@ -236,7 +236,7 @@ data:
     negative_criteria:
       method: same_period_other_stocks
       sample_ratio: 1.0
-  
+
   feature_extraction:
     lookback_days: 34
     extractors:
@@ -445,7 +445,6 @@ python scripts/prediction/predict_ensemble.py \
 
 ---
 
-**文档版本**: v1.0  
-**创建日期**: 2025-12-28  
+**文档版本**: v1.0
+**创建日期**: 2025-12-28
 **最后更新**: 2025-12-28
-

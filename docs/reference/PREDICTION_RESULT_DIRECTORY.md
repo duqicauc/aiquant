@@ -220,4 +220,3 @@ python scripts/archive_predictions.py --clean --model example_model --keep-days 
    - 每个模型有独立的目录
    - 支持同时管理多个模型的预测结果
    - 归档和分析都支持按模型分类
-

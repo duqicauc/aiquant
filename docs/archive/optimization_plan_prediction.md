@@ -160,4 +160,3 @@ def calculate_composite_score(row, market_regime):
 - **第2周**：市场环境判断 + 综合评分机制
 - **第3周**：回测验证 + 参数调优
 - **第4周**：文档完善 + 上线测试
-

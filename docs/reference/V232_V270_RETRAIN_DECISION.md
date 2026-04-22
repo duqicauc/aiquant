@@ -44,8 +44,8 @@ cat data/models/breakout_launch_scorer/versions/v2.7.0/metadata.json
 
 用**最近一段时间**的预测结果 + 实际行情，看 Top10 在固定持有期（如 5 日、10 日）的胜率与平均收益。
 
-**脚本**：`scripts/evaluate_v232_v270_20260105_20260303.py`  
-**逻辑**：对每个预测日，从 `v270_ensemble_all_YYYYMMDD.csv` 按 `probability` 取 Top10，以预测日收盘价为买入价、T+5/T+10 收盘价为卖出价，算收益率并汇总。  
+**脚本**：`scripts/evaluate_v232_v270_20260105_20260303.py`
+**逻辑**：对每个预测日，从 `v270_ensemble_all_YYYYMMDD.csv` 按 `probability` 取 Top10，以预测日收盘价为买入价、T+5/T+10 收盘价为卖出价，算收益率并汇总。
 **依赖**：DataManager + 行情接口（如 Tushare），需在本地有依赖的环境下运行：
 
 ```bash
@@ -62,8 +62,8 @@ python scripts/evaluate_v232_v270_20260105_20260303.py
 
 1. 若有 `metadata.json`：先看 AUC；≥0.65 则训练集侧可接受。
 2. 再跑 `evaluate_v232_v270_20260105_20260303.py` 看 1～3 月 Top10 胜率与收益。
-3. **两者都正常** → 不需要重训，优先做策略/集成优化。  
-4. **训练集指标差** → 需要重训。  
+3. **两者都正常** → 不需要重训，优先做策略/集成优化。
+4. **训练集指标差** → 需要重训。
 5. **仅近期表现差** → 先看是否市场风格变化或数据问题，再决定是重训还是只调策略。
 
 ---
@@ -93,7 +93,7 @@ cat data/models/breakout_launch_scorer/versions/v2.3.0/metadata.json
 
 同样用「预测日 + 实际行情」做固定持有期收益评估。
 
-**数据**：`v2.3.2_top10_YYYYMMDD.csv`（已是 Top10）。  
+**数据**：`v2.3.2_top10_YYYYMMDD.csv`（已是 Top10）。
 **脚本**：同上 `evaluate_v232_v270_20260105_20260303.py`，内部会分别加载 v232 Top10 和 v270 Top10，输出按模型汇总的胜率与平均收益。
 
 **判断标准**：与 v2.7.0 一致，Top10 胜率 45%～55% 视为正常，&lt;40% 考虑重训或校准。

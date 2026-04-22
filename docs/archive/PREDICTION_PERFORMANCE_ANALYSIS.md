@@ -7,11 +7,11 @@
 ```
 步骤1：批量获取daily_basic
   - 时间：1-5秒（一次API调用）
-  
+
 步骤2：批量获取日线数据（串行）
   - 如果数据在缓存：~0.03秒/股票 × 5000只 = ~150秒（2.5分钟）
   - 如果数据不在缓存：~3秒/股票 × 5000只 = ~15000秒（4小时+）⚠️
-  
+
 步骤3：计算特征并评分（串行）
   - 时间：~0.01秒/股票 × 5000只 = ~50秒
 ```
@@ -84,7 +84,7 @@ def _calculate_features_parallel(args):
 
 # 在score_all_stocks中使用
 with Pool(processes=8) as pool:  # 8个进程
-    args_list = [(df, ts_code, name, daily_basic_dict, feature_cols) 
+    args_list = [(df, ts_code, name, daily_basic_dict, feature_cols)
                  for ts_code, df in daily_data_dict.items()]
     results = pool.map(_calculate_features_parallel, args_list)
 ```
@@ -158,7 +158,7 @@ all_probs = model.predict(dmatrix)  # 批量预测
 ### 如果数据不在缓存中
 
 - **预计时间**: 4-6小时（首次运行）
-- **建议**: 
+- **建议**:
   1. 先运行小范围测试（`--max-stocks 100`）
   2. 让数据进入缓存
   3. 再运行完整预测
@@ -177,6 +177,5 @@ all_probs = model.predict(dmatrix)  # 批量预测
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-28
-

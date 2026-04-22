@@ -16,12 +16,12 @@
 使用方法：
   # 推荐：使用互补策略（默认）
   python scripts/combine_v232_v270.py --date 20260116 --strategy complementary --top 10
-  
+
   # 其他策略
   python scripts/combine_v232_v270.py --date 20260116 --strategy weighted --top 10
   python scripts/combine_v232_v270.py --date 20260116 --strategy intersection --top 10
   python scripts/combine_v232_v270.py --date 20260116 --strategy rank --top 10
-  
+
   # 对比所有策略
   python scripts/combine_v232_v270.py --date 20260116 --strategy all --top 10
 
@@ -39,7 +39,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 from src.utils.logger import log
 from src.data.data_manager import DataManager
@@ -50,30 +50,30 @@ from collections import defaultdict
 def load_predictions(date, version):
     """
     加载指定版本的完整预测结果
-    
+
     注意：使用前需要先运行对应的预测脚本：
     - v2.3.2: python scripts/predict_v232_top10.py --date YYYYMMDD
     - v2.7.0: python scripts/predict_v270_ensemble_top50.py --date YYYYMMDD
     """
-    results_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
-    
-    if version == 'v2.3.2':
-        file_path = results_dir / f'v2.3.2_full_{date}.csv'
-    elif version == 'v2.7.0':
-        file_path = results_dir / f'v270_ensemble_all_{date}.csv'
+    results_dir = PROJECT_ROOT / "data" / "prediction" / "results"
+
+    if version == "v2.3.2":
+        file_path = results_dir / f"v2.3.2_full_{date}.csv"
+    elif version == "v2.7.0":
+        file_path = results_dir / f"v270_ensemble_all_{date}.csv"
     else:
         log.error(f"不支持的版本: {version}")
         return None
-    
+
     if not file_path.exists():
         log.error(f"预测结果不存在: {file_path}")
-        log.error(f"请先运行对应的预测脚本生成该文件")
-        if version == 'v2.3.2':
+        log.error("请先运行对应的预测脚本生成该文件")
+        if version == "v2.3.2":
             log.error(f"  python scripts/predict_v232_top10.py --date {date}")
-        elif version == 'v2.7.0':
+        elif version == "v2.7.0":
             log.error(f"  python scripts/predict_v270_ensemble_top50.py --date {date}")
         return None
-    
+
     try:
         df = pd.read_csv(file_path)
         log.info(f"  {version}: {len(df)} 只股票")
@@ -86,25 +86,25 @@ def load_predictions(date, version):
 def strategy_intersection(date, top_n=100, output_top=10, enable_fundamental_screening=False):
     """
     策略1：交集优选
-    
+
     找出同时出现在v2.3.2 TopN和v2.7.0 TopN中的股票
     """
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("策略1：交集优选")
     if enable_fundamental_screening:
         log.info("【启用基本面筛选】")
-    log.info("="*80)
+    log.info("=" * 80)
     log.info(f"参数: TopN={top_n}, 输出前{output_top}只")
     log.info("")
-    
+
     # 加载预测结果
     log.info("加载预测结果...")
-    df_232 = load_predictions(date, 'v2.3.2')
-    df_270 = load_predictions(date, 'v2.7.0')
-    
+    df_232 = load_predictions(date, "v2.3.2")
+    df_270 = load_predictions(date, "v2.7.0")
+
     if df_232 is None or df_270 is None:
         return None
-    
+
     # 基本面筛选（可选）
     if enable_fundamental_screening:
         log.info("\n应用基本面筛选...")
@@ -112,140 +112,142 @@ def strategy_intersection(date, top_n=100, output_top=10, enable_fundamental_scr
         fundamental_screener = FundamentalScreener(
             dm,
             config={
-                'enabled': True,
-                'market_cap_min': 100000,      # 10亿（万元）
-                'market_cap_max': 1000000,     # 100亿（万元）
-                'revenue_min': 5e8,            # 营业收入>5亿（元）- 标准方案
-                'net_profit_min': 5000000,     # 净利润>500万（元）- 标准方案
-                'roe_min': 5,                  # ROE>5% - 标准方案
-                'roa_min': 2,                  # ROA>2% - 标准方案
-            }
+                "enabled": True,
+                "market_cap_min": 100000,  # 10亿（万元）
+                "market_cap_max": 1000000,  # 100亿（万元）
+                "revenue_min": 5e8,  # 营业收入>5亿（元）- 标准方案
+                "net_profit_min": 5000000,  # 净利润>500万（元）- 标准方案
+                "roe_min": 5,  # ROE>5% - 标准方案
+                "roa_min": 2,  # ROA>2% - 标准方案
+            },
         )
         df_232 = fundamental_screener.filter_stocks(df_232, date)
         df_270 = fundamental_screener.filter_stocks(df_270, date)
         log.info(f"基本面筛选后: v2.3.2剩余{len(df_232)}只, v2.7.0剩余{len(df_270)}只")
-    
+
     # 获取各自TopN
     # v2.3.2按final_score排序
-    if 'final_score' in df_232.columns:
-        df_232 = df_232.sort_values('final_score', ascending=False)
+    if "final_score" in df_232.columns:
+        df_232 = df_232.sort_values("final_score", ascending=False)
     else:
-        df_232 = df_232.sort_values('calibrated_probability', ascending=False)
-    top_232 = set(df_232.head(top_n)['ts_code'].tolist())
-    
+        df_232 = df_232.sort_values("calibrated_probability", ascending=False)
+    top_232 = set(df_232.head(top_n)["ts_code"].tolist())
+
     # v2.7.0按probability排序
-    df_270 = df_270.sort_values('probability', ascending=False)
-    top_270 = set(df_270.head(top_n)['ts_code'].tolist())
-    
+    df_270 = df_270.sort_values("probability", ascending=False)
+    top_270 = set(df_270.head(top_n)["ts_code"].tolist())
+
     # 计算交集
     intersection = top_232 & top_270
     log.info(f"\nv2.3.2 Top{top_n}: {len(top_232)} 只")
     log.info(f"v2.7.0 Top{top_n}: {len(top_270)} 只")
     log.info(f"交集: {len(intersection)} 只")
-    
+
     if not intersection:
         log.warning("没有交集股票！可尝试增大top_n参数")
         return None
-    
+
     # 获取交集股票的详细信息
-    df_232_inter = df_232[df_232['ts_code'].isin(intersection)].copy()
-    df_270_inter = df_270[df_270['ts_code'].isin(intersection)].copy()
-    
+    df_232_inter = df_232[df_232["ts_code"].isin(intersection)].copy()
+    df_270_inter = df_270[df_270["ts_code"].isin(intersection)].copy()
+
     # 合并信息
-    result = df_232_inter[['ts_code', 'name', 'close']].copy()
-    
+    result = df_232_inter[["ts_code", "name", "close"]].copy()
+
     # v2.3.2的指标
     v232_cols = {}
-    if 'final_score' in df_232_inter.columns:
-        v232_cols['final_score'] = 'v232_score'
-    if 'calibrated_probability' in df_232_inter.columns:
-        v232_cols['calibrated_probability'] = 'v232_prob'
-    if 'pct_chg' in df_232_inter.columns:
-        v232_cols['pct_chg'] = 'v232_pct_chg'
-    
+    if "final_score" in df_232_inter.columns:
+        v232_cols["final_score"] = "v232_score"
+    if "calibrated_probability" in df_232_inter.columns:
+        v232_cols["calibrated_probability"] = "v232_prob"
+    if "pct_chg" in df_232_inter.columns:
+        v232_cols["pct_chg"] = "v232_pct_chg"
+
     if v232_cols:
         result = result.merge(
-            df_232_inter[['ts_code'] + list(v232_cols.keys())].rename(columns=v232_cols),
-            on='ts_code'
+            df_232_inter[["ts_code"] + list(v232_cols.keys())].rename(columns=v232_cols), on="ts_code"
         )
-    
+
     # v2.7.0的指标
     v270_cols = {}
-    if 'probability' in df_270_inter.columns:
-        v270_cols['probability'] = 'v270_prob'
-    if 'pct_chg' in df_270_inter.columns:
-        v270_cols['pct_chg'] = 'v270_pct_chg'
-    
+    if "probability" in df_270_inter.columns:
+        v270_cols["probability"] = "v270_prob"
+    if "pct_chg" in df_270_inter.columns:
+        v270_cols["pct_chg"] = "v270_pct_chg"
+
     if v270_cols:
         result = result.merge(
-            df_270_inter[['ts_code'] + list(v270_cols.keys())].rename(columns=v270_cols),
-            on='ts_code'
+            df_270_inter[["ts_code"] + list(v270_cols.keys())].rename(columns=v270_cols), on="ts_code"
         )
-    
+
     # 计算综合得分
-    if 'v232_prob' in result.columns and 'v270_prob' in result.columns:
-        result['dual_score'] = result['v232_prob'] * 0.5 + result['v270_prob'] * 0.5
-    elif 'v232_score' in result.columns and 'v270_prob' in result.columns:
+    if "v232_prob" in result.columns and "v270_prob" in result.columns:
+        result["dual_score"] = result["v232_prob"] * 0.5 + result["v270_prob"] * 0.5
+    elif "v232_score" in result.columns and "v270_prob" in result.columns:
         # 归一化v232_score到0-1范围
-        result['v232_score_norm'] = (result['v232_score'] - result['v232_score'].min()) / (result['v232_score'].max() - result['v232_score'].min() + 1e-10)
-        result['dual_score'] = result['v232_score_norm'] * 0.5 + result['v270_prob'] * 0.5
+        result["v232_score_norm"] = (result["v232_score"] - result["v232_score"].min()) / (
+            result["v232_score"].max() - result["v232_score"].min() + 1e-10
+        )
+        result["dual_score"] = result["v232_score_norm"] * 0.5 + result["v270_prob"] * 0.5
     else:
         log.warning("无法计算综合得分，使用v2.7.0概率排序")
-        if 'v270_prob' in result.columns:
-            result['dual_score'] = result['v270_prob']
+        if "v270_prob" in result.columns:
+            result["dual_score"] = result["v270_prob"]
         else:
             return None
-    
-    result = result.sort_values('dual_score', ascending=False)
-    
+
+    result = result.sort_values("dual_score", ascending=False)
+
     # 输出结果
-    log.info("\n" + "="*80)
+    log.info("\n" + "=" * 80)
     log.info(f"🏆 双模型交集优选 Top{min(output_top, len(result))}")
-    log.info("="*80)
-    
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2评分':<12} {'v2.7.0概率':<12} {'综合得分':<12} {'收盘价':<10}")
+    log.info("=" * 80)
+
+    log.info(
+        f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2评分':<12} {'v2.7.0概率':<12} {'综合得分':<12} {'收盘价':<10}"
+    )
     log.info("-" * 85)
-    
+
     for i, (_, row) in enumerate(result.head(output_top).iterrows(), 1):
-        v232_val = row.get('v232_score', row.get('v232_prob', 0))
-        v270_val = row.get('v270_prob', 0)
+        v232_val = row.get("v232_score", row.get("v232_prob", 0))
+        v270_val = row.get("v270_prob", 0)
         log.info(
             f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
             f"{v232_val:<12.4f} {v270_val:<12.4f} "
             f"{row['dual_score']:<12.4f} {row['close']:<10.2f}"
         )
-    
+
     # 保存结果
-    output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
-    output_file = output_dir / f'v232_v270_intersection_{date}.csv'
-    result.to_csv(output_file, index=False, encoding='utf-8-sig')
+    output_dir = PROJECT_ROOT / "data" / "prediction" / "results"
+    output_file = output_dir / f"v232_v270_intersection_{date}.csv"
+    result.to_csv(output_file, index=False, encoding="utf-8-sig")
     log.success(f"\n✓ 结果已保存: {output_file}")
-    
+
     return result
 
 
 def strategy_weighted(date, w232=0.5, w270=0.5, output_top=10, enable_fundamental_screening=False):
     """
     策略2：加权综合
-    
+
     根据两个模型的评分进行加权平均
     """
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("策略2：加权综合")
     if enable_fundamental_screening:
         log.info("【启用基本面筛选】")
-    log.info("="*80)
+    log.info("=" * 80)
     log.info(f"权重: v2.3.2={w232*100:.0f}%, v2.7.0={w270*100:.0f}%")
     log.info("")
-    
+
     # 加载预测结果
     log.info("加载预测结果...")
-    df_232 = load_predictions(date, 'v2.3.2')
-    df_270 = load_predictions(date, 'v2.7.0')
-    
+    df_232 = load_predictions(date, "v2.3.2")
+    df_270 = load_predictions(date, "v2.7.0")
+
     if df_232 is None or df_270 is None:
         return None
-    
+
     # 基本面筛选（可选）
     if enable_fundamental_screening:
         log.info("\n应用基本面筛选...")
@@ -253,98 +255,100 @@ def strategy_weighted(date, w232=0.5, w270=0.5, output_top=10, enable_fundamenta
         fundamental_screener = FundamentalScreener(
             dm,
             config={
-                'enabled': True,
-                'market_cap_min': 100000,      # 10亿（万元）
-                'market_cap_max': 1000000,     # 100亿（万元）
-                'revenue_min': 5e8,            # 营业收入>5亿（元）- 标准方案
-                'net_profit_min': 5000000,     # 净利润>500万（元）- 标准方案
-                'roe_min': 5,                  # ROE>5% - 标准方案
-                'roa_min': 2,                  # ROA>2% - 标准方案
-            }
+                "enabled": True,
+                "market_cap_min": 100000,  # 10亿（万元）
+                "market_cap_max": 1000000,  # 100亿（万元）
+                "revenue_min": 5e8,  # 营业收入>5亿（元）- 标准方案
+                "net_profit_min": 5000000,  # 净利润>500万（元）- 标准方案
+                "roe_min": 5,  # ROE>5% - 标准方案
+                "roa_min": 2,  # ROA>2% - 标准方案
+            },
         )
         df_232 = fundamental_screener.filter_stocks(df_232, date)
         df_270 = fundamental_screener.filter_stocks(df_270, date)
         log.info(f"基本面筛选后: v2.3.2剩余{len(df_232)}只, v2.7.0剩余{len(df_270)}只")
-    
+
     # 准备数据
     # v2.3.2: 使用final_score或calibrated_probability
-    if 'final_score' in df_232.columns:
-        df_232_score = df_232[['ts_code', 'name', 'close', 'final_score']].copy()
-        df_232_score.rename(columns={'final_score': 'v232_score'}, inplace=True)
+    if "final_score" in df_232.columns:
+        df_232_score = df_232[["ts_code", "name", "close", "final_score"]].copy()
+        df_232_score.rename(columns={"final_score": "v232_score"}, inplace=True)
         # 归一化到0-1
-        df_232_score['v232_score_norm'] = (df_232_score['v232_score'] - df_232_score['v232_score'].min()) / (
-            df_232_score['v232_score'].max() - df_232_score['v232_score'].min() + 1e-10
+        df_232_score["v232_score_norm"] = (df_232_score["v232_score"] - df_232_score["v232_score"].min()) / (
+            df_232_score["v232_score"].max() - df_232_score["v232_score"].min() + 1e-10
         )
-        v232_col = 'v232_score_norm'
-    elif 'calibrated_probability' in df_232.columns:
-        df_232_score = df_232[['ts_code', 'name', 'close', 'calibrated_probability']].copy()
-        df_232_score.rename(columns={'calibrated_probability': 'v232_prob'}, inplace=True)
-        v232_col = 'v232_prob'
+        v232_col = "v232_score_norm"
+    elif "calibrated_probability" in df_232.columns:
+        df_232_score = df_232[["ts_code", "name", "close", "calibrated_probability"]].copy()
+        df_232_score.rename(columns={"calibrated_probability": "v232_prob"}, inplace=True)
+        v232_col = "v232_prob"
     else:
         log.error("v2.3.2结果中没有可用的评分列")
         return None
-    
+
     # v2.7.0: 使用probability
-    df_270_score = df_270[['ts_code', 'name', 'close', 'probability']].copy()
-    df_270_score.rename(columns={'probability': 'v270_prob'}, inplace=True)
-    
+    df_270_score = df_270[["ts_code", "name", "close", "probability"]].copy()
+    df_270_score.rename(columns={"probability": "v270_prob"}, inplace=True)
+
     # 合并
-    result = df_232_score.merge(df_270_score, on=['ts_code', 'name'], how='inner', suffixes=('', '_270'))
-    if 'close_270' in result.columns:
-        result['close'] = result['close'].fillna(result['close_270'])
-        result.drop(columns=['close_270'], inplace=True)
-    
+    result = df_232_score.merge(df_270_score, on=["ts_code", "name"], how="inner", suffixes=("", "_270"))
+    if "close_270" in result.columns:
+        result["close"] = result["close"].fillna(result["close_270"])
+        result.drop(columns=["close_270"], inplace=True)
+
     # 计算加权综合得分
-    result['dual_score'] = result[v232_col] * w232 + result['v270_prob'] * w270
-    result = result.sort_values('dual_score', ascending=False)
-    
+    result["dual_score"] = result[v232_col] * w232 + result["v270_prob"] * w270
+    result = result.sort_values("dual_score", ascending=False)
+
     # 输出结果
-    log.info("\n" + "="*80)
+    log.info("\n" + "=" * 80)
     log.info(f"🏆 加权综合 Top{output_top}")
-    log.info("="*80)
-    
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2评分':<12} {'v2.7.0概率':<12} {'综合得分':<12} {'收盘价':<10}")
+    log.info("=" * 80)
+
+    log.info(
+        f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2评分':<12} {'v2.7.0概率':<12} {'综合得分':<12} {'收盘价':<10}"
+    )
     log.info("-" * 85)
-    
+
     for i, (_, row) in enumerate(result.head(output_top).iterrows(), 1):
         v232_val = row[v232_col]
-        v270_val = row['v270_prob']
+        v270_val = row["v270_prob"]
         log.info(
             f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
             f"{v232_val:<12.4f} {v270_val:<12.4f} "
             f"{row['dual_score']:<12.4f} {row['close']:<10.2f}"
         )
-    
+
     # 保存结果
-    output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
-    output_file = output_dir / f'v232_v270_weighted_{date}.csv'
-    result.to_csv(output_file, index=False, encoding='utf-8-sig')
+    output_dir = PROJECT_ROOT / "data" / "prediction" / "results"
+    output_file = output_dir / f"v232_v270_weighted_{date}.csv"
+    result.to_csv(output_file, index=False, encoding="utf-8-sig")
     log.success(f"\n✓ 结果已保存: {output_file}")
-    
+
     return result
 
 
 def strategy_rank_combined(date, output_top=10, enable_fundamental_screening=False):
     """
     策略3：排名综合
-    
+
     根据两个模型的排名进行综合排序
     """
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("策略3：排名综合")
     if enable_fundamental_screening:
         log.info("【启用基本面筛选】")
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("")
-    
+
     # 加载预测结果
     log.info("加载预测结果...")
-    df_232 = load_predictions(date, 'v2.3.2')
-    df_270 = load_predictions(date, 'v2.7.0')
-    
+    df_232 = load_predictions(date, "v2.3.2")
+    df_270 = load_predictions(date, "v2.7.0")
+
     if df_232 is None or df_270 is None:
         return None
-    
+
     # 基本面筛选（可选）
     if enable_fundamental_screening:
         log.info("\n应用基本面筛选...")
@@ -352,87 +356,87 @@ def strategy_rank_combined(date, output_top=10, enable_fundamental_screening=Fal
         fundamental_screener = FundamentalScreener(
             dm,
             config={
-                'enabled': True,
-                'market_cap_min': 100000,      # 10亿（万元）
-                'market_cap_max': 1000000,     # 100亿（万元）
-                'revenue_min': 5e8,            # 营业收入>5亿（元）- 标准方案
-                'net_profit_min': 5000000,     # 净利润>500万（元）- 标准方案
-                'roe_min': 5,                  # ROE>5% - 标准方案
-                'roa_min': 2,                  # ROA>2% - 标准方案
-            }
+                "enabled": True,
+                "market_cap_min": 100000,  # 10亿（万元）
+                "market_cap_max": 1000000,  # 100亿（万元）
+                "revenue_min": 5e8,  # 营业收入>5亿（元）- 标准方案
+                "net_profit_min": 5000000,  # 净利润>500万（元）- 标准方案
+                "roe_min": 5,  # ROE>5% - 标准方案
+                "roa_min": 2,  # ROA>2% - 标准方案
+            },
         )
         df_232 = fundamental_screener.filter_stocks(df_232, date)
         df_270 = fundamental_screener.filter_stocks(df_270, date)
         log.info(f"基本面筛选后: v2.3.2剩余{len(df_232)}只, v2.7.0剩余{len(df_270)}只")
-    
+
     # 计算排名
     # v2.3.2
-    if 'final_score' in df_232.columns:
-        df_232 = df_232.sort_values('final_score', ascending=False)
+    if "final_score" in df_232.columns:
+        df_232 = df_232.sort_values("final_score", ascending=False)
     else:
-        df_232 = df_232.sort_values('calibrated_probability', ascending=False)
-    df_232['v232_rank'] = range(1, len(df_232) + 1)
-    
+        df_232 = df_232.sort_values("calibrated_probability", ascending=False)
+    df_232["v232_rank"] = range(1, len(df_232) + 1)
+
     # v2.7.0
-    df_270 = df_270.sort_values('probability', ascending=False)
-    df_270['v270_rank'] = range(1, len(df_270) + 1)
-    
+    df_270 = df_270.sort_values("probability", ascending=False)
+    df_270["v270_rank"] = range(1, len(df_270) + 1)
+
     # 合并
-    result = df_232[['ts_code', 'name', 'close', 'v232_rank']].merge(
-        df_270[['ts_code', 'v270_rank']],
-        on='ts_code',
-        how='inner'
+    result = df_232[["ts_code", "name", "close", "v232_rank"]].merge(
+        df_270[["ts_code", "v270_rank"]], on="ts_code", how="inner"
     )
-    
+
     # 计算综合排名（排名越小越好，所以用倒数）
-    result['v232_score'] = 1.0 / result['v232_rank']
-    result['v270_score'] = 1.0 / result['v270_rank']
-    result['combined_score'] = (result['v232_score'] + result['v270_score']) / 2
-    result = result.sort_values('combined_score', ascending=False)
-    
+    result["v232_score"] = 1.0 / result["v232_rank"]
+    result["v270_score"] = 1.0 / result["v270_rank"]
+    result["combined_score"] = (result["v232_score"] + result["v270_score"]) / 2
+    result = result.sort_values("combined_score", ascending=False)
+
     # 输出结果
-    log.info("\n" + "="*80)
+    log.info("\n" + "=" * 80)
     log.info(f"🏆 排名综合 Top{output_top}")
-    log.info("="*80)
-    
-    log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2排名':<12} {'v2.7.0排名':<12} {'综合得分':<12} {'收盘价':<10}")
+    log.info("=" * 80)
+
+    log.info(
+        f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'v2.3.2排名':<12} {'v2.7.0排名':<12} {'综合得分':<12} {'收盘价':<10}"
+    )
     log.info("-" * 85)
-    
+
     for i, (_, row) in enumerate(result.head(output_top).iterrows(), 1):
         log.info(
             f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
             f"{row['v232_rank']:<12} {row['v270_rank']:<12} "
             f"{row['combined_score']:<12.4f} {row['close']:<10.2f}"
         )
-    
+
     # 保存结果
-    output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
-    output_file = output_dir / f'v232_v270_rank_combined_{date}.csv'
-    result.to_csv(output_file, index=False, encoding='utf-8-sig')
+    output_dir = PROJECT_ROOT / "data" / "prediction" / "results"
+    output_file = output_dir / f"v232_v270_rank_combined_{date}.csv"
+    result.to_csv(output_file, index=False, encoding="utf-8-sig")
     log.success(f"\n✓ 结果已保存: {output_file}")
-    
+
     return result
 
 
 def get_concept_info(dm, ts_codes):
     """
     获取股票概念信息
-    
+
     Args:
         dm: DataManager实例
         ts_codes: 股票代码列表
-        
+
     Returns:
         dict: {ts_code: [concept1, concept2, ...]}
     """
     concept_dict = {}
-    
+
     try:
         for ts_code in ts_codes:
             try:
                 df_concept = dm.fetcher.pro.concept_detail(ts_code=ts_code)
                 if df_concept is not None and not df_concept.empty:
-                    concepts = df_concept['concept_name'].tolist()
+                    concepts = df_concept["concept_name"].tolist()
                     concept_dict[ts_code] = concepts
                 else:
                     concept_dict[ts_code] = []
@@ -441,19 +445,19 @@ def get_concept_info(dm, ts_codes):
                 concept_dict[ts_code] = []
     except Exception as e:
         log.warning(f"获取概念信息失败: {e}")
-    
+
     return concept_dict
 
 
 def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
     """
     从Tushare获取近期热点板块（优先使用同花顺热榜）
-    
+
     Args:
         dm: DataManager实例
         trade_date: 交易日期 (YYYYMMDD)
         top_n: 获取TopN热点板块
-        
+
     Returns:
         dict: {
             'concepts': {concept_name: {'hot': float, 'pct_chg': float, 'rank': int, 'rank_reason': str}},
@@ -461,43 +465,29 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
             'hot_stocks': {ts_code: {'hot': float, 'pct_chg': float, 'concept': str}}
         }
     """
-    hot_sectors = {
-        'concepts': {},
-        'industries': {},
-        'hot_stocks': {}
-    }
-    
+    hot_sectors = {"concepts": {}, "industries": {}, "hot_stocks": {}}
+
     try:
         # 优先使用同花顺热榜（推荐，只需6000积分）
         log.info(f"获取同花顺热榜数据（{trade_date}）...")
-        
+
         # 1. 获取热门概念板块（同花顺热榜）
-        df_concepts = dm.fetcher.get_ths_hot(
-            trade_date=trade_date,
-            market='概念板块',
-            is_new='Y',
-            top_n=top_n
-        )
+        df_concepts = dm.fetcher.get_ths_hot(trade_date=trade_date, market="概念板块", is_new="Y", top_n=top_n)
         # 若指定日期无数据，尝试拉取最新（不传 trade_date）
         if (df_concepts is None or df_concepts.empty) and trade_date:
             log.info("指定日期无概念板块数据，尝试拉取最新...")
-            df_concepts = dm.fetcher.get_ths_hot(
-                trade_date=None,
-                market='概念板块',
-                is_new='Y',
-                top_n=top_n
-            )
-        
+            df_concepts = dm.fetcher.get_ths_hot(trade_date=None, market="概念板块", is_new="Y", top_n=top_n)
+
         if df_concepts is not None and not df_concepts.empty:
             for _, row in df_concepts.iterrows():
-                concept_name = row.get('ts_name', '')
+                concept_name = row.get("ts_name", "")
                 if concept_name:
-                    hot_sectors['concepts'][concept_name] = {
-                        'hot': row.get('hot', 0),
-                        'pct_chg': row.get('pct_chg', row.get('pct_change', 0)),
-                        'rank': row.get('rank', 999),
-                        'rank_reason': row.get('rank_reason', ''),
-                        'ts_code': row.get('ts_code', '')
+                    hot_sectors["concepts"][concept_name] = {
+                        "hot": row.get("hot", 0),
+                        "pct_chg": row.get("pct_chg", row.get("pct_change", 0)),
+                        "rank": row.get("rank", 999),
+                        "rank_reason": row.get("rank_reason", ""),
+                        "ts_code": row.get("ts_code", ""),
                     }
             log.info(f"✓ 从同花顺热榜获取到 {len(hot_sectors['concepts'])} 个热门概念板块")
         else:
@@ -506,40 +496,30 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
             df_concepts = dm.fetcher.get_hot_concepts(trade_date, top_n=top_n, min_up_nums=3)
             if df_concepts is not None and not df_concepts.empty:
                 for _, row in df_concepts.iterrows():
-                    concept_name = row.get('name', '')
+                    concept_name = row.get("name", "")
                     if concept_name:
-                        hot_sectors['concepts'][concept_name] = {
-                            'up_nums': row.get('up_nums', 0),
-                            'pct_chg': row.get('pct_chg', 0),
-                            'heat_score': row.get('heat_score', 0),
-                            'ts_code': row.get('ts_code', '')
+                        hot_sectors["concepts"][concept_name] = {
+                            "up_nums": row.get("up_nums", 0),
+                            "pct_chg": row.get("pct_chg", 0),
+                            "heat_score": row.get("heat_score", 0),
+                            "ts_code": row.get("ts_code", ""),
                         }
                 log.info(f"✓ 从备选方案获取到 {len(hot_sectors['concepts'])} 个热门概念板块")
-        
+
         # 2. 获取热门行业板块（同花顺热榜）
-        df_industries = dm.fetcher.get_ths_hot(
-            trade_date=trade_date,
-            market='行业板块',
-            is_new='Y',
-            top_n=top_n
-        )
+        df_industries = dm.fetcher.get_ths_hot(trade_date=trade_date, market="行业板块", is_new="Y", top_n=top_n)
         if (df_industries is None or df_industries.empty) and trade_date:
-            df_industries = dm.fetcher.get_ths_hot(
-                trade_date=None,
-                market='行业板块',
-                is_new='Y',
-                top_n=top_n
-            )
-        
+            df_industries = dm.fetcher.get_ths_hot(trade_date=None, market="行业板块", is_new="Y", top_n=top_n)
+
         if df_industries is not None and not df_industries.empty:
             for _, row in df_industries.iterrows():
-                industry_name = row.get('ts_name', '')
+                industry_name = row.get("ts_name", "")
                 if industry_name:
-                    hot_sectors['industries'][industry_name] = {
-                        'hot': row.get('hot', 0),
-                        'pct_chg': row.get('pct_chg', row.get('pct_change', 0)),
-                        'rank': row.get('rank', 999),
-                        'ts_code': row.get('ts_code', '')
+                    hot_sectors["industries"][industry_name] = {
+                        "hot": row.get("hot", 0),
+                        "pct_chg": row.get("pct_chg", row.get("pct_change", 0)),
+                        "rank": row.get("rank", 999),
+                        "ts_code": row.get("ts_code", ""),
                     }
             log.info(f"✓ 从同花顺热榜获取到 {len(hot_sectors['industries'])} 个热门行业板块")
         else:
@@ -547,123 +527,117 @@ def get_hot_sectors_from_tushare(dm, trade_date, top_n=30):
             df_industries = dm.fetcher.get_hot_industries(trade_date, top_n=top_n, min_pct_chg=1.0)
             if df_industries is not None and not df_industries.empty:
                 for _, row in df_industries.iterrows():
-                    industry_name = row.get('name', '')
+                    industry_name = row.get("name", "")
                     if industry_name:
-                        hot_sectors['industries'][industry_name] = {
-                            'pct_chg': row.get('pct_chg', 0),
-                            'ts_code': row.get('ts_code', '')
+                        hot_sectors["industries"][industry_name] = {
+                            "pct_chg": row.get("pct_chg", 0),
+                            "ts_code": row.get("ts_code", ""),
                         }
                 log.info(f"✓ 从备选方案获取到 {len(hot_sectors['industries'])} 个热门行业板块")
-        
+
         # 3. 获取热门股票（同花顺热股榜，用于综合得分加成）
-        df_hot_stocks = dm.fetcher.get_ths_hot(
-            trade_date=trade_date,
-            market='热股',
-            is_new='Y',
-            top_n=100
-        )
+        df_hot_stocks = dm.fetcher.get_ths_hot(trade_date=trade_date, market="热股", is_new="Y", top_n=100)
         if (df_hot_stocks is None or df_hot_stocks.empty) and trade_date:
-            df_hot_stocks = dm.fetcher.get_ths_hot(
-                trade_date=None,
-                market='热股',
-                is_new='Y',
-                top_n=100
-            )
-        
+            df_hot_stocks = dm.fetcher.get_ths_hot(trade_date=None, market="热股", is_new="Y", top_n=100)
+
         if df_hot_stocks is not None and not df_hot_stocks.empty:
             for _, row in df_hot_stocks.iterrows():
-                ts_code = row.get('ts_code', '')
+                ts_code = row.get("ts_code", "")
                 if ts_code:
-                    hot_sectors['hot_stocks'][ts_code] = {
-                        'hot': row.get('hot', 0),
-                        'pct_chg': row.get('pct_chg', row.get('pct_change', 0)),
-                        'concept': row.get('concept', ''),
-                        'rank': row.get('rank', 999),
-                        'rank_reason': row.get('rank_reason', '')
+                    hot_sectors["hot_stocks"][ts_code] = {
+                        "hot": row.get("hot", 0),
+                        "pct_chg": row.get("pct_chg", row.get("pct_change", 0)),
+                        "concept": row.get("concept", ""),
+                        "rank": row.get("rank", 999),
+                        "rank_reason": row.get("rank_reason", ""),
                     }
             log.info(f"✓ 获取到 {len(hot_sectors['hot_stocks'])} 只热门股票（用于交叉验证）")
-            
+
     except Exception as e:
         log.warning(f"从Tushare获取热点板块失败: {e}")
         log.info("将使用关键词匹配作为备选方案")
-    
+
     return hot_sectors
 
 
 def identify_hot_sectors(concept_dict, hot_sectors_data=None, stock_industry_map=None):
     """
     识别热门板块股票（热点概念 + 热点行业）
-    
+
     优先使用Tushare同花顺热榜：概念板块、行业板块；若失败则用关键词匹配备选。
-    
+
     Args:
         concept_dict: {ts_code: [concept1, concept2, ...]}
         hot_sectors_data: 从Tushare获取的热点数据（concepts, industries, hot_stocks）
         stock_industry_map: {ts_code: industry_name} 用于行业板块匹配
-        
+
     Returns:
         dict: {ts_code: [hot_sector1, hot_sector2, ...]}
     """
     hot_sector_dict = defaultdict(list)
     hot_concepts = set()
-    
+
     # 1. 热门概念匹配（同花顺热点概念）
-    if hot_sectors_data and hot_sectors_data.get('concepts'):
-        hot_concepts = set(hot_sectors_data['concepts'].keys())
+    if hot_sectors_data and hot_sectors_data.get("concepts"):
+        hot_concepts = set(hot_sectors_data["concepts"].keys())
         for ts_code, concepts in concept_dict.items():
             for concept in concepts:
                 if concept in hot_concepts and concept not in hot_sector_dict[ts_code]:
                     hot_sector_dict[ts_code].append(concept)
     else:
         hot_concepts = set()
-    
+
     # 2. 热门行业匹配（同花顺热点行业 + 股票行业映射）
-    if hot_sectors_data and hot_sectors_data.get('industries') and stock_industry_map:
-        hot_industries = set(hot_sectors_data['industries'].keys())
+    if hot_sectors_data and hot_sectors_data.get("industries") and stock_industry_map:
+        hot_industries = set(hot_sectors_data["industries"].keys())
         for ts_code, industry in stock_industry_map.items():
             if industry and industry in hot_industries and industry not in hot_sector_dict[ts_code]:
                 hot_sector_dict[ts_code].append(industry)
         log.info(f"热点行业: {len(hot_industries)} 个热门行业参与匹配")
-    
-    if hot_sector_dict and hot_sectors_data and (hot_sectors_data.get('concepts') or hot_sectors_data.get('industries')):
+
+    if (
+        hot_sector_dict
+        and hot_sectors_data
+        and (hot_sectors_data.get("concepts") or hot_sectors_data.get("industries"))
+    ):
         log.info(f"使用同花顺热点（概念+行业）数据，识别到 {len(hot_sector_dict)} 只热门板块股票")
         return dict(hot_sector_dict)
-    
+
     # 备选方案：使用关键词匹配（保留原有逻辑）
     log.info("使用关键词匹配识别热门板块（备选方案）")
     hot_sector_keywords = {
-        '人形机器人': ['人形机器人', '机器人', '智能机器人', '服务机器人'],
-        '可控核聚变': ['核聚变', '可控核聚变', '核能', '核反应'],
-        'AI应用': ['人工智能', 'AI', '大模型', 'ChatGPT', 'AIGC', '生成式AI', '机器学习'],
-        '存储': ['存储', '存储器', '闪存', 'DRAM', 'NAND', '内存'],
-        '电力': ['电力', '新能源', '光伏', '风电', '储能', '特高压', '智能电网'],
-        '商业航天': ['航天', '卫星', '商业航天', '火箭', '空间站', '北斗']
+        "人形机器人": ["人形机器人", "机器人", "智能机器人", "服务机器人"],
+        "可控核聚变": ["核聚变", "可控核聚变", "核能", "核反应"],
+        "AI应用": ["人工智能", "AI", "大模型", "ChatGPT", "AIGC", "生成式AI", "机器学习"],
+        "存储": ["存储", "存储器", "闪存", "DRAM", "NAND", "内存"],
+        "电力": ["电力", "新能源", "光伏", "风电", "储能", "特高压", "智能电网"],
+        "商业航天": ["航天", "卫星", "商业航天", "火箭", "空间站", "北斗"],
     }
-    
+
     for ts_code, concepts in concept_dict.items():
         for concept in concepts:
             for sector, keywords in hot_sector_keywords.items():
                 if any(keyword in concept for keyword in keywords):
                     if sector not in hot_sector_dict[ts_code]:
                         hot_sector_dict[ts_code].append(sector)
-    
+
     return dict(hot_sector_dict)
 
 
 def calculate_risk_level(row):
     """
     计算v2.3.2推荐股票的风险等级
-    
+
     Returns:
         str: 'low', 'medium', 'high'
     """
-    pct_chg = row.get('pct_chg', 0)
-    rsi_6 = row.get('rsi_6', 50)
-    consecutive_limit_up = row.get('consecutive_limit_up', 0)
-    penalty = row.get('penalty', 1.0)
-    
+    pct_chg = row.get("pct_chg", 0)
+    rsi_6 = row.get("rsi_6", 50)
+    consecutive_limit_up = row.get("consecutive_limit_up", 0)
+    penalty = row.get("penalty", 1.0)
+
     risk_score = 0
-    
+
     # 涨幅风险
     if pct_chg > 15:
         risk_score += 3
@@ -671,49 +645,56 @@ def calculate_risk_level(row):
         risk_score += 2
     elif pct_chg > 5:
         risk_score += 1
-    
+
     # RSI风险
     if rsi_6 > 95:
         risk_score += 2
     elif rsi_6 > 90:
         risk_score += 1
-    
+
     # 连续涨停风险
     if consecutive_limit_up >= 3:
         risk_score += 2
     elif consecutive_limit_up >= 2:
         risk_score += 1
-    
+
     # 惩罚系数风险
     if penalty < 0.5:
         risk_score += 2
     elif penalty < 0.7:
         risk_score += 1
-    
+
     # 风险等级判定
     if risk_score >= 5:
-        return 'high'
+        return "high"
     elif risk_score >= 2:
-        return 'medium'
+        return "medium"
     else:
-        return 'low'
+        return "low"
 
 
-def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10, 
-                          enable_fundamental_screening=False, 
-                          max_high_risk=3, max_medium_risk=5,
-                          v232_score_discount=0.65,
-                          v232_max_consecutive_up=3, v232_max_rsi=80):
+def strategy_complementary(
+    date,
+    base_top_n=100,
+    v232_top_n=100,
+    output_top=10,
+    enable_fundamental_screening=False,
+    max_high_risk=3,
+    max_medium_risk=5,
+    v232_score_discount=0.65,
+    v232_max_consecutive_up=3,
+    v232_max_rsi=80,
+):
     """
     策略4：互补策略（推荐）
-    
+
     核心思路：
     1. v2.7.0作为稳定基础池（Top100），提供稳健标的
     2. v2.3.2作为热门板块补充，捕捉强势龙头股
     3. 对v2.3.2推荐的股票进行风险分层
     4. 识别热门板块，给予额外权重
     5. 控制高风险股票数量
-    
+
     参数：
     - base_top_n: v2.7.0基础池数量（默认100）
     - v232_top_n: v2.3.2候选池数量（默认100）
@@ -723,9 +704,9 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
     - v232_max_consecutive_up: 过滤连板次数上限（默认3），超过则剔除
     - v232_max_rsi: 过滤RSI6上限（默认80），超过则剔除
     """
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("策略4：互补策略（推荐）")
-    log.info("="*80)
+    log.info("=" * 80)
     log.info("核心思路：v2.7.0稳定基础 + v2.3.2热门板块补充 + 风险分层")
     if enable_fundamental_screening:
         log.info("【启用基本面筛选】")
@@ -733,15 +714,15 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
     log.info(f"风险控制: 最多{max_high_risk}只高风险, 最多{max_medium_risk}只中风险")
     log.info(f"v232参数: 评分折扣={v232_score_discount}, 最大连板={v232_max_consecutive_up}, 最大RSI6={v232_max_rsi}")
     log.info("")
-    
+
     # 加载预测结果
     log.info("加载预测结果...")
-    df_232 = load_predictions(date, 'v2.3.2')
-    df_270 = load_predictions(date, 'v2.7.0')
-    
+    df_232 = load_predictions(date, "v2.3.2")
+    df_270 = load_predictions(date, "v2.7.0")
+
     if df_232 is None or df_270 is None:
         return None
-    
+
     # 基本面筛选（可选）
     if enable_fundamental_screening:
         log.info("\n应用基本面筛选...")
@@ -749,151 +730,149 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
         fundamental_screener = FundamentalScreener(
             dm,
             config={
-                'enabled': True,
-                'market_cap_min': 100000,      # 10亿（万元）
-                'market_cap_max': 1000000,     # 100亿（万元）
-                'revenue_min': 5e8,            # 营业收入>5亿（元）
-                'net_profit_min': 5000000,     # 净利润>500万（元）
-                'roe_min': 5,                  # ROE>5%
-                'roa_min': 2,                  # ROA>2%
-            }
+                "enabled": True,
+                "market_cap_min": 100000,  # 10亿（万元）
+                "market_cap_max": 1000000,  # 100亿（万元）
+                "revenue_min": 5e8,  # 营业收入>5亿（元）
+                "net_profit_min": 5000000,  # 净利润>500万（元）
+                "roe_min": 5,  # ROE>5%
+                "roa_min": 2,  # ROA>2%
+            },
         )
         df_232 = fundamental_screener.filter_stocks(df_232, date)
         df_270 = fundamental_screener.filter_stocks(df_270, date)
         log.info(f"基本面筛选后: v2.3.2剩余{len(df_232)}只, v2.7.0剩余{len(df_270)}只")
     else:
         dm = DataManager()
-    
+
     # 1. v2.7.0稳定基础池
-    df_270 = df_270.sort_values('probability', ascending=False)
+    df_270 = df_270.sort_values("probability", ascending=False)
     base_pool = df_270.head(base_top_n).copy()
-    base_pool['source'] = 'v2.7.0'
-    base_pool['risk_level'] = 'low'  # v2.7.0推荐的股票默认低风险
+    base_pool["source"] = "v2.7.0"
+    base_pool["risk_level"] = "low"  # v2.7.0推荐的股票默认低风险
     log.info(f"\n✓ v2.7.0稳定基础池: {len(base_pool)} 只")
-    
+
     # 2. v2.3.2热门板块补充池
-    if 'final_score' in df_232.columns:
-        df_232 = df_232.sort_values('final_score', ascending=False)
+    if "final_score" in df_232.columns:
+        df_232 = df_232.sort_values("final_score", ascending=False)
     else:
-        df_232 = df_232.sort_values('calibrated_probability', ascending=False)
-    
+        df_232 = df_232.sort_values("calibrated_probability", ascending=False)
+
     v232_candidates = df_232.head(v232_top_n).copy()
 
     # 高位过滤：剔除连板次数过多、RSI超买、当日涨停的 v232 候选股
     def _filter_v232_high_risk(df: pd.DataFrame) -> pd.DataFrame:
         mask = pd.Series(True, index=df.index)
-        if 'consecutive_limit_up' in df.columns:
-            mask &= df['consecutive_limit_up'].fillna(0) < v232_max_consecutive_up
-        if 'rsi_6' in df.columns:
-            mask &= df['rsi_6'].fillna(50) <= v232_max_rsi
-        if 'pct_chg' in df.columns:
-            mask &= df['pct_chg'].fillna(0) <= 9.5   # 当日未涨停（A股涨停约为+9.9%）
+        if "consecutive_limit_up" in df.columns:
+            mask &= df["consecutive_limit_up"].fillna(0) < v232_max_consecutive_up
+        if "rsi_6" in df.columns:
+            mask &= df["rsi_6"].fillna(50) <= v232_max_rsi
+        if "pct_chg" in df.columns:
+            mask &= df["pct_chg"].fillna(0) <= 9.5  # 当日未涨停（A股涨停约为+9.9%）
         filtered = df[mask]
         removed = len(df) - len(filtered)
         if removed > 0:
-            log.info(f"v232高位过滤: 剔除 {removed} 只（连板≥{v232_max_consecutive_up} 或 RSI6>{v232_max_rsi} 或当日涨停）")
+            log.info(
+                f"v232高位过滤: 剔除 {removed} 只（连板≥{v232_max_consecutive_up} 或 RSI6>{v232_max_rsi} 或当日涨停）"
+            )
         return filtered
 
     v232_candidates = _filter_v232_high_risk(v232_candidates)
 
     # 计算风险等级
-    v232_candidates['risk_level'] = v232_candidates.apply(calculate_risk_level, axis=1)
-    v232_candidates['source'] = 'v2.3.2'
-    
+    v232_candidates["risk_level"] = v232_candidates.apply(calculate_risk_level, axis=1)
+    v232_candidates["source"] = "v2.3.2"
+
     # 获取概念信息、行业映射，识别热门板块（同花顺热点概念+热点行业）
     log.info("\n识别热门板块（同花顺热点概念+热点行业）...")
-    
+
     # 1. 从Tushare获取同花顺热榜：概念板块、行业板块、热股
     hot_sectors_data = get_hot_sectors_from_tushare(dm, date, top_n=30)
-    
+
     # 2. 股票行业映射（用于热点行业匹配）
-    all_ts_codes = list(set(v232_candidates['ts_code'].tolist() + base_pool['ts_code'].tolist()))
+    all_ts_codes = list(set(v232_candidates["ts_code"].tolist() + base_pool["ts_code"].tolist()))
     stock_industry_map = dm.fetcher.get_stock_industry_map(all_ts_codes)
     if stock_industry_map:
         log.info(f"✓ 股票行业映射: {len(stock_industry_map)} 只")
-    
+
     # 2.1 板块级资金流向（由个股净流入聚合得出，无需额外接口）
     # 稍后在 combined 生成并填充 net_mf_amount 后，在 3.45 步骤中实时计算
     inflow_sector_names: set = set()  # 占位，3.45 步骤填充
-    
+
     # 3. 获取股票的概念信息
-    ts_codes = v232_candidates['ts_code'].tolist()
+    ts_codes = v232_candidates["ts_code"].tolist()
     concept_dict = get_concept_info(dm, ts_codes)
-    
+
     # 4. 识别热门板块股票（概念+行业）
     hot_sector_dict = identify_hot_sectors(concept_dict, hot_sectors_data, stock_industry_map)
-    
+
     # 标记热门板块股票
-    v232_candidates['hot_sectors'] = v232_candidates['ts_code'].apply(
-        lambda x: ','.join(hot_sector_dict.get(x, []))
-    )
-    v232_candidates['is_hot_sector'] = v232_candidates['hot_sectors'].apply(lambda x: len(x) > 0)
-    
-    hot_count = v232_candidates['is_hot_sector'].sum()
+    v232_candidates["hot_sectors"] = v232_candidates["ts_code"].apply(lambda x: ",".join(hot_sector_dict.get(x, [])))
+    v232_candidates["is_hot_sector"] = v232_candidates["hot_sectors"].apply(lambda x: len(x) > 0)
+
+    hot_count = v232_candidates["is_hot_sector"].sum()
     log.info(f"✓ 识别到 {hot_count} 只热门板块股票")
-    
+
     # 显示热门板块分布
     if hot_count > 0:
         hot_sector_stats = defaultdict(int)
-        for sectors_str in v232_candidates[v232_candidates['is_hot_sector']]['hot_sectors']:
+        for sectors_str in v232_candidates[v232_candidates["is_hot_sector"]]["hot_sectors"]:
             if sectors_str:
-                for sector in sectors_str.split(','):
+                for sector in sectors_str.split(","):
                     hot_sector_stats[sector] += 1
         log.info("热门板块分布:")
         for sector, count in sorted(hot_sector_stats.items(), key=lambda x: x[1], reverse=True):
             # 显示板块热度信息（如果有）
             heat_info = ""
-            if hot_sectors_data and hot_sectors_data.get('concepts'):
-                if sector in hot_sectors_data['concepts']:
-                    heat_data = hot_sectors_data['concepts'][sector]
+            if hot_sectors_data and hot_sectors_data.get("concepts"):
+                if sector in hot_sectors_data["concepts"]:
+                    heat_data = hot_sectors_data["concepts"][sector]
                     # 优先显示热度值和涨幅（同花顺热榜）
-                    if 'hot' in heat_data:
+                    if "hot" in heat_data:
                         heat_info = f" (热度{heat_data.get('hot', 0):.0f}, 涨幅{heat_data.get('pct_chg', 0):.2f}%, 排名{heat_data.get('rank', 999)})"
                     # 备选：显示涨停数和涨幅
-                    elif 'up_nums' in heat_data:
+                    elif "up_nums" in heat_data:
                         heat_info = f" (涨停{heat_data.get('up_nums', 0)}只, 涨幅{heat_data.get('pct_chg', 0):.2f}%)"
             log.info(f"  - {sector}: {count} 只{heat_info}")
-    
+
     # 为v2.7.0基础池也识别热门板块
     log.info("\n为v2.7.0基础池识别热门板块...")
-    base_ts_codes = base_pool['ts_code'].tolist()
+    base_ts_codes = base_pool["ts_code"].tolist()
     base_concept_dict = get_concept_info(dm, base_ts_codes)
     base_hot_sector_dict = identify_hot_sectors(base_concept_dict, hot_sectors_data, stock_industry_map)
-    
+
     # 标记v2.7.0基础池的热门板块
-    base_pool['hot_sectors'] = base_pool['ts_code'].apply(
-        lambda x: ','.join(base_hot_sector_dict.get(x, []))
-    )
-    base_pool['is_hot_sector'] = base_pool['hot_sectors'].apply(lambda x: len(x) > 0)
-    
-    base_hot_count = base_pool['is_hot_sector'].sum()
+    base_pool["hot_sectors"] = base_pool["ts_code"].apply(lambda x: ",".join(base_hot_sector_dict.get(x, [])))
+    base_pool["is_hot_sector"] = base_pool["hot_sectors"].apply(lambda x: len(x) > 0)
+
+    base_hot_count = base_pool["is_hot_sector"].sum()
     log.info(f"✓ v2.7.0基础池中识别到 {base_hot_count} 只热门板块股票")
-    
+
     # 3. 合并两个池子
     # 准备合并的列
-    merge_cols = ['ts_code', 'name', 'close', 'source', 'risk_level', 'hot_sectors', 'is_hot_sector']
-    
+    merge_cols = ["ts_code", "name", "close", "source", "risk_level", "hot_sectors", "is_hot_sector"]
+
     # v2.7.0的列
     v270_cols = {col: col for col in merge_cols if col in base_pool.columns}
-    v270_cols['probability'] = 'v270_prob'
+    v270_cols["probability"] = "v270_prob"
     base_pool_merge = base_pool[list(v270_cols.keys())].rename(columns=v270_cols)
-    
+
     # v2.3.2的列
-    v232_merge_cols = ['ts_code', 'name', 'close', 'source', 'risk_level', 'is_hot_sector', 'hot_sectors']
-    if 'final_score' in v232_candidates.columns:
-        v232_merge_cols.append('final_score')
-        v232_cols = {'final_score': 'v232_score'}
-    elif 'calibrated_probability' in v232_candidates.columns:
-        v232_merge_cols.append('calibrated_probability')
-        v232_cols = {'calibrated_probability': 'v232_prob'}
-    
-    v232_merge_cols.extend(['pct_chg', 'rsi_6', 'penalty', 'consecutive_limit_up'])
+    v232_merge_cols = ["ts_code", "name", "close", "source", "risk_level", "is_hot_sector", "hot_sectors"]
+    if "final_score" in v232_candidates.columns:
+        v232_merge_cols.append("final_score")
+        v232_cols = {"final_score": "v232_score"}
+    elif "calibrated_probability" in v232_candidates.columns:
+        v232_merge_cols.append("calibrated_probability")
+        v232_cols = {"calibrated_probability": "v232_prob"}
+
+    v232_merge_cols.extend(["pct_chg", "rsi_6", "penalty", "consecutive_limit_up"])
     v232_merge_cols = [col for col in v232_merge_cols if col in v232_candidates.columns]
-    
+
     v232_candidates_merge = v232_candidates[v232_merge_cols].copy()
     if v232_cols:
         v232_candidates_merge.rename(columns=v232_cols, inplace=True)
-    
+
     # 合并（去重，优先保留v2.7.0的）
     # 确保两个DataFrame有相同的列
     all_cols = set(base_pool_merge.columns) | set(v232_candidates_merge.columns)
@@ -902,238 +881,235 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
             base_pool_merge[col] = None
         if col not in v232_candidates_merge.columns:
             v232_candidates_merge[col] = None
-    
+
     combined = pd.concat([base_pool_merge, v232_candidates_merge], ignore_index=True)
-    combined = combined.drop_duplicates(subset=['ts_code'], keep='first')
-    
+    combined = combined.drop_duplicates(subset=["ts_code"], keep="first")
+
     # 3.4 资金流向（主力净流入，积分≥2000可用 moneyflow 接口）
     try:
         df_mf = dm.fetcher.get_moneyflow(trade_date=date)
-        if df_mf is not None and not df_mf.empty and 'net_mf_amount' in df_mf.columns:
-            mf_map = df_mf.set_index('ts_code')['net_mf_amount'].to_dict()
-            combined['net_mf_amount'] = combined['ts_code'].map(mf_map)
-            combined['is_net_inflow'] = (combined['net_mf_amount'].fillna(0) > 0)
-            inflow_count = combined['is_net_inflow'].sum()
+        if df_mf is not None and not df_mf.empty and "net_mf_amount" in df_mf.columns:
+            mf_map = df_mf.set_index("ts_code")["net_mf_amount"].to_dict()
+            combined["net_mf_amount"] = combined["ts_code"].map(mf_map)
+            combined["is_net_inflow"] = combined["net_mf_amount"].fillna(0) > 0
+            inflow_count = combined["is_net_inflow"].sum()
             log.info(f"✓ 资金流向: {inflow_count} 只主力净流入，将获得综合得分加成")
         else:
-            combined['net_mf_amount'] = np.nan
-            combined['is_net_inflow'] = False
+            combined["net_mf_amount"] = np.nan
+            combined["is_net_inflow"] = False
     except Exception as e:
         log.warning(f"资金流向获取失败: {e}")
-        combined['net_mf_amount'] = np.nan
-        combined['is_net_inflow'] = False
-    
+        combined["net_mf_amount"] = np.nan
+        combined["is_net_inflow"] = False
+
     # 3.45 板块资金净流入标记（聚合个股 net_mf_amount → 行业级净流入）
-    if stock_industry_map and 'net_mf_amount' in combined.columns:
-        combined['_industry'] = combined['ts_code'].map(
-            lambda c: stock_industry_map.get(c, '')
-        )
-        sector_flow = (
-            combined[combined['net_mf_amount'].notna()]
-            .groupby('_industry')['net_mf_amount']
-            .sum()
-        )
+    if stock_industry_map and "net_mf_amount" in combined.columns:
+        combined["_industry"] = combined["ts_code"].map(lambda c: stock_industry_map.get(c, ""))
+        sector_flow = combined[combined["net_mf_amount"].notna()].groupby("_industry")["net_mf_amount"].sum()
         inflow_sector_names = set(sector_flow[sector_flow > 0].index.tolist())
-        combined['is_sector_inflow'] = combined['_industry'].isin(inflow_sector_names)
-        combined.drop(columns=['_industry'], inplace=True)
-        sector_inflow_count = combined['is_sector_inflow'].sum()
-        inflow_top5 = sorted(
-            [(s, sector_flow[s]) for s in inflow_sector_names if s],
-            key=lambda x: x[1], reverse=True
-        )[:5]
+        combined["is_sector_inflow"] = combined["_industry"].isin(inflow_sector_names)
+        combined.drop(columns=["_industry"], inplace=True)
+        sector_inflow_count = combined["is_sector_inflow"].sum()
+        inflow_top5 = sorted([(s, sector_flow[s]) for s in inflow_sector_names if s], key=lambda x: x[1], reverse=True)[
+            :5
+        ]
         log.info(f"✓ 板块资金聚合: {len(inflow_sector_names)} 个行业净流入，{sector_inflow_count} 只候选股受益")
         if inflow_top5:
             log.info(f"  净流入最多: {', '.join(f'{s}({v:+.0f}万)' for s, v in inflow_top5)}")
     else:
-        combined['is_sector_inflow'] = False
-    
+        combined["is_sector_inflow"] = False
+
     # 3.5 同花顺热股榜标记（积分≥6000可用 ths_hot 接口）
-    hot_stocks = hot_sectors_data.get('hot_stocks', {})
-    combined['is_ths_hot_stock'] = combined['ts_code'].isin(hot_stocks.keys())
+    hot_stocks = hot_sectors_data.get("hot_stocks", {})
+    combined["is_ths_hot_stock"] = combined["ts_code"].isin(hot_stocks.keys())
     rank_map = {}
     hot_map = {}
     for ts_code, info in hot_stocks.items():
-        rank_map[ts_code] = info.get('rank', 999)
-        hot_map[ts_code] = info.get('hot', 0)
-    combined['ths_hot_rank'] = combined['ts_code'].map(rank_map).fillna(999).astype(int)
-    combined['ths_hot_value'] = combined['ts_code'].map(hot_map).fillna(0)
-    ths_hot_count = combined['is_ths_hot_stock'].sum()
+        rank_map[ts_code] = info.get("rank", 999)
+        hot_map[ts_code] = info.get("hot", 0)
+    combined["ths_hot_rank"] = combined["ts_code"].map(rank_map).fillna(999).astype(int)
+    combined["ths_hot_value"] = combined["ts_code"].map(hot_map).fillna(0)
+    ths_hot_count = combined["is_ths_hot_stock"].sum()
     if ths_hot_count > 0:
         log.info(f"✓ 同花顺热股榜: {ths_hot_count} 只股票上榜，将获得综合得分加成")
-    
+
     # 4. 计算综合得分
     # 对于v2.7.0的股票，使用v2.7.0概率
     # 对于v2.3.2的股票，需要合并v2.7.0的概率（如果有）
-    if 'v270_prob' not in combined.columns:
+    if "v270_prob" not in combined.columns:
         # 从v2.7.0结果中获取概率
-        v270_prob_map = df_270.set_index('ts_code')['probability'].to_dict()
-        combined['v270_prob'] = combined['ts_code'].map(v270_prob_map).fillna(0)
+        v270_prob_map = df_270.set_index("ts_code")["probability"].to_dict()
+        combined["v270_prob"] = combined["ts_code"].map(v270_prob_map).fillna(0)
     else:
         # 对于v2.3.2的股票，如果没有v270_prob，从df_270中获取
-        missing_v270 = combined[(combined['source'] == 'v2.3.2') & (combined['v270_prob'].isna())]
+        missing_v270 = combined[(combined["source"] == "v2.3.2") & (combined["v270_prob"].isna())]
         if len(missing_v270) > 0:
-            v270_prob_map = df_270.set_index('ts_code')['probability'].to_dict()
-            combined.loc[combined['source'] == 'v2.3.2', 'v270_prob'] = combined.loc[
-                combined['source'] == 'v2.3.2', 'ts_code'
-            ].map(v270_prob_map).fillna(0)
-    
+            v270_prob_map = df_270.set_index("ts_code")["probability"].to_dict()
+            combined.loc[combined["source"] == "v2.3.2", "v270_prob"] = (
+                combined.loc[combined["source"] == "v2.3.2", "ts_code"].map(v270_prob_map).fillna(0)
+            )
+
     # 归一化v2.3.2评分
-    combined['v232_score_norm'] = 0
-    if 'v232_score' in combined.columns:
-        v232_mask = combined['source'] == 'v2.3.2'
-        v232_scores = combined.loc[v232_mask, 'v232_score']
+    combined["v232_score_norm"] = 0
+    if "v232_score" in combined.columns:
+        v232_mask = combined["source"] == "v2.3.2"
+        v232_scores = combined.loc[v232_mask, "v232_score"]
         if len(v232_scores) > 0 and v232_scores.notna().any():
             v232_scores_valid = v232_scores.dropna()
             if len(v232_scores_valid) > 0:
                 v232_min = v232_scores_valid.min()
                 v232_max = v232_scores_valid.max()
                 if v232_max > v232_min:
-                    combined.loc[v232_mask, 'v232_score_norm'] = (
-                        (combined.loc[v232_mask, 'v232_score'] - v232_min) / 
-                        (v232_max - v232_min)
+                    combined.loc[v232_mask, "v232_score_norm"] = (
+                        (combined.loc[v232_mask, "v232_score"] - v232_min) / (v232_max - v232_min)
                     ).fillna(0)
                 else:
-                    combined.loc[v232_mask, 'v232_score_norm'] = 0.5
-    
+                    combined.loc[v232_mask, "v232_score_norm"] = 0.5
+
     # 计算综合得分（含同花顺热点概念/行业/热股 + 资金流向）
     def calculate_dual_score(row):
         # ---------- 通用加成（来源无关）----------
         def _common_bonus(r) -> float:
             bonus = 0.0
-            if r.get('is_hot_sector', False):     bonus += 0.05  # 同花顺热榜概念/行业
-            if r.get('is_sector_inflow', False):  bonus += 0.03  # 板块资金净流入
-            if r.get('is_net_inflow', False):     bonus += 0.02  # 个股主力净流入
-            if r.get('is_ths_hot_stock', False):
-                bonus += 0.02                                    # 同花顺热股榜上榜
-                if r.get('ths_hot_rank', 999) <= 20:
-                    bonus += 0.01                                # 热股榜前20名
+            if r.get("is_hot_sector", False):
+                bonus += 0.05  # 同花顺热榜概念/行业
+            if r.get("is_sector_inflow", False):
+                bonus += 0.03  # 板块资金净流入
+            if r.get("is_net_inflow", False):
+                bonus += 0.02  # 个股主力净流入
+            if r.get("is_ths_hot_stock", False):
+                bonus += 0.02  # 同花顺热股榜上榜
+                if r.get("ths_hot_rank", 999) <= 20:
+                    bonus += 0.01  # 热股榜前20名
             return bonus
 
-        if row['source'] == 'v2.7.0':
-            base_score = row.get('v270_prob', 0) + _common_bonus(row)
+        if row["source"] == "v2.7.0":
+            base_score = row.get("v270_prob", 0) + _common_bonus(row)
             return min(base_score, 1.0)
         else:
-            v270_prob = row.get('v270_prob', 0)
+            v270_prob = row.get("v270_prob", 0)
             # 获取v2.3.2评分（归一化后）
-            if 'v232_score_norm' in row and pd.notna(row.get('v232_score_norm', None)):
-                v232_score = row['v232_score_norm']
-            elif 'v232_prob' in row and pd.notna(row.get('v232_prob', None)):
-                v232_score = row['v232_prob']
-            elif 'v232_score' in row and pd.notna(row.get('v232_score', None)):
-                v232_score = row['v232_score']
+            if "v232_score_norm" in row and pd.notna(row.get("v232_score_norm", None)):
+                v232_score = row["v232_score_norm"]
+            elif "v232_prob" in row and pd.notna(row.get("v232_prob", None)):
+                v232_score = row["v232_prob"]
+            elif "v232_score" in row and pd.notna(row.get("v232_score", None)):
+                v232_score = row["v232_score"]
             else:
                 v232_score = 0
             # 基础得分：v2.7.0权重0.4，v2.3.2权重0.6
             base_score = v270_prob * 0.4 + v232_score * 0.6 + _common_bonus(row)
             # 风险折扣
-            risk_level = row.get('risk_level', 'low')
-            if risk_level == 'high':
+            risk_level = row.get("risk_level", "low")
+            if risk_level == "high":
                 base_score *= 0.7
-            elif risk_level == 'medium':
+            elif risk_level == "medium":
                 base_score *= 0.85
             # v232 全局折扣：龙头战法容易买在高位，主动降低其进入 Top10 的概率
             base_score *= v232_score_discount
             return min(base_score, 1.0)
-    
-    combined['dual_score'] = combined.apply(calculate_dual_score, axis=1)
-    
+
+    combined["dual_score"] = combined.apply(calculate_dual_score, axis=1)
+
     # 5. 风险分层筛选
     # 优先选择低风险股票，然后补充中高风险股票（控制数量）
-    low_risk = combined[combined['risk_level'] == 'low'].copy().sort_values('dual_score', ascending=False)
-    medium_risk = combined[combined['risk_level'] == 'medium'].copy().sort_values('dual_score', ascending=False)
-    high_risk = combined[combined['risk_level'] == 'high'].copy().sort_values('dual_score', ascending=False)
-    
+    low_risk = combined[combined["risk_level"] == "low"].copy().sort_values("dual_score", ascending=False)
+    medium_risk = combined[combined["risk_level"] == "medium"].copy().sort_values("dual_score", ascending=False)
+    high_risk = combined[combined["risk_level"] == "high"].copy().sort_values("dual_score", ascending=False)
+
     # 构建最终推荐列表 - 纯分数驱动：dual_score 已整合两个模型评分，直接按评分择优
     # v2.3.2 的 final_score 在 v232_score_norm 中占 60% 权重，高分 v2.3.2 股票会自然进入 Top10
     final_list = []
-    
+
     # 安全处理is_hot_sector列
     def get_hot_col(df):
-        if 'is_hot_sector' in df.columns:
-            return df['is_hot_sector'].fillna(False).astype(bool)
+        if "is_hot_sector" in df.columns:
+            return df["is_hot_sector"].fillna(False).astype(bool)
         return pd.Series([False] * len(df), index=df.index)
-    
+
     # 低风险股票按 dual_score（含热门板块微加成）排序
     hot_col_low = get_hot_col(low_risk)
     low_risk = low_risk.copy()
-    low_risk['sort_key'] = low_risk['dual_score'] + (hot_col_low.astype(int) * 0.001)
-    low_risk_selected = low_risk.sort_values('sort_key', ascending=False).head(output_top)
-    
+    low_risk["sort_key"] = low_risk["dual_score"] + (hot_col_low.astype(int) * 0.001)
+    low_risk_selected = low_risk.sort_values("sort_key", ascending=False).head(output_top)
+
     if len(low_risk_selected) > 0:
-        final_list.extend(low_risk_selected.to_dict('records'))
-    
-    v270_cnt = sum(1 for r in final_list if r.get('source') == 'v2.7.0')
-    v232_cnt = sum(1 for r in final_list if r.get('source') == 'v2.3.2')
+        final_list.extend(low_risk_selected.to_dict("records"))
+
+    v270_cnt = sum(1 for r in final_list if r.get("source") == "v2.7.0")
+    v232_cnt = sum(1 for r in final_list if r.get("source") == "v2.3.2")
     log.info(f"\n低风险选择: v2.7.0={v270_cnt}只, v2.3.2={v232_cnt}只（按 dual_score 排序，无强制配比）")
-    
+
     # 补充中风险股票（优先热门板块，控制数量）
     remaining_slots = max(0, output_top - len(final_list))
     if remaining_slots > 0 and len(medium_risk) > 0:
         # 安全处理is_hot_sector列
-        if 'is_hot_sector' in medium_risk.columns:
-            is_hot_col = medium_risk['is_hot_sector'].fillna(False).astype(bool)
+        if "is_hot_sector" in medium_risk.columns:
+            is_hot_col = medium_risk["is_hot_sector"].fillna(False).astype(bool)
         else:
             is_hot_col = pd.Series([False] * len(medium_risk), index=medium_risk.index)
-        
+
         medium_risk_hot = medium_risk[is_hot_col].head(min(max_medium_risk, remaining_slots))
         medium_risk_normal = medium_risk[~is_hot_col].head(
             min(max_medium_risk - len(medium_risk_hot), remaining_slots - len(medium_risk_hot))
         )
         if len(medium_risk_hot) > 0:
-            final_list.extend(medium_risk_hot.to_dict('records'))
+            final_list.extend(medium_risk_hot.to_dict("records"))
         if len(medium_risk_normal) > 0:
-            final_list.extend(medium_risk_normal.to_dict('records'))
-    
+            final_list.extend(medium_risk_normal.to_dict("records"))
+
     # 补充高风险股票（优先热门板块，严格控制数量）
     remaining_slots = max(0, output_top - len(final_list))
     if remaining_slots > 0 and len(high_risk) > 0:
         # 安全处理is_hot_sector列
-        if 'is_hot_sector' in high_risk.columns:
-            is_hot_col = high_risk['is_hot_sector'].fillna(False).astype(bool)
+        if "is_hot_sector" in high_risk.columns:
+            is_hot_col = high_risk["is_hot_sector"].fillna(False).astype(bool)
         else:
             is_hot_col = pd.Series([False] * len(high_risk), index=high_risk.index)
-        
+
         high_risk_hot = high_risk[is_hot_col].head(min(max_high_risk, remaining_slots))
         high_risk_normal = high_risk[~is_hot_col].head(
             min(max_high_risk - len(high_risk_hot), remaining_slots - len(high_risk_hot))
         )
         if len(high_risk_hot) > 0:
-            final_list.extend(high_risk_hot.to_dict('records'))
+            final_list.extend(high_risk_hot.to_dict("records"))
         if len(high_risk_normal) > 0:
-            final_list.extend(high_risk_normal.to_dict('records'))
-    
+            final_list.extend(high_risk_normal.to_dict("records"))
+
     # 创建结果DataFrame，按 sort_key 从高到低排列（行序即为真实排名）
     result_df = pd.DataFrame(final_list)
     if len(result_df) > 0:
-        sort_col = 'sort_key' if 'sort_key' in result_df.columns else 'dual_score'
+        sort_col = "sort_key" if "sort_key" in result_df.columns else "dual_score"
         result_df = result_df.sort_values(sort_col, ascending=False).head(output_top).reset_index(drop=True)
-    
+
     # 6. 输出结果
-    log.info("\n" + "="*80)
+    log.info("\n" + "=" * 80)
     log.info(f"🏆 互补策略推荐 Top{min(output_top, len(result_df))}")
-    log.info("="*80)
-    
+    log.info("=" * 80)
+
     if len(result_df) > 0:
-        log.info(f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'来源':<8} {'风险':<8} {'热门板块':<15} {'综合得分':<10} {'收盘价':<10}")
+        log.info(
+            f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'来源':<8} {'风险':<8} {'热门板块':<15} {'综合得分':<10} {'收盘价':<10}"
+        )
         log.info("-" * 100)
-        
+
         for i, (_, row) in enumerate(result_df.iterrows(), 1):
-            hot_sectors = row.get('hot_sectors', '')
-            if pd.isna(hot_sectors) or hot_sectors == '':
-                hot_sectors = '-'
+            hot_sectors = row.get("hot_sectors", "")
+            if pd.isna(hot_sectors) or hot_sectors == "":
+                hot_sectors = "-"
             else:
                 hot_sectors = hot_sectors[:13]  # 截断显示
-            
+
             log.info(
                 f"{i:<4} {row['ts_code']:<12} {row['name']:<10} "
                 f"{row['source']:<8} {row['risk_level']:<8} {hot_sectors:<15} "
                 f"{row['dual_score']:<10.4f} {row.get('close', 0):<10.2f}"
             )
-        
+
         # 统计信息
-        log.info("\n" + "="*80)
+        log.info("\n" + "=" * 80)
         log.info("📊 推荐统计")
-        log.info("="*80)
+        log.info("=" * 80)
         log.info(f"总推荐数: {len(result_df)}")
         log.info(f"  - v2.7.0来源: {(result_df['source'] == 'v2.7.0').sum()} 只")
         log.info(f"  - v2.3.2来源: {(result_df['source'] == 'v2.3.2').sum()} 只")
@@ -1141,26 +1117,28 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
         log.info(f"  - 中风险: {(result_df['risk_level'] == 'medium').sum()} 只")
         log.info(f"  - 高风险: {(result_df['risk_level'] == 'high').sum()} 只")
         log.info(f"  - 热门板块: {result_df.get('is_hot_sector', pd.Series([False] * len(result_df))).sum()} 只")
-        if 'is_net_inflow' in result_df.columns:
+        if "is_net_inflow" in result_df.columns:
             log.info(f"  - 主力净流入: {result_df['is_net_inflow'].fillna(False).sum()} 只")
-        if 'is_ths_hot_stock' in result_df.columns:
+        if "is_ths_hot_stock" in result_df.columns:
             log.info(f"  - 同花顺热股榜: {result_df['is_ths_hot_stock'].fillna(False).sum()} 只")
-        
+
         # 保存结果：前 N 行 = 按 dual_score 择优的 TopN（来源自然混合），后续补齐至 100 行供回测使用
-        output_dir = PROJECT_ROOT / 'data' / 'prediction' / 'results'
-        output_file = output_dir / f'v232_v270_complementary_{date}.csv'
-        if 'sort_key' not in result_df.columns:
+        output_dir = PROJECT_ROOT / "data" / "prediction" / "results"
+        output_file = output_dir / f"v232_v270_complementary_{date}.csv"
+        if "sort_key" not in result_df.columns:
             result_df = result_df.copy()
-            result_df['sort_key'] = result_df['dual_score']
-        if 'sort_key' not in combined.columns:
-            combined['sort_key'] = combined['dual_score']
-        pool_sorted = combined.sort_values('sort_key', ascending=False).reset_index(drop=True)
-        in_topn = set(result_df['ts_code'].tolist())
-        rest = pool_sorted[~pool_sorted['ts_code'].isin(in_topn)].head(100 - len(result_df))
+            result_df["sort_key"] = result_df["dual_score"]
+        if "sort_key" not in combined.columns:
+            combined["sort_key"] = combined["dual_score"]
+        pool_sorted = combined.sort_values("sort_key", ascending=False).reset_index(drop=True)
+        in_topn = set(result_df["ts_code"].tolist())
+        rest = pool_sorted[~pool_sorted["ts_code"].isin(in_topn)].head(100 - len(result_df))
         pool_100 = pd.concat([result_df, rest], ignore_index=True)
-        pool_100.to_csv(output_file, index=False, encoding='utf-8-sig')
-        log.success(f"\n✓ 结果已保存: {output_file}（前{len(result_df)}行=dual_score Top{output_top}，续接至100行供回测使用）")
-        
+        pool_100.to_csv(output_file, index=False, encoding="utf-8-sig")
+        log.success(
+            f"\n✓ 结果已保存: {output_file}（前{len(result_df)}行=dual_score Top{output_top}，续接至100行供回测使用）"
+        )
+
         return result_df
     else:
         log.warning("没有符合条件的推荐股票")
@@ -1168,89 +1146,110 @@ def strategy_complementary(date, base_top_n=100, v232_top_n=100, output_top=10,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='结合v2.3.2和v2.7.0模型预测结果')
-    parser.add_argument('--date', type=str, required=True, help='预测日期(YYYYMMDD)')
-    parser.add_argument('--strategy', type=str, default='complementary',
-                       choices=['intersection', 'weighted', 'rank', 'complementary', 'all'],
-                       help='策略类型: intersection(交集), weighted(加权), rank(排名), complementary(互补), all(全部)')
-    parser.add_argument('--top', type=int, default=10, help='输出TopN(默认10)')
-    parser.add_argument('--w232', type=float, default=0.5, help='v2.3.2权重(默认0.5)')
-    parser.add_argument('--w270', type=float, default=0.5, help='v2.7.0权重(默认0.5)')
-    parser.add_argument('--top-n', type=int, default=100, help='交集策略的TopN参数(默认100)')
-    parser.add_argument('--base-top-n', type=int, default=100, help='互补策略的v2.7.0基础池数量(默认100)')
-    parser.add_argument('--v232-top-n', type=int, default=100, help='互补策略的v2.3.2候选池数量(默认100)')
-    parser.add_argument('--max-high-risk', type=int, default=3, help='互补策略最多包含的高风险股票数(默认3)')
-    parser.add_argument('--max-medium-risk', type=int, default=5, help='互补策略最多包含的中风险股票数(默认5)')
-    parser.add_argument('--v232-score-discount', type=float, default=0.65,
-                       help='v232来源股票的全局评分折扣系数(默认0.65)，降低其进入Top10的概率，设为1.0可禁用')
-    parser.add_argument('--v232-max-consecutive-up', type=int, default=3,
-                       help='v232候选股连板次数上限(默认3)，超过则剔除，设为999可禁用')
-    parser.add_argument('--v232-max-rsi', type=float, default=80.0,
-                       help='v232候选股RSI6上限(默认80)，超过则剔除，设为100可禁用')
-    parser.add_argument('--fundamental', action='store_true', 
-                       help='启用基本面筛选（市值10-100亿，营收>1亿，净利润>200万，ROE>0，ROA>0）')
-    
+    parser = argparse.ArgumentParser(description="结合v2.3.2和v2.7.0模型预测结果")
+    parser.add_argument("--date", type=str, required=True, help="预测日期(YYYYMMDD)")
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="complementary",
+        choices=["intersection", "weighted", "rank", "complementary", "all"],
+        help="策略类型: intersection(交集), weighted(加权), rank(排名), complementary(互补), all(全部)",
+    )
+    parser.add_argument("--top", type=int, default=10, help="输出TopN(默认10)")
+    parser.add_argument("--w232", type=float, default=0.5, help="v2.3.2权重(默认0.5)")
+    parser.add_argument("--w270", type=float, default=0.5, help="v2.7.0权重(默认0.5)")
+    parser.add_argument("--top-n", type=int, default=100, help="交集策略的TopN参数(默认100)")
+    parser.add_argument("--base-top-n", type=int, default=100, help="互补策略的v2.7.0基础池数量(默认100)")
+    parser.add_argument("--v232-top-n", type=int, default=100, help="互补策略的v2.3.2候选池数量(默认100)")
+    parser.add_argument("--max-high-risk", type=int, default=3, help="互补策略最多包含的高风险股票数(默认3)")
+    parser.add_argument("--max-medium-risk", type=int, default=5, help="互补策略最多包含的中风险股票数(默认5)")
+    parser.add_argument(
+        "--v232-score-discount",
+        type=float,
+        default=0.65,
+        help="v232来源股票的全局评分折扣系数(默认0.65)，降低其进入Top10的概率，设为1.0可禁用",
+    )
+    parser.add_argument(
+        "--v232-max-consecutive-up",
+        type=int,
+        default=3,
+        help="v232候选股连板次数上限(默认3)，超过则剔除，设为999可禁用",
+    )
+    parser.add_argument(
+        "--v232-max-rsi", type=float, default=80.0, help="v232候选股RSI6上限(默认80)，超过则剔除，设为100可禁用"
+    )
+    parser.add_argument(
+        "--fundamental",
+        action="store_true",
+        help="启用基本面筛选（市值10-100亿，营收>1亿，净利润>200万，ROE>0，ROA>0）",
+    )
+
     args = parser.parse_args()
-    
-    log.info("="*80)
+
+    log.info("=" * 80)
     log.info("结合v2.3.2和v2.7.0模型预测结果")
-    log.info("="*80)
+    log.info("=" * 80)
     log.info(f"日期: {args.date}")
     log.info(f"策略: {args.strategy}")
     if args.fundamental:
         log.info("【启用基本面筛选】")
     log.info("")
-    
+
     results = {}
-    
-    if args.strategy == 'intersection' or args.strategy == 'all':
-        results['intersection'] = strategy_intersection(
-            args.date, top_n=args.top_n, output_top=args.top,
-            enable_fundamental_screening=args.fundamental
+
+    if args.strategy == "intersection" or args.strategy == "all":
+        results["intersection"] = strategy_intersection(
+            args.date, top_n=args.top_n, output_top=args.top, enable_fundamental_screening=args.fundamental
         )
         log.info("")
-    
-    if args.strategy == 'weighted' or args.strategy == 'all':
-        results['weighted'] = strategy_weighted(
-            args.date, w232=args.w232, w270=args.w270, output_top=args.top,
-            enable_fundamental_screening=args.fundamental
+
+    if args.strategy == "weighted" or args.strategy == "all":
+        results["weighted"] = strategy_weighted(
+            args.date,
+            w232=args.w232,
+            w270=args.w270,
+            output_top=args.top,
+            enable_fundamental_screening=args.fundamental,
         )
         log.info("")
-    
-    if args.strategy == 'rank' or args.strategy == 'all':
-        results['rank'] = strategy_rank_combined(
-            args.date, output_top=args.top,
-            enable_fundamental_screening=args.fundamental
+
+    if args.strategy == "rank" or args.strategy == "all":
+        results["rank"] = strategy_rank_combined(
+            args.date, output_top=args.top, enable_fundamental_screening=args.fundamental
         )
         log.info("")
-    
-    if args.strategy == 'complementary' or args.strategy == 'all':
-        results['complementary'] = strategy_complementary(
-            args.date, base_top_n=args.base_top_n, v232_top_n=args.v232_top_n,
-            output_top=args.top, enable_fundamental_screening=args.fundamental,
-            max_high_risk=args.max_high_risk, max_medium_risk=args.max_medium_risk,
+
+    if args.strategy == "complementary" or args.strategy == "all":
+        results["complementary"] = strategy_complementary(
+            args.date,
+            base_top_n=args.base_top_n,
+            v232_top_n=args.v232_top_n,
+            output_top=args.top,
+            enable_fundamental_screening=args.fundamental,
+            max_high_risk=args.max_high_risk,
+            max_medium_risk=args.max_medium_risk,
             v232_score_discount=args.v232_score_discount,
             v232_max_consecutive_up=args.v232_max_consecutive_up,
-            v232_max_rsi=args.v232_max_rsi
+            v232_max_rsi=args.v232_max_rsi,
         )
         log.info("")
-    
-    log.info("="*80)
+
+    log.info("=" * 80)
     log.success("✅ 模型结合完成！")
-    log.info("="*80)
-    
+    log.info("=" * 80)
+
     # 返回互补策略的结果作为主要推荐（如果存在），否则返回加权策略
-    if 'complementary' in results and results['complementary'] is not None:
-        return results['complementary']
-    elif 'weighted' in results and results['weighted'] is not None:
-        return results['weighted']
-    elif 'intersection' in results and results['intersection'] is not None:
-        return results['intersection']
-    elif 'rank' in results and results['rank'] is not None:
-        return results['rank']
-    
+    if "complementary" in results and results["complementary"] is not None:
+        return results["complementary"]
+    elif "weighted" in results and results["weighted"] is not None:
+        return results["weighted"]
+    elif "intersection" in results and results["intersection"] is not None:
+        return results["intersection"]
+    elif "rank" in results and results["rank"] is not None:
+        return results["rank"]
+
     return None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -46,7 +46,7 @@ df_cached = self.cache.get_data(stock_code, 'stk_factor', start_date, end_date)
 if not df_cached.empty:
     # 计算覆盖率
     coverage = len(df_cached) / 需要的总天数
-    
+
     if coverage > 0.8:
         # 覆盖率>80%，直接使用缓存
         return df_cached
@@ -131,4 +131,3 @@ tail -f logs/aiquant.log | grep "从缓存读取.*stk_factor"
 ```
 
 如果看到大量缓存读取日志，说明优化成功！
-

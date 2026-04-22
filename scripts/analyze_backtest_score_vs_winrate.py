@@ -110,7 +110,9 @@ def main():
     lines = []
     lines.append("# 策略回测：胜率与选股评分的关系分析\n")
     lines.append("**数据**：v232+v270 互补策略回测 2026-01-05 至 2026-01-29，已实现卖出笔。\n")
-    lines.append("**说明**：每笔卖出对应「选股日」互补结果 Top10 中的评分（sort_key / dual_score / v270_prob）及排名（rank_in_top10）。\n")
+    lines.append(
+        "**说明**：每笔卖出对应「选股日」互补结果 Top10 中的评分（sort_key / dual_score / v270_prob）及排名（rank_in_top10）。\n"
+    )
     lines.append("")
 
     # 1. 整体胜率
@@ -132,7 +134,12 @@ def main():
 
     # 2. 盈利笔 vs 亏损笔：评分均值/中位数
     lines.append("## 2. 盈利笔 vs 亏损笔：评分分布对比\n")
-    for col, name in [("sort_key", "sort_key"), ("dual_score", "dual_score"), ("v270_prob", "v270_prob"), ("rank_in_top10", "Top10排名")]:
+    for col, name in [
+        ("sort_key", "sort_key"),
+        ("dual_score", "dual_score"),
+        ("v270_prob", "v270_prob"),
+        ("rank_in_top10", "Top10排名"),
+    ]:
         if col not in tbl_valid.columns or tbl_valid[col].isna().all():
             continue
         win_vals = wins_valid[col].dropna()
@@ -151,19 +158,33 @@ def main():
         diff_mean = win_vals.mean() - loss_vals.mean()
         if col == "rank_in_top10":
             # 排名越小越好，盈利笔排名应更小
-            lines.append(f"**特点**：盈利笔平均排名 **{win_vals.mean():.1f}**，亏损笔 **{loss_vals.mean():.1f}**。排名越靠前（数字越小），胜率越高。" if diff_mean < 0 else f"**特点**：本区间内盈利笔与亏损笔的平均排名差异不大。")
+            lines.append(
+                f"**特点**：盈利笔平均排名 **{win_vals.mean():.1f}**，亏损笔 **{loss_vals.mean():.1f}**。排名越靠前（数字越小），胜率越高。"
+                if diff_mean < 0
+                else "**特点**：本区间内盈利笔与亏损笔的平均排名差异不大。"
+            )
         else:
-            lines.append(f"**特点**：盈利笔平均评分 **高于** 亏损笔 {diff_mean:.4f}；评分越高，胜率越高。" if diff_mean > 0 else f"**特点**：本区间内盈利笔与亏损笔的平均评分差异不大。")
+            lines.append(
+                f"**特点**：盈利笔平均评分 **高于** 亏损笔 {diff_mean:.4f}；评分越高，胜率越高。"
+                if diff_mean > 0
+                else "**特点**：本区间内盈利笔与亏损笔的平均评分差异不大。"
+            )
         lines.append("")
 
     # 3. 按 Top10 排名分档的胜率
     if "rank_in_top10" in tbl_valid.columns:
         lines.append("## 3. 按选股时 Top10 排名分档的胜率\n")
-        tbl_valid["rank_bin"] = pd.cut(tbl_valid["rank_in_top10"], bins=[0, 2, 4, 6, 8, 11], labels=["1-2", "3-4", "5-6", "7-8", "9-10"])
-        rank_agg = tbl_valid.groupby("rank_bin", observed=True).agg(
-            count=("win", "count"),
-            wins=("win", "sum"),
-        ).reset_index()
+        tbl_valid["rank_bin"] = pd.cut(
+            tbl_valid["rank_in_top10"], bins=[0, 2, 4, 6, 8, 11], labels=["1-2", "3-4", "5-6", "7-8", "9-10"]
+        )
+        rank_agg = (
+            tbl_valid.groupby("rank_bin", observed=True)
+            .agg(
+                count=("win", "count"),
+                wins=("win", "sum"),
+            )
+            .reset_index()
+        )
         rank_agg["win_rate"] = (rank_agg["wins"] / rank_agg["count"] * 100).round(1)
         lines.append("| 排名区间 | 笔数 | 盈利笔数 | 胜率(%) |")
         lines.append("|----------|------|----------|--------|")
@@ -173,7 +194,9 @@ def main():
         best_rank = rank_agg.loc[rank_agg["win_rate"].idxmax()]
         worst_rank = rank_agg.loc[rank_agg["win_rate"].idxmin()]
         # rank 1-2 = 选股时最前，9-10 = 选股时最后
-        lines.append(f"**结论**：排名 **{best_rank['rank_bin']}**（选股时相对靠后）胜率最高（{best_rank['win_rate']}%），排名 **{worst_rank['rank_bin']}**（选股时最前）胜率最低（{worst_rank['win_rate']}%）。本区间内「排序越靠前」未带来更高胜率。\n")
+        lines.append(
+            f"**结论**：排名 **{best_rank['rank_bin']}**（选股时相对靠后）胜率最高（{best_rank['win_rate']}%），排名 **{worst_rank['rank_bin']}**（选股时最前）胜率最低（{worst_rank['win_rate']}%）。本区间内「排序越靠前」未带来更高胜率。\n"
+        )
 
     # 4. 按 sort_key 分档的胜率（四分位）
     if "sort_key" in tbl_valid.columns:
@@ -181,16 +204,22 @@ def main():
         qs = tbl_valid["sort_key"].quantile([0.25, 0.5, 0.75]).values
         bins = [-np.inf, qs[0], qs[1], qs[2], np.inf]
         tbl_valid["score_quartile"] = pd.cut(tbl_valid["sort_key"], bins=bins, labels=["Q1(低)", "Q2", "Q3", "Q4(高)"])
-        q_agg = tbl_valid.groupby("score_quartile", observed=True).agg(
-            count=("win", "count"),
-            wins=("win", "sum"),
-        ).reset_index()
+        q_agg = (
+            tbl_valid.groupby("score_quartile", observed=True)
+            .agg(
+                count=("win", "count"),
+                wins=("win", "sum"),
+            )
+            .reset_index()
+        )
         q_agg["win_rate"] = (q_agg["wins"] / q_agg["count"] * 100).round(1)
         q_agg["avg_sort_key"] = tbl_valid.groupby("score_quartile", observed=True)["sort_key"].mean().values
         lines.append("| sort_key 分位 | 笔数 | 盈利笔数 | 胜率(%) | 平均 sort_key |")
         lines.append("|---------------|------|----------|--------|----------------|")
         for _, r in q_agg.iterrows():
-            lines.append(f"| {r['score_quartile']} | {int(r['count'])} | {int(r['wins'])} | {r['win_rate']} | {r['avg_sort_key']:.4f} |")
+            lines.append(
+                f"| {r['score_quartile']} | {int(r['count'])} | {int(r['wins'])} | {r['win_rate']} | {r['avg_sort_key']:.4f} |"
+            )
         lines.append("")
         if q_agg["win_rate"].iloc[-1] > q_agg["win_rate"].iloc[0]:
             lines.append("**结论**：sort_key 越高（Q4），胜率越高，说明 **评分对胜率有正相关**。\n")
@@ -210,10 +239,14 @@ def main():
             if len(edges) < 2:
                 edges = np.linspace(sk_min, sk_max, 6)
             tbl_valid["sk_band"] = pd.cut(tbl_valid["sort_key"], bins=edges, include_lowest=True)
-            band_agg = tbl_valid.groupby("sk_band", observed=True).agg(
-                count=("win", "count"),
-                wins=("win", "sum"),
-            ).reset_index()
+            band_agg = (
+                tbl_valid.groupby("sk_band", observed=True)
+                .agg(
+                    count=("win", "count"),
+                    wins=("win", "sum"),
+                )
+                .reset_index()
+            )
             band_agg["win_rate"] = (band_agg["wins"] / band_agg["count"] * 100).round(1)
             lines.append("**按 sort_key 细分的胜率**\n")
             lines.append("| sort_key 区间 | 笔数 | 盈利笔数 | 胜率(%) |")
@@ -248,15 +281,23 @@ def main():
                 above_all = tbl_valid[tbl_valid["sort_key"] >= best_threshold]
                 wr_b = below_all["win"].sum() / len(below_all) * 100
                 wr_a = above_all["win"].sum() / len(above_all) * 100
-                lines.append(f"**结论（样本内）**：阈值 **sort_key = {best_threshold:.3f}** 时「低于/不低于」区分度最大：")
+                lines.append(
+                    f"**结论（样本内）**：阈值 **sort_key = {best_threshold:.3f}** 时「低于/不低于」区分度最大："
+                )
                 lines.append(f"- **低于 {best_threshold:.3f}**：{len(below_all)} 笔，胜率 **{wr_b:.1f}%**；")
                 lines.append(f"- **不低于 {best_threshold:.3f}**：{len(above_all)} 笔，胜率 **{wr_a:.1f}%**。")
                 if wr_b < wr_a:
-                    lines.append(f"- **低于该阈值胜率会降低**：选股时可考虑过滤 sort_key < {best_threshold:.3f} 的标的（样本量较小，建议多区间验证）。\n")
+                    lines.append(
+                        f"- **低于该阈值胜率会降低**：选股时可考虑过滤 sort_key < {best_threshold:.3f} 的标的（样本量较小，建议多区间验证）。\n"
+                    )
                 else:
-                    lines.append(f"- **高于该阈值胜率反而降低**：本区间内 sort_key 过高（≥{best_threshold:.3f}）时胜率更低，与「高分=高胜率」直觉相反；可谨慎对待过高评分标的。\n")
+                    lines.append(
+                        f"- **高于该阈值胜率反而降低**：本区间内 sort_key 过高（≥{best_threshold:.3f}）时胜率更低，与「高分=高胜率」直觉相反；可谨慎对待过高评分标的。\n"
+                    )
             else:
-                lines.append("**结论**：各阈值下「低于/不低于」胜率差异不大，未发现明显最佳阈值；样本量有限，可延长回测后再做阈值分析。\n")
+                lines.append(
+                    "**结论**：各阈值下「低于/不低于」胜率差异不大，未发现明显最佳阈值；样本量有限，可延长回测后再做阈值分析。\n"
+                )
             # 补充：是否存在「低于某值胜率明显降低」的阈值（用户常关心的下限）
             low_edges = np.around(np.linspace(sk_min, np.percentile(sk, 60), 5), decimals=3)
             found_low_threshold = None
@@ -272,9 +313,13 @@ def main():
                     break
             if found_low_threshold is not None:
                 t, wb, wa, nb, na = found_low_threshold
-                lines.append(f"**下限阈值**：**低于 sort_key = {t:.3f}** 时胜率明显较低（{nb} 笔，{wb:.1f}%），不低于时胜率 {wa:.1f}%（{na} 笔）；选股可考虑设定 sort_key ≥ {t:.3f} 的过滤。\n")
+                lines.append(
+                    f"**下限阈值**：**低于 sort_key = {t:.3f}** 时胜率明显较低（{nb} 笔，{wb:.1f}%），不低于时胜率 {wa:.1f}%（{na} 笔）；选股可考虑设定 sort_key ≥ {t:.3f} 的过滤。\n"
+                )
             else:
-                lines.append("**下限阈值**：本区间内未出现「低于某 sort_key 后胜率明显降低」的清晰下限阈值；细档中最低档胜率未显著差于整体。\n")
+                lines.append(
+                    "**下限阈值**：本区间内未出现「低于某 sort_key 后胜率明显降低」的清晰下限阈值；细档中最低档胜率未显著差于整体。\n"
+                )
 
     # 4.6 v270_prob 阈值与胜率（买入时是否过滤 v270_prob >= 0.6）
     if "v270_prob" in tbl_valid.columns:
@@ -312,11 +357,11 @@ def main():
             lines.append(f"- **v270_prob ≥ 0.6**：{n_a} 笔，胜率 **{wr_a:.1f}%**；")
             lines.append(f"- **v270_prob < 0.6**：{n_b} 笔，胜率 **{wr_b:.1f}%**。")
             if n_a >= 5 and wr_a > wr_b:
-                lines.append(f"- **选择买入 v270_prob ≥ 0.6 在本区间内对胜率有正向帮助**（≥0.6 胜率高于 <0.6）。\n")
+                lines.append("- **选择买入 v270_prob ≥ 0.6 在本区间内对胜率有正向帮助**（≥0.6 胜率高于 <0.6）。\n")
             elif n_a >= 5 and wr_a <= wr_b:
-                lines.append(f"- **本区间内 ≥0.6 未带来更高胜率**；样本量有限，可延长回测再验证。\n")
+                lines.append("- **本区间内 ≥0.6 未带来更高胜率**；样本量有限，可延长回测再验证。\n")
             else:
-                lines.append(f"- 样本量较小，结论需更多数据验证。\n")
+                lines.append("- 样本量较小，结论需更多数据验证。\n")
 
     # 5. 热点板块 vs 非热点
     if "is_hot_sector" in tbl_valid.columns:
@@ -324,12 +369,12 @@ def main():
         n_hot = hot_valid.sum()
         if n_hot > 0:
             lines.append("## 5. 热点板块 vs 非热点\n")
-            hot_win = (tbl_valid.loc[hot_valid, "win"].sum())
-            nonhot_win = (tbl_valid.loc[~hot_valid, "win"].sum())
+            hot_win = tbl_valid.loc[hot_valid, "win"].sum()
+            nonhot_win = tbl_valid.loc[~hot_valid, "win"].sum()
             hot_n = hot_valid.sum()
             nonhot_n = (~hot_valid).sum()
-            lines.append(f"| 类型 | 笔数 | 盈利笔数 | 胜率(%) |")
-            lines.append(f"|------|------|----------|--------|")
+            lines.append("| 类型 | 笔数 | 盈利笔数 | 胜率(%) |")
+            lines.append("|------|------|----------|--------|")
             lines.append(f"| 选股日在热点板块 | {int(hot_n)} | {int(hot_win)} | {hot_win/hot_n*100:.1f}% |")
             lines.append(f"| 非热点 | {int(nonhot_n)} | {int(nonhot_win)} | {nonhot_win/nonhot_n*100:.1f}% |")
             lines.append("")

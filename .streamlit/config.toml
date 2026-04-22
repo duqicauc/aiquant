@@ -33,4 +33,3 @@ toolbarMode = "minimal"
 # 运行器配置
 magicEnabled = true
 fastReruns = true
-

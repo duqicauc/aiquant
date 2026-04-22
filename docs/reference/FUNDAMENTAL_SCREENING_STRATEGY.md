@@ -59,7 +59,7 @@ df_results = df_results.sort_values('probability', ascending=False)
 if enable_fundamental_screening:
     top50 = df_results.head(50)
     top50_screened = fundamental_screener.filter_stocks(top50, predict_date)
-    
+
     # 如果Top50中有股票被筛掉，从后续股票中补充
     if len(top50_screened) < 50:
         remaining = df_results[~df_results['ts_code'].isin(top50_screened['ts_code'])]
@@ -86,7 +86,7 @@ df_results = df_results.sort_values('probability', ascending=False)
 if enable_fundamental_screening:
     top100 = df_results.head(100)
     top100_screened = fundamental_screener.filter_stocks(top100, predict_date)
-    
+
     # 从筛选后的Top100中选择Top50
     top50 = top100_screened.head(50)
 ```
@@ -139,13 +139,13 @@ df_results = predict_stocks(stock_list)
 
 ```python
 def predict_top50(
-    predict_date: str, 
+    predict_date: str,
     enable_fundamental_screening: bool = False,
     screening_mode: str = 'post_top50'  # 'pre_all' 或 'post_top50' 或 'post_top100'
 ):
     """
     预测Top50股票
-    
+
     Args:
         screening_mode: 筛选模式
             - 'pre_all': 预测前对全部股票筛选（慢，不推荐）
@@ -155,7 +155,7 @@ def predict_top50(
     # 1. 对所有股票进行预测
     df_results = predict_all_stocks(...)
     df_results = df_results.sort_values('probability', ascending=False)
-    
+
     # 2. 根据模式进行筛选
     if enable_fundamental_screening:
         if screening_mode == 'post_top50':

@@ -87,7 +87,9 @@ def _result_to_attribution_row(
     }
 
 
-def run_attribution_matrix(common: Dict[str, Any], generate_reports: bool, out: Path) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
+def run_attribution_matrix(
+    common: Dict[str, Any], generate_reports: bool, out: Path
+) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
     """
     五层实验矩阵（显式 enable_*，不依赖 apply_frictions 推断）：
     baseline → cost_only → cost_slippage → execution_constraints → full_stack

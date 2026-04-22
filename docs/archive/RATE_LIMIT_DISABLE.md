@@ -43,7 +43,7 @@ def is_rate_limit_error(exception: Exception) -> bool:
 **代码位置**: `src/utils/rate_limiter.py:247-310`
 
 ```python
-def retry_on_error(max_retries: int = 3, base_delay: float = 1.0, 
+def retry_on_error(max_retries: int = 3, base_delay: float = 1.0,
                    retry_on_rate_limit: bool = True):
     """重试装饰器（支持限流错误无限重试）"""
     # 如果是限流错误且允许无限重试
@@ -166,7 +166,7 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0,
 @safe_api_call('daily', max_retries=5, base_delay=2.0, disable_rate_limit=False)
 
 # 禁用限流，遇到限流错误时不重试
-@safe_api_call('daily', max_retries=5, base_delay=2.0, 
+@safe_api_call('daily', max_retries=5, base_delay=2.0,
                disable_rate_limit=True, retry_on_rate_limit=False)
 ```
 
@@ -202,6 +202,5 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0,
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-28
-

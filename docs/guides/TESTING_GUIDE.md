@@ -172,12 +172,12 @@ from src.module import SomeClass
 
 class TestSomeClass:
     """SomeClass测试类"""
-    
+
     def test_init(self):
         """测试初始化"""
         obj = SomeClass()
         assert obj is not None
-    
+
     def test_method(self):
         """测试方法"""
         obj = SomeClass()
@@ -227,4 +227,3 @@ def test_with_mock(mock_data_manager):
 - [测试README](tests/README.md) - 详细的测试文档
 - [pytest文档](https://docs.pytest.org/) - pytest官方文档
 - [pytest-cov文档](https://pytest-cov.readthedocs.io/) - 覆盖率工具文档
-

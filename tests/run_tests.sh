@@ -96,7 +96,7 @@ echo "=========================================="
 
 if [ $TEST_EXIT_CODE -eq 0 ]; then
     echo -e "${GREEN}✓ 所有测试通过！${NC}"
-    
+
     if [ "$COVERAGE" = true ]; then
         echo ""
         echo -e "${YELLOW}覆盖率报告已生成: htmlcov/index.html${NC}"
@@ -109,4 +109,3 @@ fi
 echo "=========================================="
 
 exit $TEST_EXIT_CODE
-

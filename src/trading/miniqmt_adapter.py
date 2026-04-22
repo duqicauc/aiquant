@@ -32,15 +32,14 @@ class MiniQmtAdapter(BrokerAdapter):
         self._xt = None
         try:
             import xtquant  # noqa: F401
+
             self._xt = xtquant
         except ImportError:
             self._xt = None
 
     def _require_xt(self):
         if self._xt is None:
-            raise RuntimeError(
-                "未安装 xtquant：请在 QMT 环境执行 pip install xtquant，并启动客户端后再调用。"
-            )
+            raise RuntimeError("未安装 xtquant：请在 QMT 环境执行 pip install xtquant，并启动客户端后再调用。")
 
     def submit_order(self, intent: OrderIntent) -> ExecutionReport:
         self._require_xt()

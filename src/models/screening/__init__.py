@@ -7,5 +7,4 @@
 
 from .positive_sample_screener import PositiveSampleScreener
 
-__all__ = ['PositiveSampleScreener']
-
+__all__ = ["PositiveSampleScreener"]

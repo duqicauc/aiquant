@@ -311,7 +311,7 @@ if not confirmed:
 
 ### Q3: 如何添加新的提醒点？
 
-**A**: 
+**A**:
 1. 在 `HumanInterventionChecker` 中添加新的检查方法
 2. 在相应的脚本中调用检查方法
 3. 使用 `print_intervention_reminder()` 显示提醒
@@ -327,4 +327,3 @@ if not confirmed:
 - ✅ 做出正确决策
 
 **记住**: 看到提醒时，请及时检查和处理！
-

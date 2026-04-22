@@ -24,6 +24,7 @@ class OrderStatus(str, Enum):
 @dataclass
 class OrderIntent:
     """策略层意图（未经过风控过滤）。"""
+
     client_order_id: str
     ts_code: str
     side: OrderSide
@@ -36,6 +37,7 @@ class OrderIntent:
 @dataclass
 class ExecutionReport:
     """成交回报（可多条 partial 合并为一条逻辑单）。"""
+
     client_order_id: str
     ts_code: str
     side: OrderSide

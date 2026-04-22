@@ -67,4 +67,3 @@ echo "监控命令:"
 echo "  实时日志: tail -f logs/aiquant.log"
 echo "  再次检查: bash scripts/monitor_training.sh"
 echo "=================================="
-

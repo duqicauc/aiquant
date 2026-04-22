@@ -81,7 +81,7 @@ df = df.tail(34)
 ```python
 for sample_id in sample_ids:
     sample_data = df[df['unique_sample_id'] == sample_id].sort_values('days_to_t1')
-    
+
     # 对34天的数据进行统计特征提取
     feature_dict = {
         # 1. 价格特征（基于close）
@@ -90,7 +90,7 @@ for sample_id in sample_ids:
         'close_max': sample_data['close'].max(),        # 最高收盘价
         'close_min': sample_data['close'].min(),        # 最低收盘价
         'close_trend': (最后一天 - 第一天) / 第一天 * 100,  # 价格趋势
-        
+
         # 2. 涨跌幅特征（基于pct_chg）
         'pct_chg_mean': sample_data['pct_chg'].mean(),  # 平均涨跌幅
         'pct_chg_std': sample_data['pct_chg'].std(),   # 涨跌幅波动
@@ -99,28 +99,28 @@ for sample_id in sample_ids:
         'negative_days': (pct_chg < 0).sum(),           # 下跌天数
         'max_gain': sample_data['pct_chg'].max(),       # 最大单日涨幅
         'max_loss': sample_data['pct_chg'].min(),       # 最大单日跌幅
-        
+
         # 3. 量比特征（基于volume_ratio）
         'volume_ratio_mean': sample_data['volume_ratio'].mean(),  # 平均量比
         'volume_ratio_max': sample_data['volume_ratio'].max(),    # 最大量比
         'volume_ratio_gt_2': (volume_ratio > 2).sum(),            # 量比>2的天数
         'volume_ratio_gt_4': (volume_ratio > 4).sum(),            # 量比>4的天数
-        
+
         # 4. MACD特征（基于macd）
         'macd_mean': sample_data['macd'].mean(),                    # 平均MACD值
         'macd_positive_days': (macd > 0).sum(),                     # MACD>0的天数
         'macd_max': sample_data['macd'].max(),                      # 最大MACD值
-        
+
         # 5. MA特征（基于ma5, ma10）
         'ma5_mean': sample_data['ma5'].mean(),                      # 平均MA5
         'price_above_ma5': (close > ma5).sum(),                     # 价格>MA5的天数
         'ma10_mean': sample_data['ma10'].mean(),                    # 平均MA10
         'price_above_ma10': (close > ma10).sum(),                   # 价格>MA10的天数
-        
+
         # 6. 市值特征（基于total_mv, circ_mv）
         'total_mv_mean': sample_data['total_mv'].mean(),           # 平均总市值
         'circ_mv_mean': sample_data['circ_mv'].mean(),             # 平均流通市值
-        
+
         # 7. 动量特征（分段收益率）
         'return_1w': (最后一天 - 7天前) / 7天前 * 100,              # 1周收益率
         'return_2w': (最后一天 - 14天前) / 14天前 * 100,             # 2周收益率
@@ -287,4 +287,3 @@ if 'macd20' in sample_data.columns:
 ---
 
 **最后更新**：2025-12-25
-

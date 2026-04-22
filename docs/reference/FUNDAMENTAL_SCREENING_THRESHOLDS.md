@@ -95,24 +95,24 @@ config = {
 def get_dynamic_thresholds(market_cap):
     """
     根据市值动态计算阈值
-    
+
     Args:
         market_cap: 市值（万元）
-    
+
     Returns:
         阈值字典
     """
     # 市值范围检查
     if market_cap < 100000 or market_cap > 1000000:
         return None
-    
+
     # 动态阈值
     # 营业收入：要求市销率<10（即营业收入>市值*10%）
     revenue_min = market_cap * 10000 * 0.1  # 市值（万元）*10000转为元，再*10%
-    
+
     # 净利润：要求ROE>5%（即净利润>市值*5%）
     net_profit_min = market_cap * 10000 * 0.05  # 市值（万元）*10000转为元，再*5%
-    
+
     return {
         'revenue_min': revenue_min,
         'net_profit_min': net_profit_min,

@@ -42,7 +42,7 @@ X_scaled = scaler.fit_transform(X)  # 对全部数据归一化
 ### 虚假的高性能
 
 ```
-回测结果: 
+回测结果:
   准确率: 95%  ← 看起来很好！
   收益率: 200% ← 太完美了！
 
@@ -72,7 +72,7 @@ test = df[df['date'] >= '2024-01-01']
 # 确保训练集完全在测试集之前！
 ```
 
-**原则**: 
+**原则**:
 - 训练集 = 过去数据
 - 测试集 = 未来数据
 - 训练集的最后一天 < 测试集的第一天
@@ -153,7 +153,7 @@ assert train['date'].max() < test['date'].min(), "时间重叠，存在未来函
 ```python
 如果：
   回测性能 >> 实盘性能
-  
+
 很可能：
   存在未来函数！
 ```
@@ -260,48 +260,48 @@ from datetime import timedelta
 def walk_forward_validation(df, window_size=12, step_size=3):
     """
     滚动窗口验证
-    
+
     Args:
         df: 数据（必须包含date列）
         window_size: 训练窗口大小（月）
         step_size: 测试窗口大小（月）
     """
     results = []
-    
+
     df = df.sort_values('date')
     start_date = df['date'].min()
     end_date = df['date'].max()
-    
+
     current_date = start_date + timedelta(days=window_size*30)
-    
+
     while current_date + timedelta(days=step_size*30) <= end_date:
         # 训练集：当前日期前window_size个月
         train_start = current_date - timedelta(days=window_size*30)
         train_end = current_date
-        
+
         # 测试集：当前日期后step_size个月
         test_start = current_date + timedelta(days=1)
         test_end = current_date + timedelta(days=step_size*30)
-        
+
         train_data = df[(df['date'] >= train_start) & (df['date'] <= train_end)]
         test_data = df[(df['date'] >= test_start) & (df['date'] <= test_end)]
-        
+
         # 训练模型
         model = train_model(train_data)
-        
+
         # 测试
         metrics = evaluate_model(model, test_data)
-        
+
         results.append({
             'train_period': f"{train_start.date()} ~ {train_end.date()}",
             'test_period': f"{test_start.date()} ~ {test_end.date()}",
             'accuracy': metrics['accuracy'],
             'f1_score': metrics['f1_score']
         })
-        
+
         # 前进一个step
         current_date += timedelta(days=step_size*30)
-    
+
     return pd.DataFrame(results)
 
 # 使用
@@ -322,10 +322,10 @@ print(f"准确率标准差: {results['accuracy'].std():.2%}")
 ```
 在T时刻进行决策时：
   只能使用T时刻及之前的数据！
-  
+
 训练模型时：
   训练集必须完全在测试集之前！
-  
+
 验证模型时：
   使用walk-forward，模拟真实外推！
 ```
@@ -379,7 +379,7 @@ print(f"准确率标准差: {results['accuracy'].std():.2%}")
 
 1. **《Advances in Financial Machine Learning》** by Marcos López de Prado
    - Chapter 7: Cross-Validation in Finance
-   
+
 2. **《Quantitative Trading》** by Ernest Chan
    - Chapter 4: Backtesting
 
@@ -407,9 +407,8 @@ python scripts/train_xgboost_timeseries.py
 
 ---
 
-**文档版本**: v1.0  
-**创建时间**: 2024-12-23  
+**文档版本**: v1.0
+**创建时间**: 2024-12-23
 **最后更新**: 2024-12-23
 
 **记住：避免未来函数是量化交易成功的基础！**
-

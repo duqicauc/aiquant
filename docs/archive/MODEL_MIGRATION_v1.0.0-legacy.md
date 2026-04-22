@@ -1,6 +1,6 @@
 # 模型迁移文档：xgboost_timeseries_v2_20251225_205905.json → v1.0.0-legacy
 
-**迁移日期**: 2025-12-29  
+**迁移日期**: 2025-12-29
 **迁移脚本**: `scripts/migrate_xgboost_timeseries_to_new_framework.py`
 
 ---
@@ -159,7 +159,6 @@ data/models/breakout_launch_scorer/versions/v1.0.0-legacy/
 
 ---
 
-**迁移完成时间**: 2025-12-29 23:53:10  
-**迁移脚本**: `scripts/migrate_xgboost_timeseries_to_new_framework.py`  
+**迁移完成时间**: 2025-12-29 23:53:10
+**迁移脚本**: `scripts/migrate_xgboost_timeseries_to_new_framework.py`
 **验证状态**: ✅ 通过
-

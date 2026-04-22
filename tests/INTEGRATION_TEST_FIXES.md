@@ -5,7 +5,7 @@
 ### 1. `test_model_training.py::test_prepare_samples_flow`
 **问题**: `screen_all_stocks`没有被调用
 **原因**: `prepare_samples`方法会检查缓存文件，如果存在就直接返回，不会调用筛选方法
-**修复**: 
+**修复**:
 - 使用`force_refresh=True`强制刷新
 - Mock文件系统，确保不会从缓存读取
 - 使用`patch`来mock `os.path.exists`和文件操作
@@ -13,18 +13,18 @@
 ### 2. `test_prediction_pipeline.py::test_get_market_stocks`
 **问题**: 返回的DataFrame是空的
 **原因**: `_get_market_stocks`需要`list_date`列来筛选上市超过半年的股票
-**修复**: 
+**修复**:
 - 在mock数据中添加`list_date`列
 - 确保日期足够早（超过180天）
 
 ### 3. `test_prediction_pipeline.py::test_extract_stock_features`
-**问题**: 
+**问题**:
 - 缺少`prediction_date`参数
 - `extract_features`没有被调用
-**原因**: 
+**原因**:
 - `_extract_stock_features`需要3个参数：`ts_code`, `name`, `prediction_date`
 - 需要mock交易日历和数据获取方法
-**修复**: 
+**修复**:
 - 添加`prediction_date`参数
 - Mock交易日历（至少20天）
 - Mock `get_complete_data`方法返回足够的数据（至少34天）
@@ -33,18 +33,18 @@
 ### 4. `test_prediction_pipeline.py::test_complete_prediction_pipeline`
 **问题**: 返回的DataFrame是空的
 **原因**: 同问题2，需要`list_date`列
-**修复**: 
+**修复**:
 - 添加`list_date`列到mock数据
 - 处理股票列表为空的情况（这也是正常的测试结果）
 
 ### 5. `test_screening_pipeline.py` - 多个测试失败
-**问题**: 
+**问题**:
 - `filter_stocks`返回list，但测试期望DataFrame
 - 缺少`list_date`列
-**原因**: 
+**原因**:
 - `FinancialFilter.filter_stocks`接受DataFrame，返回DataFrame，不是list
 - `PositiveSampleScreener`需要`list_date`列
-**修复**: 
+**修复**:
 - 修改所有调用`filter_stocks`的地方，传入DataFrame而不是list
 - 在mock数据中添加`list_date`列
 - 修改断言，期望DataFrame而不是list
@@ -119,4 +119,3 @@ pytest tests/integration/test_screening_pipeline.py -v
 2. 添加端到端测试
 3. 提高测试覆盖率
 4. 添加性能测试
-

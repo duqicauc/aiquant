@@ -196,4 +196,3 @@ ps aux | grep train | grep -v grep
 ```bash
 tail -f logs/aiquant.log | grep "处理样本"
 ```
-

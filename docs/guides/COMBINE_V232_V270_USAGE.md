@@ -271,7 +271,7 @@ python scripts/predict_v270_ensemble_top50.py --date 20260116
    # 1. 运行预测
    python scripts/predict_v232_top10.py --date $(date +%Y%m%d)
    python scripts/predict_v270_ensemble_top50.py --date $(date +%Y%m%d)
-   
+
    # 2. 结合结果
    python scripts/combine_v232_v270.py --date $(date +%Y%m%d) --strategy complementary
    ```

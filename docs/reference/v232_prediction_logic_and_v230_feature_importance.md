@@ -59,28 +59,28 @@ def process_single_stock(dm, ts_code, name, predict_date, feature_names, booster
     """处理单只股票"""
     # 1. 获取历史数据（200天）
     df = dm.get_daily_data(ts_code, start_date, end_date)
-    
+
     # 2. 提取特征
     df = extract_features(df)
     last_row = df.iloc[-1]
-    
+
     # 3. 构建特征向量
     feature_vector = [last_row.get(fn, 0) for fn in feature_names]
-    
+
     # 4. XGBoost预测
     dmatrix = xgb.DMatrix([feature_vector], feature_names=feature_names)
     raw_prob = float(booster.predict(dmatrix)[0])
-    
+
     # 5. 概率校准
     cal_prob = float(calibrator.predict([raw_prob])[0])
-    
+
     # 6. 获取关键指标
     expected_return_score = last_row.get('expected_return_score', 0.5)
     pct_chg = float(last_row.get('pct_chg', 0))
     rsi_6 = float(last_row.get('rsi_6', 50))
     amount = float(last_row.get('amount', 0))
     consecutive_limit_up = float(last_row.get('consecutive_limit_up', 0))
-    
+
     # 7. v2.3.2评分
     final_score, penalty, penalty_reasons = calculate_v232_score(
         cal_prob, expected_return_norm, pct_chg, rsi_6, amount, consecutive_limit_up
@@ -93,7 +93,7 @@ def process_single_stock(dm, ts_code, name, predict_date, feature_names, booster
 def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount, consecutive_limit_up):
     """
     v2.3.2评分公式
-    
+
     改进：
     1. 调整权重：0.6*校准概率 + 0.4*预期收益
     2. 追高惩罚：当日涨幅>15%，分数乘以0.5
@@ -103,10 +103,10 @@ def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount
     """
     # 基础评分：0.6*校准概率 + 0.4*预期收益
     base_score = 0.6 * cal_prob + 0.4 * expected_return_score
-    
+
     penalty = 1.0
     penalty_reasons = []
-    
+
     # 1. 追高惩罚：当日涨幅>15%
     if pct_chg > 15:
         penalty *= 0.5
@@ -115,12 +115,12 @@ def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount
     elif pct_chg > 10:
         penalty *= 0.8
         penalty_reasons.append(f"轻度追高(涨幅{pct_chg:.1f}%)")
-    
+
     # 2. 涨停低概率惩罚：涨停但校准概率<0.8
     if pct_chg >= 9.8 and cal_prob < 0.8:
         penalty *= 0.7
         penalty_reasons.append(f"涨停低概率({cal_prob:.2f})")
-    
+
     # 3. RSI过热惩罚
     if rsi_6 > 95:
         penalty *= 0.8
@@ -128,7 +128,7 @@ def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount
     elif rsi_6 > 90:
         penalty *= 0.9
         penalty_reasons.append(f"RSI偏高({rsi_6:.1f})")
-    
+
     # 4. 连续涨停惩罚
     if consecutive_limit_up >= 3:
         penalty *= 0.6
@@ -136,9 +136,9 @@ def calculate_v232_score(cal_prob, expected_return_score, pct_chg, rsi_6, amount
     elif consecutive_limit_up >= 2:
         penalty *= 0.8
         penalty_reasons.append(f"连续涨停({consecutive_limit_up}天)")
-    
+
     final_score = base_score * penalty
-    
+
     return final_score, penalty, penalty_reasons
 ```
 
@@ -153,10 +153,10 @@ final_score = (0.6 × 校准概率 + 0.4 × 预期收益) × 惩罚系数
     before_filter = len(df_results)
     df_results = df_results[df_results['amount'] >= min_amount]
     log.info(f"流动性过滤: {before_filter} -> {len(df_results)} (过滤掉成交额<{min_amount/1000:.0f}百万的股票)")
-    
+
     # 按final_score排序
     df_results = df_results.sort_values('final_score', ascending=False).reset_index(drop=True)
-    
+
     # Top10
     df_top10 = df_results.head(10)
 ```
@@ -291,23 +291,23 @@ final_score = (0.6 × 校准概率 + 0.4 × 预期收益) × 惩罚系数
 ```413:479:scripts/predict_v232_top10.py
     parser.add_argument('--min-amount', type=float, default=30000, help='最小成交额（千元），默认3000万')
     args = parser.parse_args()
-    
+
     predict_date = args.date
     min_amount = args.min_amount
-    
+
     log.info("="*80)
     log.info(f"v2.3.2模型预测 - 追高控制优化版 - {predict_date}")
     log.info("="*80)
     log.info(f"最小成交额要求: {min_amount/1000:.0f}百万元")
-    
+
     # 初始化
     dm = DataManager()
-    
+
     # 加载模型
     log.info("\n📦 加载v2.3.0模型...")
     booster, feature_names, calibrator = load_model()
     log.success(f"✓ 模型加载成功: {len(feature_names)} 特征")
-    
+
     # 获取股票列表
     stock_list = dm.get_stock_list()
     valid = stock_list[
@@ -316,12 +316,12 @@ final_score = (0.6 × 校准概率 + 0.4 × 预期收益) × 惩罚系数
         ~stock_list['ts_code'].str.startswith('8')
     ].copy()
     log.info(f"📊 有效股票: {len(valid)} 只")
-    
+
     # 批量处理
     log.info(f"\n🚀 开始预测...")
     results = []
     total = len(valid)
-    
+
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {}
         for idx, row in valid.iterrows():
@@ -331,27 +331,27 @@ final_score = (0.6 × 校准概率 + 0.4 × 预期收益) × 惩罚系数
                 feature_names, booster, calibrator
             )
             futures[future] = (row['ts_code'], row['name'])
-        
+
         completed = 0
         error_count = 0
         for future in as_completed(futures):
             completed += 1
             if completed % 500 == 0 or completed == total:
                 log.info(f"进度: {completed}/{total} ({completed/total*100:.1f}%) | 成功: {len(results)}, 失败: {error_count}")
-            
+
             result = future.result()
             if result:
                 results.append(result)
             else:
                 error_count += 1
-    
+
     if not results:
         log.error("没有预测结果")
         return
-    
+
     # 转换为DataFrame
     df_results = pd.DataFrame(results)
-    
+
     # 流动性过滤
     before_filter = len(df_results)
     df_results = df_results[df_results['amount'] >= min_amount]
@@ -670,24 +670,24 @@ final_score = base_score × penalty
     ✓ circ_mv = 500亿 > 阈值 → 通过
     ✓ total_mv = 600亿 > 阈值 → 通过
     结果：市值评分高
-  
+
   节点2：RSI验证
     ✓ rsi_6 = 75 < 90 → 未超买
     ✓ rsi_12 = 70 < 85 → 未超买
     ✓ rsi_24 = 65 < 80 → 未超买
     结果：RSI评分适中
-  
+
   节点3：均线趋势
     ✓ close = 11.0 > ma5 = 10.5 → 趋势向上
     ✓ close = 11.0 > ma10 = 10.2 → 趋势向上
     结果：均线评分高
-  
+
   节点4：辅助验证
     ✓ MACD金叉
     ✓ OBV向上
     ✓ 动量强劲
     结果：辅助评分高
-  
+
   模型输出：raw_probability = 0.75
 
 第3层：概率校准
@@ -700,23 +700,23 @@ final_score = base_score × penalty
 第5层：v2.3.2评分
   节点1：基础评分
     base_score = 0.6 × 0.78 + 0.4 × 0.65 = 0.728
-  
+
   节点2：追高惩罚
     pct_chg = 8.5% < 10% → 无追高
     penalty = 1.0
-  
+
   节点3：涨停低概率惩罚
     pct_chg = 8.5% < 9.8% → 未涨停
     penalty = 1.0（不变）
-  
+
   节点4：RSI过热惩罚
     rsi_6 = 75 < 90 → 未过热
     penalty = 1.0（不变）
-  
+
   节点5：连续涨停惩罚
     consecutive_limit_up = 0 → 无连续涨停
     penalty = 1.0（不变）
-  
+
   节点6：最终评分
     final_score = 0.728 × 1.0 = 0.728
 
@@ -793,7 +793,7 @@ final_score = base_score × penalty
 - `total_mv`（总市值）- 9.51%
 - `amount`（成交额）- 0.02%（在脚本层面过滤）
 - `turnover_rate`（换手率）- 0.03%
-- **作用**: 
+- **作用**:
   - **市值筛选**：优先选择流通市值和总市值较大的股票（大盘股）
   - **流动性保障**：确保有足够的流动性，避免无法交易
   - **风险控制**：过滤掉小盘股和流动性差的股票，降低交易风险
@@ -901,8 +901,8 @@ final_score = base_score × penalty
 
 ---
 
-**文档生成时间**: 2026-01-19  
-**相关文件**: 
+**文档生成时间**: 2026-01-19
+**相关文件**:
 - `scripts/predict_v232_top10.py` - v2.3.2预测脚本
 - `data/models/breakout_launch_scorer/versions/v2.3.0/` - v2.3.0模型
 - `docs/v250_model_feature_analysis.md` - v2.5.0特征分析（参考）

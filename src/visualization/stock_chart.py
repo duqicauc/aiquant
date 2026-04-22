@@ -5,12 +5,11 @@ K线图、技术指标、买卖点标注、资金流向、行业对比、交易�
 基于百度 ECharts 的专业金融可视化方案
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from pathlib import Path
+
+import pandas as pd
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -21,10 +20,7 @@ from src.utils.logger import log
 # 尝试导入 PyEcharts
 try:
     from pyecharts import options as opts
-    from pyecharts.charts import (
-        Kline, Line, Bar, Grid, Page, Tab, 
-        Gauge, Liquid, Radar, Pie, Scatter
-    )
+    from pyecharts.charts import Bar, Gauge, Grid, Kline, Line, Liquid, Page, Pie, Radar, Scatter, Tab
     from pyecharts.commons.utils import JsCode
     from pyecharts.globals import ThemeType
     HAS_PYECHARTS = True
@@ -43,13 +39,13 @@ except ImportError:
 
 class StockChartVisualizer:
     """股票图表可视化器 - PyEcharts 版"""
-    
+
     # 专业金融配色
     COLORS = {
         'up': '#ec0000',           # 上涨红色
         'down': '#00da3c',         # 下跌绿色
         'ma5': '#FF6B6B',
-        'ma10': '#4ECDC4', 
+        'ma10': '#4ECDC4',
         'ma20': '#45B7D1',
         'ma60': '#FFA07A',
         'ma120': '#9B59B6',
@@ -61,11 +57,11 @@ class StockChartVisualizer:
         'dif': '#2196F3',
         'dea': '#FF9800',
     }
-    
+
     def __init__(self):
         self.dm = DataManager()
         self.use_pyecharts = HAS_PYECHARTS
-    
+
     def create_comprehensive_chart(self, stock_code: str, report: dict, days: int = 120):
         """创建综合分析图表"""
         if self.use_pyecharts:
@@ -74,7 +70,7 @@ class StockChartVisualizer:
             return self._create_plotly_kline(stock_code, report, days)
         else:
             raise RuntimeError("没有可用的可视化库")
-    
+
     def _create_pyecharts_kline(self, stock_code: str, report: dict, days: int = 120):
         """使用 PyEcharts 创建K线图"""
         # 获取历史数据 - 需要额外获取233天数据用于计算233日均线
@@ -85,38 +81,38 @@ class StockChartVisualizer:
         fetch_calendar_days = int(fetch_trading_days * 1.5)  # 转换为日历天数
         start_date = (datetime.now() - timedelta(days=fetch_calendar_days)).strftime('%Y%m%d')
         df = self.dm.get_daily_data(stock_code, start_date, end_date)
-        
+
         if df is None or df.empty:
             log.warning(f"无数据: {stock_code}")
             return None
-        
+
         df['trade_date'] = pd.to_datetime(df['trade_date'])
-        
+
         # 先在完整数据上计算均线（确保233日均线有足够数据）
         df['ma5'] = df['close'].rolling(5).mean().round(2)
         df['ma10'] = df['close'].rolling(10).mean().round(2)
         df['ma20'] = df['close'].rolling(20).mean().round(2)
         df['ma60'] = df['close'].rolling(60).mean().round(2)
         df['ma233'] = df['close'].rolling(233).mean().round(2)
-        
+
         # 计算完均线后，再截取需要显示的天数
         df = df.tail(days).reset_index(drop=True)
-        
+
         # 准备数据
         dates = df['trade_date'].dt.strftime('%Y-%m-%d').tolist()
         kline_data = df[['open', 'close', 'low', 'high']].values.tolist()
         volumes = df['vol'].tolist()
-        
+
         # 获取均线数据
         ma5 = df['ma5'].tolist()
         ma10 = df['ma10'].tolist()
         ma20 = df['ma20'].tolist()
         ma60 = df['ma60'].tolist()
         ma233 = df['ma233'].tolist()
-        
+
         # 计算 MACD
         macd_data = self._calculate_macd(df['close'])
-        
+
         # 计算成交量颜色
         vol_colors = []
         for i in range(len(df)):
@@ -124,12 +120,12 @@ class StockChartVisualizer:
                 vol_colors.append(self.COLORS['volume_up'])
             else:
                 vol_colors.append(self.COLORS['volume_down'])
-        
+
         # 基本信息
         basic = report.get('basic_info', {})
         stock_name = basic.get('name', stock_code)
         score = report.get('overall_score', 0)
-        
+
         # 准备成交量数据（带颜色信息）- 根据涨跌标记
         vol_data_with_color = []
         for i in range(len(df)):
@@ -138,7 +134,7 @@ class StockChartVisualizer:
                 'value': volumes[i],
                 'itemStyle': {'color': self.COLORS['up'] if is_up else self.COLORS['down']}
             })
-        
+
         # 准备MACD柱状图数据（带颜色信息）- 根据正负标记
         macd_bar_data = []
         for val in macd_data['macd']:
@@ -149,7 +145,7 @@ class StockChartVisualizer:
                     'value': val,
                     'itemStyle': {'color': self.COLORS['up'] if val >= 0 else self.COLORS['down']}
                 })
-        
+
         # 创建K线图
         kline = (
             Kline()
@@ -227,12 +223,12 @@ class StockChartVisualizer:
                 ],
             )
         )
-        
+
         # 添加均线 - 简化图例名称
         ma_line = (
             Line()
             .add_xaxis(dates)
-            .add_yaxis("5日", ma5, is_smooth=True, 
+            .add_yaxis("5日", ma5, is_smooth=True,
                       linestyle_opts=opts.LineStyleOpts(width=1.5, color=self.COLORS['ma5']),
                       label_opts=opts.LabelOpts(is_show=False))
             .add_yaxis("10日", ma10, is_smooth=True,
@@ -251,10 +247,10 @@ class StockChartVisualizer:
                 xaxis_opts=opts.AxisOpts(type_="category"),
             )
         )
-        
+
         # 叠加均线到K线
         kline.overlap(ma_line)
-        
+
         # 成交量柱状图 - 使用预处理好的带颜色数据（不显示图例）
         bar = (
             Bar()
@@ -295,7 +291,7 @@ class StockChartVisualizer:
                 ),
             )
         )
-        
+
         # MACD 图 - 使用预处理好的带颜色数据（不显示图例）
         macd_bar = (
             Bar()
@@ -327,7 +323,7 @@ class StockChartVisualizer:
                 ),
             )
         )
-        
+
         macd_line = (
             Line()
             .add_xaxis(dates)
@@ -338,9 +334,9 @@ class StockChartVisualizer:
                       linestyle_opts=opts.LineStyleOpts(width=1.5, color=self.COLORS['dea']),
                       label_opts=opts.LabelOpts(is_show=False))
         )
-        
+
         macd_bar.overlap(macd_line)
-        
+
         # 使用 Grid 组合图表
         grid = (
             Grid(init_opts=opts.InitOpts(width="100%", height="800px", theme=ThemeType.DARK))
@@ -357,9 +353,9 @@ class StockChartVisualizer:
                 grid_opts=opts.GridOpts(pos_left="10%", pos_right="8%", pos_top="75%", height="12%"),
             )
         )
-        
+
         return grid
-    
+
     def _calculate_macd(self, close: pd.Series):
         """计算MACD"""
         ema12 = close.ewm(span=12, adjust=False).mean()
@@ -367,45 +363,45 @@ class StockChartVisualizer:
         dif = ema12 - ema26
         dea = dif.ewm(span=9, adjust=False).mean()
         macd = (dif - dea) * 2
-        
+
         return {
             'dif': dif.round(4).tolist(),
             'dea': dea.round(4).tolist(),
             'macd': macd.round(4).tolist()
         }
-    
+
     def create_indicators_heatmap(self, report: dict):
         """创建指标健康度仪表盘"""
         if not self.use_pyecharts:
             return self._create_plotly_heatmap(report)
-        
+
         # 收集指标数据
         indicators = []
-        
+
         tech = report.get('technical_analysis', {})
         model = report.get('model_prediction', {})
         risk = report.get('risk_assessment', {})
         market = report.get('market_context', {})
-        
+
         if tech:
             trend_score = tech.get('trend', {}).get('alignment_score', 5)
             indicators.append(('趋势', trend_score))
             pv_score = tech.get('volume_analysis', {}).get('pv_score', 5)
             indicators.append(('量价', pv_score))
-        
+
         if model and 'score' in model:
             indicators.append(('AI预测', model['score']))
-        
+
         if risk:
             indicators.append(('风险', risk.get('risk_score', 5)))
-        
+
         if market:
             market_score = market.get('market_score', 50) / 10
             indicators.append(('市场', market_score))
-        
+
         # 创建多个仪表盘
         from pyecharts.charts import Page
-        
+
         gauges = []
         for name, score in indicators:
             gauge = (
@@ -434,33 +430,33 @@ class StockChartVisualizer:
                 )
             )
             gauges.append(gauge)
-        
+
         # 组合仪表盘
         page = Page(layout=Page.SimplePageLayout)
         for g in gauges:
             page.add(g)
-        
+
         return page
-    
+
     def create_sector_comparison_chart(self, report: dict):
         """创建行业对比图表"""
         comparison = report.get('sector_comparison', {})
-        
+
         if not comparison or comparison.get('rank') == '未知':
             return None
-        
+
         if not self.use_pyecharts:
             return self._create_plotly_sector(report)
-        
+
         # 数据
         stock_return = comparison.get('20d_returns', 0)
         industry_avg = comparison.get('industry_avg', 0)
         industry_max = comparison.get('industry_max', 0)
         industry_min = comparison.get('industry_min', 0)
-        
+
         categories = ['个股', '行业均值', '行业最高', '行业最低']
         values = [stock_return, industry_avg, industry_max, industry_min]
-        
+
         bar = (
             Bar(init_opts=opts.InitOpts(width="600px", height="400px", theme=ThemeType.DARK))
             .add_xaxis(categories)
@@ -492,23 +488,23 @@ class StockChartVisualizer:
                 ),
             )
         )
-        
+
         return bar
-    
+
     def create_money_flow_chart(self, report: dict):
         """创建资金流向图表"""
         money_flow = report.get('money_flow', {})
-        
+
         if not money_flow or money_flow.get('inflow', 0) == 0:
             return None
-        
+
         if not self.use_pyecharts:
             return self._create_plotly_money_flow(report)
-        
+
         inflow = money_flow.get('inflow', 0) / 1e8  # 转换为亿
         outflow = money_flow.get('outflow', 0) / 1e8
         net_ratio = money_flow.get('net_flow_ratio', 0)
-        
+
         # 饼图
         pie = (
             Pie(init_opts=opts.InitOpts(width="500px", height="350px", theme=ThemeType.DARK))
@@ -532,33 +528,33 @@ class StockChartVisualizer:
                 ),
             )
         )
-        
+
         return pie
-    
+
     def create_trading_plan_chart(self, report: dict):
         """创建交易计划可视化"""
         plan = report.get('trading_plan', {})
         basic = report.get('basic_info', {})
-        
+
         current_price = basic.get('latest_price', 0)
         if current_price <= 0:
             return None
-        
+
         if not self.use_pyecharts:
             return self._create_plotly_trading_plan(report)
-        
+
         entry = plan.get('entry', {})
         exit_plan = plan.get('exit', {})
-        
+
         stop_loss = exit_plan.get('stop_loss', current_price * 0.95)
         ideal_price = entry.get('ideal_price', current_price * 0.98)
         tp1 = exit_plan.get('take_profit_1', current_price * 1.05)
         tp2 = exit_plan.get('take_profit_2', current_price * 1.10)
-        
+
         # 使用水平柱状图展示价位
         categories = ['止损位', '建议买入', '当前价', '目标1', '目标2']
         values = [stop_loss, ideal_price, current_price, tp1, tp2]
-        
+
         bar = (
             Bar(init_opts=opts.InitOpts(width="600px", height="350px", theme=ThemeType.DARK))
             .add_xaxis(categories)
@@ -587,27 +583,27 @@ class StockChartVisualizer:
             )
             .reversal_axis()
         )
-        
+
         return bar
-    
+
     def create_pattern_analysis_chart(self, report: dict):
         """创建K线形态分析图表"""
         patterns = report.get('pattern_analysis', {})
-        
+
         all_patterns = []
         for p in patterns.get('single_patterns', []) + patterns.get('compound_patterns', []) + patterns.get('trend_patterns', []):
             if isinstance(p, dict):
                 all_patterns.append(p)
-        
+
         if not all_patterns:
             return None
-        
+
         # 简单的文本列表
         return all_patterns  # 在HTML模板中渲染
-    
+
     def create_integrated_html_report(self, stock_code: str, report: dict, days: int = 120) -> str:
         """创建集成的单页HTML报告"""
-        
+
         # 获取基本信息
         basic = report.get('basic_info', {})
         stock_name = basic.get('name', stock_code)
@@ -615,10 +611,10 @@ class StockChartVisualizer:
         recommendation = report.get('recommendation', '')
         signals = report.get('trading_signals', {})
         action = signals.get('action', '观望')
-        
+
         # 生成图表HTML
         chart_htmls = {}
-        
+
         # 1. K线图
         try:
             kline_chart = self.create_comprehensive_chart(stock_code, report, days)
@@ -641,7 +637,7 @@ class StockChartVisualizer:
         except Exception as e:
             import traceback
             chart_htmls['kline'] = f'<div class="error">K线图生成失败: {e}<br>{traceback.format_exc()}</div>'
-        
+
         # 2. 行业对比
         try:
             sector_chart = self.create_sector_comparison_chart(report)
@@ -649,7 +645,7 @@ class StockChartVisualizer:
                 chart_htmls['sector'] = sector_chart.render_embed()
         except Exception as e:
             chart_htmls['sector'] = f'<div class="error">行业对比图生成失败: {e}</div>'
-        
+
         # 3. 资金流向
         try:
             money_chart = self.create_money_flow_chart(report)
@@ -657,7 +653,7 @@ class StockChartVisualizer:
                 chart_htmls['money_flow'] = money_chart.render_embed()
         except Exception as e:
             chart_htmls['money_flow'] = f'<div class="error">资金流向图生成失败: {e}</div>'
-        
+
         # 4. 交易计划
         try:
             plan_chart = self.create_trading_plan_chart(report)
@@ -665,42 +661,42 @@ class StockChartVisualizer:
                 chart_htmls['trading_plan'] = plan_chart.render_embed()
         except Exception as e:
             chart_htmls['trading_plan'] = f'<div class="error">交易计划图生成失败: {e}</div>'
-        
+
         # 信号摘要HTML
         buy_signals = signals.get('buy_signals', [])
         sell_signals = signals.get('sell_signals', [])
         warning_signals = signals.get('warning_signals', [])
-        
+
         # 交易计划数据
         plan = report.get('trading_plan', {})
         entry = plan.get('entry', {})
         exit_plan = plan.get('exit', {})
         position = plan.get('position', {})
-        
+
         # K线形态
         patterns = report.get('pattern_analysis', {})
         all_patterns = []
         for p in patterns.get('single_patterns', []) + patterns.get('compound_patterns', []) + patterns.get('trend_patterns', []):
             if isinstance(p, dict):
                 all_patterns.append(p)
-        
+
         # 模型预测
         model = report.get('model_prediction', {})
-        
+
         # 技术分析
         tech = report.get('technical_analysis', {})
         trend = tech.get('trend', {})
         indicators = tech.get('indicators', {})
-        
+
         # 风险评估
         risk = report.get('risk_assessment', {})
-        
+
         # 行业对比
         sector = report.get('sector_comparison', {})
-        
+
         # 资金流向
         money_flow = report.get('money_flow', {})
-        
+
         # 构建HTML
         html_content = f'''<!DOCTYPE html>
 <html lang="zh-CN">
@@ -723,9 +719,9 @@ class StockChartVisualizer:
             --accent-yellow: #d29922;
             --accent-purple: #a371f7;
         }}
-        
+
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        
+
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
             background: var(--bg-primary);
@@ -733,9 +729,9 @@ class StockChartVisualizer:
             line-height: 1.6;
             padding: 20px;
         }}
-        
+
         .container {{ max-width: 1400px; margin: 0 auto; }}
-        
+
         /* 头部卡片 */
         .header-card {{
             background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
@@ -744,7 +740,7 @@ class StockChartVisualizer:
             padding: 24px;
             margin-bottom: 20px;
         }}
-        
+
         .header-top {{
             display: flex;
             justify-content: space-between;
@@ -752,24 +748,24 @@ class StockChartVisualizer:
             flex-wrap: wrap;
             gap: 20px;
         }}
-        
+
         .stock-info h1 {{
             font-size: 28px;
             font-weight: 600;
             margin-bottom: 8px;
         }}
-        
+
         .stock-info .meta {{
             color: var(--text-secondary);
             font-size: 14px;
         }}
-        
+
         .score-container {{
             display: flex;
             align-items: center;
             gap: 20px;
         }}
-        
+
         .score-badge {{
             width: 100px;
             height: 100px;
@@ -780,25 +776,25 @@ class StockChartVisualizer:
             justify-content: center;
             font-weight: bold;
         }}
-        
+
         .score-badge.high {{ background: linear-gradient(135deg, #238636 0%, #2ea043 100%); }}
         .score-badge.medium {{ background: linear-gradient(135deg, #9e6a03 0%, #d29922 100%); }}
         .score-badge.low {{ background: linear-gradient(135deg, #da3633 0%, #f85149 100%); }}
-        
+
         .score-badge .number {{ font-size: 28px; }}
         .score-badge .label {{ font-size: 12px; opacity: 0.9; }}
-        
+
         .action-tag {{
             padding: 8px 20px;
             border-radius: 20px;
             font-size: 16px;
             font-weight: 600;
         }}
-        
+
         .action-tag.buy {{ background: var(--accent-green); color: #fff; }}
         .action-tag.sell {{ background: var(--accent-red); color: #fff; }}
         .action-tag.hold {{ background: var(--bg-tertiary); border: 1px solid var(--border-color); }}
-        
+
         .recommendation {{
             margin-top: 16px;
             padding: 16px;
@@ -808,16 +804,16 @@ class StockChartVisualizer:
             white-space: pre-wrap;
             font-size: 14px;
         }}
-        
+
         /* 网格布局 */
         .grid {{
             display: grid;
             gap: 20px;
         }}
-        
+
         .grid-2 {{ grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }}
         .grid-3 {{ grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
-        
+
         /* 卡片 */
         .card {{
             background: var(--bg-secondary);
@@ -825,7 +821,7 @@ class StockChartVisualizer:
             border-radius: 12px;
             padding: 20px;
         }}
-        
+
         .card-title {{
             font-size: 16px;
             font-weight: 600;
@@ -836,7 +832,7 @@ class StockChartVisualizer:
             align-items: center;
             gap: 8px;
         }}
-        
+
         /* 信号列表 */
         .signal-list {{ list-style: none; }}
         .signal-list li {{
@@ -845,11 +841,11 @@ class StockChartVisualizer:
             border-radius: 6px;
             font-size: 13px;
         }}
-        
+
         .signal-list.buy li {{ background: rgba(63, 185, 80, 0.15); border-left: 3px solid var(--accent-green); }}
         .signal-list.sell li {{ background: rgba(248, 81, 73, 0.15); border-left: 3px solid var(--accent-red); }}
         .signal-list.warning li {{ background: rgba(210, 153, 34, 0.15); border-left: 3px solid var(--accent-yellow); }}
-        
+
         /* 数据项 */
         .data-row {{
             display: flex;
@@ -857,7 +853,7 @@ class StockChartVisualizer:
             padding: 10px 0;
             border-bottom: 1px solid var(--border-color);
         }}
-        
+
         .data-row:last-child {{ border-bottom: none; }}
         .data-row .label {{ color: var(--text-secondary); }}
         .data-row .value {{ font-weight: 500; }}
@@ -865,7 +861,7 @@ class StockChartVisualizer:
         .data-row .value.down {{ color: var(--accent-green); }}
         .data-row .value.profit {{ color: var(--accent-green); }}
         .data-row .value.loss {{ color: var(--accent-red); }}
-        
+
         /* 图表容器 */
         .chart-container {{
             background: var(--bg-secondary);
@@ -874,12 +870,12 @@ class StockChartVisualizer:
             padding: 20px;
             margin-bottom: 20px;
         }}
-        
+
         .chart-container h3 {{
             margin-bottom: 16px;
             font-size: 16px;
         }}
-        
+
         /* 形态标签 */
         .pattern-tag {{
             display: inline-block;
@@ -888,36 +884,36 @@ class StockChartVisualizer:
             border-radius: 16px;
             font-size: 12px;
         }}
-        
+
         .pattern-tag.bullish {{ background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }}
         .pattern-tag.bearish {{ background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }}
         .pattern-tag.neutral {{ background: rgba(139, 148, 158, 0.2); color: var(--text-secondary); }}
-        
+
         /* 指标条 */
         .indicator-bar {{
             margin: 12px 0;
         }}
-        
+
         .indicator-bar .header {{
             display: flex;
             justify-content: space-between;
             margin-bottom: 6px;
             font-size: 13px;
         }}
-        
+
         .indicator-bar .bar {{
             height: 8px;
             background: var(--bg-tertiary);
             border-radius: 4px;
             overflow: hidden;
         }}
-        
+
         .indicator-bar .fill {{
             height: 100%;
             border-radius: 4px;
             transition: width 0.3s ease;
         }}
-        
+
         /* 页脚 */
         .footer {{
             text-align: center;
@@ -926,7 +922,7 @@ class StockChartVisualizer:
             font-size: 12px;
             margin-top: 20px;
         }}
-        
+
         /* 响应式 */
         @media (max-width: 768px) {{
             .header-top {{ flex-direction: column; }}
@@ -942,7 +938,7 @@ class StockChartVisualizer:
                 <div class="stock-info">
                     <h1>{stock_name} ({stock_code})</h1>
                     <div class="meta">
-                        行业: {basic.get('industry', 'N/A')} | 
+                        行业: {basic.get('industry', 'N/A')} |
                         最新价: ¥{basic.get('latest_price', 0):.2f} |
                         涨跌: {'+' if basic.get('pct_chg', 0) > 0 else ''}{basic.get('pct_chg', 0):.2f}% |
                         体检时间: {report.get('check_time', '')}
@@ -958,7 +954,7 @@ class StockChartVisualizer:
             </div>
             <div class="recommendation">{recommendation}</div>
         </div>
-        
+
         <!-- 核心指标 -->
         <div class="grid grid-3" style="margin-bottom: 20px;">
             <!-- 交易信号 -->
@@ -968,7 +964,7 @@ class StockChartVisualizer:
                 {'<div style="margin-top: 12px;"><h4 style="color: var(--accent-red); margin-bottom: 8px;">卖出信号</h4><ul class="signal-list sell">' + ''.join(f'<li>{s}</li>' for s in sell_signals[:5]) + '</ul></div>' if sell_signals else ''}
                 {'<div style="margin-top: 12px;"><h4 style="color: var(--accent-yellow); margin-bottom: 8px;">警告信号</h4><ul class="signal-list warning">' + ''.join(f'<li>{s}</li>' for s in warning_signals) + '</ul></div>' if warning_signals else ''}
             </div>
-            
+
             <!-- 交易计划 -->
             <div class="card">
                 <div class="card-title">📝 交易计划</div>
@@ -997,7 +993,7 @@ class StockChartVisualizer:
                     <span class="value">{position.get('risk_ratio', 'N/A')}</span>
                 </div>
             </div>
-            
+
             <!-- AI预测 -->
             <div class="card">
                 <div class="card-title">🤖 AI模型预测</div>
@@ -1007,19 +1003,19 @@ class StockChartVisualizer:
                     </div>
                     <div style="font-size: 18px; margin-top: 8px;">{model.get('signal', 'N/A')}</div>
                     <div style="color: var(--text-secondary); font-size: 12px; margin-top: 8px;">
-                        置信度: {model.get('confidence', 'N/A')} | 
+                        置信度: {model.get('confidence', 'N/A')} |
                         版本: {model.get('model_version', 'N/A')}
                     </div>
                 </div>
             </div>
         </div>
-        
+
         <!-- K线图 -->
         <div class="chart-container">
             <h3>📈 技术分析</h3>
             {chart_htmls.get('kline', '<div>图表加载中...</div>')}
         </div>
-        
+
         <!-- 详细分析 -->
         <div class="grid grid-2">
             <!-- 技术指标 -->
@@ -1065,7 +1061,7 @@ class StockChartVisualizer:
                     </span>
                 </div>
             </div>
-            
+
             <!-- 风险评估 -->
             <div class="card">
                 <div class="card-title">⚠️ 风险评估</div>
@@ -1101,7 +1097,7 @@ class StockChartVisualizer:
                 </div>
             </div>
         </div>
-        
+
         <div class="grid grid-2" style="margin-top: 20px;">
             <!-- 行业对比 -->
             <div class="card">
@@ -1129,7 +1125,7 @@ class StockChartVisualizer:
                 </div>
                 ''' if sector.get('rank') != '未知' else '<div style="color: var(--text-secondary);">行业数据暂不可用</div>'}
             </div>
-            
+
             <!-- 资金流向 -->
             <div class="card">
                 <div class="card-title">💰 资金流向</div>
@@ -1149,10 +1145,10 @@ class StockChartVisualizer:
                 </div>
             </div>
         </div>
-        
+
         <!-- K线形态 -->
         {'<div class="card" style="margin-top: 20px;"><div class="card-title">🕯️ K线形态</div><div>' + ''.join(f'<span class="pattern-tag {"bullish" if "涨" in p.get("signal", "") or "底" in p.get("signal", "") else "bearish" if "跌" in p.get("signal", "") or "顶" in p.get("signal", "") else "neutral"}">{p.get("name", "")} - {p.get("signal", "")}</span>' for p in all_patterns) + '</div></div>' if all_patterns else ''}
-        
+
         <!-- 页脚 -->
         <div class="footer">
             <p>⚠️ 风险提示: 本报告仅供参考，不构成投资建议。投资有风险，入市需谨慎。</p>
@@ -1161,27 +1157,27 @@ class StockChartVisualizer:
     </div>
 </body>
 </html>'''
-        
+
         return html_content
-    
+
     # ========== Plotly 备选实现 ==========
-    
+
     def _create_plotly_kline(self, stock_code: str, report: dict, days: int = 120):
         """使用 Plotly 创建K线图（备选方案）"""
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
-        
+
         # 获取数据
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=days*2)).strftime('%Y%m%d')
         df = self.dm.get_daily_data(stock_code, start_date, end_date)
-        
+
         if df is None or df.empty:
             return go.Figure()
-        
+
         df = df.tail(days).reset_index(drop=True)
         df['trade_date'] = pd.to_datetime(df['trade_date'])
-        
+
         # 创建子图
         fig = make_subplots(
             rows=3, cols=1,
@@ -1189,7 +1185,7 @@ class StockChartVisualizer:
             vertical_spacing=0.03,
             row_heights=[0.6, 0.2, 0.2]
         )
-        
+
         # K线
         fig.add_trace(
             go.Candlestick(
@@ -1203,40 +1199,40 @@ class StockChartVisualizer:
             ),
             row=1, col=1
         )
-        
+
         # 成交量
         colors = ['#ec0000' if row['close'] >= row['open'] else '#00da3c' for _, row in df.iterrows()]
         fig.add_trace(
             go.Bar(x=df['trade_date'], y=df['vol'], marker_color=colors),
             row=2, col=1
         )
-        
+
         # MACD
         macd = self._calculate_macd(df['close'])
         fig.add_trace(go.Bar(x=df['trade_date'], y=macd['macd'], name='MACD'), row=3, col=1)
         fig.add_trace(go.Scatter(x=df['trade_date'], y=macd['dif'], name='DIF', line=dict(width=1)), row=3, col=1)
         fig.add_trace(go.Scatter(x=df['trade_date'], y=macd['dea'], name='DEA', line=dict(width=1)), row=3, col=1)
-        
+
         fig.update_layout(
             height=800,
             xaxis_rangeslider_visible=False,
             template='plotly_dark',
         )
-        
+
         return fig
-    
+
     def _create_plotly_heatmap(self, report: dict):
         """Plotly 仪表盘"""
         return None
-    
+
     def _create_plotly_sector(self, report: dict):
         """Plotly 行业对比"""
         return None
-    
+
     def _create_plotly_money_flow(self, report: dict):
         """Plotly 资金流向"""
         return None
-    
+
     def _create_plotly_trading_plan(self, report: dict):
         """Plotly 交易计划"""
         return None

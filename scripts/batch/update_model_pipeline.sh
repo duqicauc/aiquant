@@ -80,4 +80,3 @@ echo "   1. 查看验证结果，确认模型表现"
 echo "   2. 如果满意，可以开始使用新模型进行预测"
 echo "   3. 运行: python scripts/weekly_prediction.py"
 echo ""
-

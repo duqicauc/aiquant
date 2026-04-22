@@ -152,12 +152,12 @@ from src.module import SomeClass
 
 class TestSomeClass:
     """SomeClass测试类"""
-    
+
     def test_init(self):
         """测试初始化"""
         obj = SomeClass()
         assert obj is not None
-    
+
     def test_method(self):
         """测试方法"""
         obj = SomeClass()
@@ -225,4 +225,3 @@ def test_conditional():
 - [ ] 提高测试覆盖率
 - [ ] 添加性能测试
 - [ ] 添加端到端测试
-

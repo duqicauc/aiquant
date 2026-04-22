@@ -73,7 +73,7 @@ git commit --no-verify -m "your message"
 
 **错误**: `chmod: Unable to change file mode`
 
-**解决**: 
+**解决**:
 ```bash
 # 使用sudo（如果需要）
 sudo chmod +x .git/hooks/pre-commit
@@ -150,4 +150,3 @@ git commit -m "test commit"
 
 - [测试框架使用指南](TESTING_FRAMEWORK_GUIDE.md)
 - [测试确保工具说明](../scripts/ensure_tests.py)
-

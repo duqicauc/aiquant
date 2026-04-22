@@ -95,14 +95,14 @@ data/models/{model_name}/
   "model_name": "xgboost_timeseries",
   "display_name": "XGBoost时间序列模型 v1.0.0",
   "description": "基于XGBoost的时间序列选股模型，使用34天回看窗口",
-  
+
   "created_at": "2025-12-28T10:00:00Z",
   "created_by": "user@example.com",
   "parent_version": null,  // 如果是基于某个版本创建，记录父版本
-  
+
   "status": "production",  // development, testing, staging, production, archived
   "tags": ["stable", "high-accuracy"],
-  
+
   "config": {
     "data": {
       "sample_preparation": {
@@ -123,7 +123,7 @@ data/models/{model_name}/
       "max_depth": 5
     }
   },
-  
+
   "training": {
     "started_at": "2025-12-28T10:00:00Z",
     "completed_at": "2025-12-28T11:30:00Z",
@@ -139,7 +139,7 @@ data/models/{model_name}/
       "max_depth": 5
     }
   },
-  
+
   "metrics": {
     "training": {
       "accuracy": 0.89,
@@ -163,7 +163,7 @@ data/models/{model_name}/
       "auc": 0.80
     }
   },
-  
+
   "backtest": {
     "period": {
       "start": "2023-01-01",
@@ -176,7 +176,7 @@ data/models/{model_name}/
       "win_rate": 0.68
     }
   },
-  
+
   "changes": [
     {
       "type": "feature",  // feature, parameter, bugfix, performance
@@ -189,7 +189,7 @@ data/models/{model_name}/
       "impact": "low"
     }
   ],
-  
+
   "notes": "首次稳定版本，经过充分测试",
   "deprecated": false,
   "deprecation_date": null,
@@ -511,13 +511,13 @@ class VersionMetadata:
 
 class ModelIterator:
     """模型迭代器 - 管理模型版本"""
-    
+
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.base_path = Path(f"data/models/{model_name}")
         self.versions_path = self.base_path / "versions"
         self.versions_path.mkdir(parents=True, exist_ok=True)
-    
+
     def create_version(
         self,
         version: str,
@@ -528,13 +528,13 @@ class ModelIterator:
         """创建新版本"""
         version_path = self.versions_path / version
         version_path.mkdir(parents=True, exist_ok=True)
-        
+
         # 创建版本目录结构
         (version_path / "model").mkdir(exist_ok=True)
         (version_path / "training").mkdir(exist_ok=True)
         (version_path / "evaluation").mkdir(exist_ok=True)
         (version_path / "experiments").mkdir(exist_ok=True)
-        
+
         # 创建元数据
         metadata = VersionMetadata(
             version=version,
@@ -546,25 +546,25 @@ class ModelIterator:
             metrics={},
             changes=changes or []
         )
-        
+
         # 保存元数据
         self._save_metadata(version, metadata)
-        
+
         # 如果基于某个版本，复制配置
         if base_version:
             self._copy_base_config(version, base_version)
-        
+
         return version
-    
+
     def get_version_info(self, version: str) -> Dict:
         """获取版本信息"""
         metadata_path = self.versions_path / version / "metadata.json"
         if not metadata_path.exists():
             raise ValueError(f"版本 {version} 不存在")
-        
+
         with open(metadata_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    
+
     def compare_versions(
         self,
         version1: str,
@@ -574,25 +574,25 @@ class ModelIterator:
         """对比两个版本"""
         info1 = self.get_version_info(version1)
         info2 = self.get_version_info(version2)
-        
+
         metrics = metrics or ['accuracy', 'precision', 'recall', 'f1', 'auc']
-        
+
         comparison = {
             version1: {},
             version2: {},
             'improvement': {},
             'winner': None
         }
-        
+
         best_score = -1
         for metric in metrics:
             val1 = info1.get('metrics', {}).get('test', {}).get(metric, 0)
             val2 = info2.get('metrics', {}).get('test', {}).get(metric, 0)
-            
+
             comparison[version1][metric] = val1
             comparison[version2][metric] = val2
             comparison['improvement'][metric] = val2 - val1
-            
+
             # 判断哪个版本更好（使用加权平均）
             if metric in ['accuracy', 'precision', 'recall', 'f1', 'auc']:
                 if val2 > best_score:
@@ -601,9 +601,9 @@ class ModelIterator:
                 elif val1 > best_score:
                     best_score = val1
                     comparison['winner'] = version1
-        
+
         return comparison
-    
+
     def promote_version(
         self,
         version: str,
@@ -612,21 +612,21 @@ class ModelIterator:
     ):
         """升级版本到指定环境"""
         info = self.get_version_info(version)
-        
+
         # 更新状态
         info['status'] = environment
         info['promoted_at'] = datetime.now().isoformat()
         info['promotion_reason'] = reason
-        
+
         self._save_metadata(version, info)
-        
+
         # 创建符号链接
         if environment == 'production':
             production_link = self.base_path / "production"
             if production_link.exists():
                 production_link.unlink()
             production_link.symlink_to(f"versions/{version}")
-    
+
     def list_versions(
         self,
         status: str = None,
@@ -645,21 +645,21 @@ class ModelIterator:
                     versions.append(version_dir.name)
                 except:
                     continue
-        
+
         # 按版本号排序
         versions.sort(key=lambda v: self._version_key(v))
         return versions
-    
+
     def _version_key(self, version: str) -> tuple:
         """将版本号转换为可排序的元组"""
         # 移除 'v' 前缀和标识符
         version = version.lstrip('v')
         if '-' in version:
             version = version.split('-')[0]
-        
+
         parts = version.split('.')
         return tuple(int(p) if p.isdigit() else 0 for p in parts)
-    
+
     def _save_metadata(self, version: str, metadata):
         """保存元数据"""
         metadata_path = self.versions_path / version / "metadata.json"
@@ -725,7 +725,6 @@ if comparison['winner'] == 'v1.1.0':
 
 ---
 
-**文档版本**: v1.0  
-**创建日期**: 2025-12-28  
+**文档版本**: v1.0
+**创建日期**: 2025-12-28
 **最后更新**: 2025-12-28
-

@@ -33,4 +33,3 @@ echo -e "${BLUE}按 Ctrl+C 停止服务${NC}"
 echo ""
 
 streamlit run app.py --server.port 8501 --server.address localhost
-

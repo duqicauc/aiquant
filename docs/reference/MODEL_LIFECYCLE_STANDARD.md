@@ -84,12 +84,12 @@ model:
   name: {model_name}
   display_name: {显示名称}
   description: {模型描述}
-  
+
 data:
   positive_samples: data/training/samples/positive_samples.csv
   negative_samples: data/training/samples/negative_samples_v2.csv
   feature_data: data/training/features/feature_data_34d.csv
-  
+
 model_params:
   n_estimators: 100
   max_depth: 6
@@ -576,21 +576,21 @@ python scripts/train_xgboost_timeseries.py --model {model_name} --version v1.1.0
 
 ### Q1: 如何确定版本号？
 
-**A**: 
+**A**:
 - 主版本号：重大架构变更
 - 次版本号：新功能、重要特征
 - 补丁版本：参数调优、bug修复
 
 ### Q2: 什么时候应该创建新模型而不是迭代？
 
-**A**: 
+**A**:
 - 预测目标完全不同
 - 使用完全不同的算法
 - 数据来源完全不同
 
 ### Q3: 如何回滚到旧版本？
 
-**A**: 
+**A**:
 ```python
 iterator.update_version_metadata('v1.0.0', status='production')
 iterator.update_version_metadata('v1.1.0', status='deprecated')
@@ -601,4 +601,3 @@ iterator.update_version_metadata('v1.1.0', status='deprecated')
 ## 🔄 流程改进
 
 本流程会根据实际使用情况持续改进，如有建议请提交issue或PR。
-

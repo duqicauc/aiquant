@@ -10,14 +10,14 @@
 
 #### `scripts/add_advanced_factors_optimized.py`
 - **功能**: 为样本数据添加优化后的高级技术因子
-- **断点文件**: 
+- **断点文件**:
   - 正样本: `data/training/processed/.checkpoint_pos_optimized.csv`
   - 负样本: `data/training/features/.checkpoint_neg_optimized.csv`
-- **断点机制**: 
+- **断点机制**:
   - 按样本ID记录已处理样本
   - 每批处理100个样本后保存checkpoint
   - 支持从任意中断点继续
-- **使用方法**: 
+- **使用方法**:
   ```bash
   python scripts/add_advanced_factors_optimized.py
   # 如果中断，重新运行会自动从checkpoint继续
@@ -28,25 +28,25 @@
 #### `scripts/prepare_positive_samples_checkpoint.py`
 - **功能**: 扫描和准备正样本数据
 - **断点文件**: `data/training/samples/.checkpoint_positive.csv`
-- **断点机制**: 
+- **断点机制**:
   - 按股票批次记录已处理股票
   - 每处理100只股票保存一次checkpoint
   - 支持断点续传
-- **使用方法**: 
+- **使用方法**:
   ```bash
   python scripts/prepare_positive_samples_checkpoint.py
   ```
 
 #### `scripts/prepare_negative_samples_checkpoint.py`
 - **功能**: 准备负样本数据（支持市值分层抽样）
-- **断点文件**: 
+- **断点文件**:
   - 样本: `data/training/samples/.checkpoint_negative_samples.csv`
   - 特征: `data/training/features/.checkpoint_negative_features.csv`
-- **断点机制**: 
+- **断点机制**:
   - 按T1日期批次记录已处理日期
   - 每10个T1日期保存一次checkpoint
   - 特征提取也支持断点续传
-- **使用方法**: 
+- **使用方法**:
   ```bash
   python scripts/prepare_negative_samples_checkpoint.py
   ```
@@ -54,11 +54,11 @@
 #### `scripts/prepare_hard_negative_samples.py` ✅ 新增
 - **功能**: 生成硬负样本（伪突破样本）
 - **断点文件**: `data/training/samples/.checkpoint_hard_negative.csv`
-- **断点机制**: 
+- **断点机制**:
   - 按股票批次记录已处理股票
   - 每批处理50只股票后保存checkpoint
   - 支持从任意中断点继续
-- **使用方法**: 
+- **使用方法**:
   ```bash
   python scripts/prepare_hard_negative_samples.py
   # 如果中断，重新运行会自动从checkpoint继续
@@ -68,7 +68,7 @@
 
 #### `scripts/train_v250_model.py`
 - **功能**: 训练v2.5.0模型
-- **断点机制**: 
+- **断点机制**:
   - 训练脚本本身不涉及大量数据获取，主要使用已准备好的特征数据
   - 如果特征数据准备中断，可以重新运行特征工程脚本（会自动续传）
 

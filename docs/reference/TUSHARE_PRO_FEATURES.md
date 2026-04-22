@@ -10,9 +10,9 @@
 
 ### 1. **周线数据API** ✅
 
-**接口**: `weekly` / `pro_bar(freq='W')`  
-**积分要求**: 120积分  
-**优势**: 
+**接口**: `weekly` / `pro_bar(freq='W')`
+**积分要求**: 120积分
+**优势**:
 - 直接获取周线数据，无需本地转换
 - 支持前复权、后复权
 - 数据质量更高，计算更准确
@@ -32,7 +32,7 @@ df_weekly = dm.get_weekly_data(
 )
 ```
 
-**应用场景**: 
+**应用场景**:
 - 正样本筛选器的三连阳判断
 - 周线级别的技术分析
 - 中长期趋势判断
@@ -41,8 +41,8 @@ df_weekly = dm.get_weekly_data(
 
 ### 2. **每日指标API** ✅
 
-**接口**: `daily_basic`  
-**积分要求**: 120积分  
+**接口**: `daily_basic`
+**积分要求**: 120积分
 **包含指标**:
 - 换手率 (turnover_rate)
 - 量比 (volume_ratio)
@@ -79,8 +79,8 @@ df_complete = dm.get_complete_data(
 
 ### 3. **技术因子API** ✅ 🔥
 
-**接口**: `stk_factor`  
-**积分要求**: 5000积分（付费获取）  
+**接口**: `stk_factor`
+**积分要求**: 5000积分（付费获取）
 **包含指标**:
 - **MACD**: macd_dif, macd_dea, macd
 - **KDJ**: kdj_k, kdj_d, kdj_j
@@ -100,7 +100,7 @@ df_factor = dm.get_stk_factor(
 
 # 包含的指标
 print(df_factor.columns)
-# ['trade_date', 'macd_dif', 'macd_dea', 'macd', 
+# ['trade_date', 'macd_dif', 'macd_dea', 'macd',
 #  'kdj_k', 'kdj_d', 'kdj_j', 'rsi_6', 'rsi_12', 'rsi_24', ...]
 ```
 
@@ -116,7 +116,7 @@ print(df_factor.columns)
 - 量化策略开发
 - 机器学习特征
 
-**⚠️ 积分说明**: 
+**⚠️ 积分说明**:
 - 技术因子需要5000积分
 - 可通过捐赠快速获得：[社区捐助](https://tushare.pro/community)
 - **强烈推荐**：技术因子大幅提升开发效率
@@ -125,8 +125,8 @@ print(df_factor.columns)
 
 ### 4. **筹码分布API** ✅ 💎
 
-**接口**: `cyq_perf`  
-**积分要求**: 5000积分  
+**接口**: `cyq_perf`
+**积分要求**: 5000积分
 **包含数据**:
 - 筹码集中度
 - 获利比例
@@ -152,8 +152,8 @@ df_cyq = dm.get_cyq_perf(
 
 ### 5. **交易日历API** ✅
 
-**接口**: `trade_cal`  
-**积分要求**: 2000积分  
+**接口**: `trade_cal`
+**积分要求**: 2000积分
 **功能**:
 - 获取交易所交易日历
 - 判断是否交易日
@@ -181,8 +181,8 @@ trading_days = df_cal[df_cal['is_open'] == 1]
 
 ### 6. **复权因子API** ✅
 
-**接口**: `adj_factor`  
-**积分要求**: 120积分  
+**接口**: `adj_factor`
+**积分要求**: 120积分
 **功能**:
 - 获取复权因子
 - 自定义复权计算
@@ -201,8 +201,8 @@ df_adj = dm.get_adj_factor(
 
 ### 7. **ST股票列表** ✅
 
-**接口**: `namechange`  
-**积分要求**: 120积分  
+**接口**: `namechange`
+**积分要求**: 120积分
 **功能**:
 - 获取ST股票列表
 - 股票名称变更历史
@@ -394,12 +394,12 @@ AIQuant已集成以下Tushare Pro接口：
 - 包含100+技术指标
 
 ### Q2: 如何快速获得5000积分？
-**A**: 
+**A**:
 - 推荐方式：捐赠获得（https://tushare.pro/community）
 - 慢速方式：完善资料+每日签到（需要约1年）
 
 ### Q3: 免费版本够用吗？
-**A**: 
+**A**:
 - 学习阶段：够用
 - 生产环境：建议至少2000积分（交易日历）
 - 专业量化：建议5000积分（技术因子）
@@ -416,4 +416,3 @@ AIQuant已集成以下Tushare Pro接口：
 **总结**: AIQuant项目已经充分集成了Tushare Pro的高级功能。如果你的积分足够，可以获得更好的数据质量和开发体验！💎
 
 **建议投资**: 如果认真做量化交易，5000积分的技术因子API非常值得！🚀
-

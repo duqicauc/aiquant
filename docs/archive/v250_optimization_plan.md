@@ -34,7 +34,7 @@ breakout_ma233 = (close > ma_233d).astype(int)  # 是否突破233日均线
 # config/settings.yaml
 positive_criteria:
   min_listing_days: 300  # 从180天提升到300天（约14个月）
-  
+
 # 原因：
 # 1. 至少需要233天数据 + 额外缓冲
 # 2. 过滤掉上市不足1年的新股（新股行为模式不稳定）
@@ -124,22 +124,22 @@ python scripts/train_v250_model.py
 ```python
 def extract_features_with_ma233(df):
     """添加233日均线特征"""
-    
+
     # 基础均线
     df['ma_233d'] = df['close'].rolling(233, min_periods=200).mean()
-    
+
     # 价格位置
     df['price_vs_ma_233d'] = (df['close'] - df['ma_233d']) / (df['ma_233d'] + 1e-10) * 100
-    
+
     # 突破信号
     df['breakout_ma233'] = (df['close'] > df['ma_233d']).astype(int)
-    
+
     # 与233日均线的距离
     df['dist_to_ma233'] = (df['close'] - df['ma_233d']) / df['close'] * 100
-    
+
     # 233日均线斜率（趋势方向）
     df['ma233_slope'] = df['ma_233d'].diff(5) / df['ma_233d'].shift(5) * 100
-    
+
     return df
 ```
 

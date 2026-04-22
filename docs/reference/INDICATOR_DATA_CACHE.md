@@ -28,14 +28,14 @@ def get_daily_basic(self, stock_code, start_date, end_date):
         if self.cache.has_data(stock_code, 'daily_basic', start_date, end_date):
             df = self.cache.get_data(...)  # 从缓存读取
             return df
-    
+
     # 2. 从API获取数据
     df = self._fetch_daily_basic_from_api(...)
-    
+
     # 3. 保存到缓存
     if self.use_cache and self.cache and not df.empty:
         self.cache.save_data(df, 'daily_basic', stock_code)
-    
+
     return df
 ```
 
@@ -63,14 +63,14 @@ def get_stk_factor(self, stock_code, start_date, end_date):
         if self.cache.has_data(stock_code, 'stk_factor', start_date, end_date):
             df = self.cache.get_data(...)  # 从缓存读取
             return df
-    
+
     # 2. 从API获取数据
     df = self._fetch_stk_factor_from_api(...)
-    
+
     # 3. 保存到缓存
     if self.use_cache and self.cache and not df.empty:
         self.cache.save_data(df, 'stk_factor', stock_code)
-    
+
     return df
 ```
 
@@ -105,7 +105,7 @@ for ts_code, group_df in df.groupby('ts_code'):
     self.cache.save_data(group_df, 'daily_basic', ts_code)
 ```
 
-**优势**: 
+**优势**:
 - 模式1：充分利用缓存，已缓存的数据不调用API
 - 模式2：一次API调用获取所有股票，然后保存到缓存
 
@@ -116,7 +116,7 @@ for ts_code, group_df in df.groupby('ts_code'):
 ### 缓存位置
 
 - **数据库**: `data/cache/quant_data.db` (SQLite)
-- **表名**: 
+- **表名**:
   - `daily_basic` - 每日指标
   - `stk_factor` - 技术因子
 
@@ -226,6 +226,5 @@ df_all_daily_basic = dm.batch_get_daily_basic(target_date_str, stock_codes)
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-28
-

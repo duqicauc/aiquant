@@ -9,20 +9,22 @@ API限流控制器
 
 参考：https://tushare.pro/document/1?doc_id=108
 """
-import time
+
 import functools
+import time
 from collections import deque
 from threading import Lock
+
 from src.utils.logger import log
 
 
 class RateLimiter:
     """API限流器"""
-    
+
     def __init__(self, calls_per_minute: int = 10):
         """
         初始化限流器
-        
+
         Args:
             calls_per_minute: 每分钟允许的调用次数
         """
@@ -30,28 +32,28 @@ class RateLimiter:
         self.min_interval = 60.0 / calls_per_minute  # 最小间隔（秒）
         self.call_times = deque()  # 记录调用时间
         self.lock = Lock()
-        
+
         log.info(f"限流器已初始化: {calls_per_minute}次/分钟 (最小间隔{self.min_interval:.2f}秒)")
-    
+
     def wait_if_needed(self, disable: bool = False):
         """
         如果需要，等待直到可以进行下一次调用
-        
+
         Args:
             disable: 是否禁用限流（不等待，直接记录调用时间）
         """
         with self.lock:
             now = time.time()
-            
+
             # 如果禁用限流，只记录调用时间，不等待
             if disable:
                 self.call_times.append(now)
                 return
-            
+
             # 清理60秒之前的记录
             while self.call_times and now - self.call_times[0] > 60:
                 self.call_times.popleft()
-            
+
             # 如果已达到限制，等待
             if len(self.call_times) >= self.calls_per_minute:
                 sleep_time = 60 - (now - self.call_times[0])
@@ -63,7 +65,7 @@ class RateLimiter:
                     # 清理过期记录
                     while self.call_times and now - self.call_times[0] > 60:
                         self.call_times.popleft()
-            
+
             # 确保最小间隔
             if self.call_times:
                 time_since_last = now - self.call_times[-1]
@@ -71,16 +73,18 @@ class RateLimiter:
                     sleep_time = self.min_interval - time_since_last
                     time.sleep(sleep_time)
                     now = time.time()
-            
+
             # 记录本次调用
             self.call_times.append(now)
-    
+
     def __call__(self, func):
         """装饰器：在函数调用前进行限流"""
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             self.wait_if_needed()
             return func(*args, **kwargs)
+
         return wrapper
 
 
@@ -94,22 +98,22 @@ class TushareRateLimiter:
 
     # 不同积分对应的全局限流配置
     GLOBAL_RATE_LIMITS = {
-        0: 5,        # 未注册：每分钟5次
-        120: 50,     # 基础：每分钟50次
-        2000: 200,   # 进阶：每分钟200次
-        5000: 500,   # 专业：每分钟500次
-        10000: 1000, # 旗舰：每分钟1000次
+        0: 5,  # 未注册：每分钟5次
+        120: 50,  # 基础：每分钟50次
+        2000: 200,  # 进阶：每分钟200次
+        5000: 500,  # 专业：每分钟500次
+        10000: 1000,  # 旗舰：每分钟1000次
     }
 
     # 特定接口的频次限制（优先级高于全局限制）
     API_SPECIFIC_LIMITS = {
-        'stk_factor': 100,    # 技术指标接口：每分钟100次
-        'daily_basic': 200,   # 每日指标接口：每分钟200次
-        'daily': 500,         # 日线数据接口：每分钟500次
-        'weekly': 200,        # 周线数据接口：每分钟200次
-        'monthly': 200,       # 月线数据接口：每分钟200次
+        "stk_factor": 100,  # 技术指标接口：每分钟100次
+        "daily_basic": 200,  # 每日指标接口：每分钟200次
+        "daily": 500,  # 日线数据接口：每分钟500次
+        "weekly": 200,  # 周线数据接口：每分钟200次
+        "monthly": 200,  # 月线数据接口：每分钟200次
     }
-    
+
     def __init__(self, points: int = 120):
         """
         初始化Tushare限流器
@@ -152,7 +156,7 @@ class TushareRateLimiter:
         if api_name and api_name in self.limiters:
             return self.limiters[api_name]
         return self.default_limiter
-    
+
     def __call__(self, func):
         """装饰器"""
         return self.default_limiter(func)
@@ -214,6 +218,7 @@ def rate_limited(api_name: str = None, disable: bool = False):
     def fetch_stk_factor():
         ...
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -221,34 +226,36 @@ def rate_limited(api_name: str = None, disable: bool = False):
                 limiter = get_api_limiter(api_name)
                 limiter.wait_if_needed(disable=False)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def is_rate_limit_error(exception: Exception) -> bool:
     """
     判断是否是限流错误
-    
+
     Args:
         exception: 异常对象
-        
+
     Returns:
         是否是限流错误
     """
     error_str = str(exception).lower()
     # 常见的限流错误关键词
     rate_limit_keywords = [
-        'rate limit',
-        'rate_limit',
-        'too many requests',
-        '429',
-        '请求过于频繁',
-        '访问频率超限',
-        '频率限制',
-        '限流',
-        'throttle',
-        'quota exceeded',
-        'quota limit'
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "429",
+        "请求过于频繁",
+        "访问频率超限",
+        "频率限制",
+        "限流",
+        "throttle",
+        "quota exceeded",
+        "quota limit",
     ]
     return any(keyword in error_str for keyword in rate_limit_keywords)
 
@@ -256,29 +263,30 @@ def is_rate_limit_error(exception: Exception) -> bool:
 def retry_on_error(max_retries: int = 3, base_delay: float = 1.0, retry_on_rate_limit: bool = True):
     """
     重试装饰器（指数退避）
-    
+
     Args:
         max_retries: 最大重试次数（限流错误也遵循此限制）
         base_delay: 基础延迟时间（秒）
         retry_on_rate_limit: 遇到限流错误时是否重试（最多max_retries次，不是无限重试）
-    
+
     使用示例：
     @retry_on_error(max_retries=5, base_delay=1.0)
     def fetch_data():
         ...
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             last_exception = None
-            
+
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
                     is_rate_limit = is_rate_limit_error(e)
-                    
+
                     if attempt < max_retries:
                         # 限流错误：适当延迟后重试（最多max_retries次）
                         if is_rate_limit and retry_on_rate_limit:
@@ -286,34 +294,36 @@ def retry_on_error(max_retries: int = 3, base_delay: float = 1.0, retry_on_rate_
                             delay = min(base_delay * (2 ** min(attempt, 5)), 60.0)
                             error_msg = str(e)[:200] if str(e) else type(e).__name__
                             log.warning(
-                                f"{func.__name__} 遇到限流错误 (第{attempt+1}次)，"
-                                f"{delay:.1f}秒后重试: {error_msg}"
+                                f"{func.__name__} 遇到限流错误 (第{attempt+1}次)，" f"{delay:.1f}秒后重试: {error_msg}"
                             )
                         else:
                             # 其他错误：正常指数退避
-                            delay = base_delay * (2 ** attempt)
+                            delay = base_delay * (2**attempt)
                             error_msg = str(e)[:200] if str(e) else type(e).__name__
                             log.warning(
-                                f"{func.__name__} 调用失败 (第{attempt+1}次)，"
-                                f"{delay:.1f}秒后重试: {error_msg}"
+                                f"{func.__name__} 调用失败 (第{attempt+1}次)，" f"{delay:.1f}秒后重试: {error_msg}"
                             )
                         time.sleep(delay)
                     else:
                         error_msg = str(e)[:200] if str(e) else type(e).__name__
-                        log.error(
-                            f"{func.__name__} 调用失败，已达最大重试次数({max_retries}): {error_msg}"
-                        )
-            
+                        log.error(f"{func.__name__} 调用失败，已达最大重试次数({max_retries}): {error_msg}")
+
             # 所有重试都失败，抛出最后一个异常
             raise last_exception
-        
+
         return wrapper
+
     return decorator
 
 
 # 组合装饰器：限流 + 重试
-def safe_api_call(api_name: str = None, max_retries: int = 3, base_delay: float = 1.0, 
-                  retry_on_rate_limit: bool = True, disable_rate_limit: bool = False):
+def safe_api_call(
+    api_name: str = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    retry_on_rate_limit: bool = True,
+    disable_rate_limit: bool = False,
+):
     """
     安全的API调用装饰器（限流 + 重试）
 
@@ -333,6 +343,7 @@ def safe_api_call(api_name: str = None, max_retries: int = 3, base_delay: float 
     def fetch_stk_factor():
         ...
     """
+
     def decorator(func):
         # 先应用重试，再应用限流（如果不禁用）
         func = retry_on_error(max_retries, base_delay, retry_on_rate_limit)(func)
@@ -342,5 +353,5 @@ def safe_api_call(api_name: str = None, max_retries: int = 3, base_delay: float 
             # 禁用限流，但仍然应用装饰器（只是不等待）
             func = rate_limited(api_name, disable=True)(func)
         return func
-    return decorator
 
+    return decorator

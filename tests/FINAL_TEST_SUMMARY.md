@@ -19,7 +19,7 @@
   - 预测结果归档
   - 历史索引更新
   - 旧文件清理
-  
+
 - ✅ `tests/utils/test_ssl_fix.py` - **3个测试用例**
   - SSL证书权限修复
 
@@ -44,10 +44,10 @@
 ### 5. 模型模块测试
 - ✅ `tests/models/test_left_predictor.py` - **7个测试用例**
   - 左侧潜力牛股预测器
-  
+
 - ✅ `tests/models/test_left_feature_engineering.py` - **7个测试用例**
   - 特征工程
-  
+
 - ✅ `tests/models/test_left_validation.py` - **4个测试用例**
   - 模型验证器
 
@@ -58,19 +58,19 @@
 ### 7. 集成测试
 - ✅ `tests/integration/test_data_flow.py` - **2个测试用例**（已存在）
   - 数据流测试
-  
+
 - ✅ `tests/integration/test_model_training.py` - **5个测试用例**（新增）
   - 模型训练流程
   - 样本准备
   - 特征提取
   - 模型训练
-  
+
 - ✅ `tests/integration/test_prediction_pipeline.py` - **6个测试用例**（新增）
   - 预测流程
   - 市场股票获取
   - 特征提取
   - 模型预测
-  
+
 - ✅ `tests/integration/test_screening_pipeline.py` - **4个测试用例**（新增）
   - 筛选流程
   - 财务筛选
@@ -212,4 +212,3 @@ open htmlcov/index.html
 ## ✨ 总结
 
 本次补全了项目的单元测试和集成测试，新增了11个测试文件，包含约100+个测试用例。测试覆盖了工具模块、数据存储、回测、可视化、模型和策略等核心模块。虽然部分集成测试还需要修复，但整体测试框架已经建立，为后续的代码维护和修改提供了良好的保障。
-

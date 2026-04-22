@@ -126,7 +126,7 @@ if 'ma_20' in df.columns:
 
 ```python
 cols_to_save = [
-    'ts_code', 'trade_date', 
+    'ts_code', 'trade_date',
     # MACD
     'macd_dif', 'macd_dea', 'macd',
     # RSI
@@ -178,4 +178,3 @@ cols_to_save = [
 2. 注意字段名映射（ma_20 vs ma20）
 3. 确保缓存所有需要的字段
 4. 提供兜底方案（数据缺失时）
-

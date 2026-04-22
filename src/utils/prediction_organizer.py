@@ -3,20 +3,18 @@
 
 用于将最新预测结果移动到历史目录，并管理预测结果的归档
 """
-import os
-import shutil
+
 import json
-from pathlib import Path
+import shutil
 from datetime import datetime
-from typing import Optional, List
+from pathlib import Path
+from typing import List
+
 from src.utils.logger import log
 
 
 def archive_prediction_to_history(
-    model_name: str,
-    prediction_date: str,
-    result_dir: str = None,
-    history_dir: str = None
+    model_name: str, prediction_date: str, result_dir: str = None, history_dir: str = None
 ) -> bool:
     """
     将最新预测结果归档到历史目录
@@ -47,11 +45,7 @@ def archive_prediction_to_history(
 
     # 查找该日期的所有预测文件
     files_moved = []
-    patterns = [
-        f"*{prediction_date}*.csv",
-        f"*{prediction_date}*.txt",
-        f"*{prediction_date}*.json"
-    ]
+    patterns = [f"*{prediction_date}*.csv", f"*{prediction_date}*.txt", f"*{prediction_date}*.json"]
 
     for pattern in patterns:
         for file_path in result_path.glob(pattern):
@@ -59,8 +53,8 @@ def archive_prediction_to_history(
                 dest_path = history_path / file_path.name
                 # 如果目标文件已存在，添加时间戳后缀
                 if dest_path.exists():
-                    timestamp = datetime.now().strftime('%H%M%S')
-                    name_parts = dest_path.stem.split('_')
+                    timestamp = datetime.now().strftime("%H%M%S")
+                    name_parts = dest_path.stem.split("_")
                     name_parts.append(timestamp)
                     dest_path = history_path / f"{'_'.join(name_parts)}{dest_path.suffix}"
 
@@ -78,12 +72,7 @@ def archive_prediction_to_history(
         return False
 
 
-def update_history_index(
-    model_name: str,
-    prediction_date: str,
-    history_path: Path,
-    files: List[str]
-):
+def update_history_index(model_name: str, prediction_date: str, history_path: Path, files: List[str]):
     """
     更新历史预测索引文件
 
@@ -96,14 +85,14 @@ def update_history_index(
     index_file = history_path / "index.json"
 
     if index_file.exists():
-        with open(index_file, 'r', encoding='utf-8') as f:
+        with open(index_file, "r", encoding="utf-8") as f:
             index_data = json.load(f)
     else:
         index_data = {
             "model_name": model_name,
             "prediction_date": prediction_date,
-            "archived_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "files": []
+            "archived_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "files": [],
         }
 
     # 更新文件列表
@@ -111,17 +100,13 @@ def update_history_index(
         if file not in index_data["files"]:
             index_data["files"].append(file)
 
-    index_data["last_updated"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    index_data["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    with open(index_file, 'w', encoding='utf-8') as f:
+    with open(index_file, "w", encoding="utf-8") as f:
         json.dump(index_data, f, indent=2, ensure_ascii=False)
 
 
-def clean_old_results(
-    model_name: str,
-    keep_days: int = 7,
-    result_dir: str = None
-) -> int:
+def clean_old_results(model_name: str, keep_days: int = 7, result_dir: str = None) -> int:
     """
     清理旧的结果文件（保留最近N天）
 
@@ -154,4 +139,3 @@ def clean_old_results(
         log.info(f"✓ 已清理 {files_removed} 个超过 {keep_days} 天的旧文件")
 
     return files_removed
-

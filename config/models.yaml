@@ -11,7 +11,7 @@ models:
     display_name: "突破起爆评分模型"
     description: "基于技术指标识别股票起爆点，预测未来3周强势上涨概率"
     status: active  # active, deprecated, experimental
-    
+
     # 快捷配置覆盖（可选，会覆盖配置文件中的值）
     # 如果不需要覆盖，可以删除这部分
     overrides:
@@ -31,13 +31,13 @@ shared:
       top_n: 50
       min_probability: 0.0
       max_stocks_to_score: null
-    
+
     exclusion_rules:
       exclude_st: true
       exclude_new_listed: true
       min_listing_days: 180
       exclude_suspended: true
-    
+
     report:
       include_market_analysis: true
       include_recommendations: true
@@ -51,7 +51,7 @@ version_management:
     testing: 3
     staging: 2
     production: 3
-  
+
   # 自动归档配置
   auto_archive:
     enabled: true

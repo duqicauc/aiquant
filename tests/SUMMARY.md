@@ -12,25 +12,25 @@
 - `tests/data/test_data_manager.py` - 数据管理器测试
   - Mock测试（15个测试用例）
   - 真实API测试（4个测试用例，标记为@api和@slow）
-  
+
 - `tests/data/test_cache_manager.py` - 缓存管理器测试（15个测试用例）
   - 使用真实SQLite数据库
   - 测试所有核心功能
-  
+
 - `tests/data/test_tushare_fetcher.py` - Tushare获取器测试
   - 真实API测试（15个测试用例，标记为@api和@slow）
   - 测试缓存功能
   - 测试所有数据获取方法
-  
+
 - `tests/data/test_base_fetcher.py` - 基础获取器测试（5个测试用例）
 
 ### 3. 策略模块
 - `tests/strategy/test_financial_filter.py` - 财务筛选器测试
   - Mock测试（8个测试用例）
   - 真实API测试（2个测试用例）
-  
+
 - `tests/strategy/test_positive_screener.py` - 正样本筛选器测试（10个测试用例）
-  
+
 - `tests/strategy/test_negative_screener_v2.py` - 负样本筛选器V2测试（5个测试用例）
 
 ### 4. 模型模块
@@ -83,4 +83,3 @@ open htmlcov/index.html
 ## 下一步
 
 继续添加测试用例以达到90%覆盖率目标。
-

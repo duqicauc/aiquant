@@ -247,8 +247,8 @@ for stock in stocks:
     print(f"{stock}: 评分 {report['overall_score']}")
 
 # 按评分排序
-sorted_stocks = sorted(reports.items(), 
-                      key=lambda x: x[1]['overall_score'], 
+sorted_stocks = sorted(reports.items(),
+                      key=lambda x: x[1]['overall_score'],
                       reverse=True)
 
 print("\n最佳股票:")
@@ -271,7 +271,7 @@ final_recommendations = []
 
 for stock in top_stocks:
     report = checker.check_stock(stock)
-    
+
     # 只选择评分 > 70 的股票
     if report['overall_score'] > 70:
         final_recommendations.append({
@@ -348,7 +348,7 @@ print(f"最终推荐 {len(final_recommendations)} 只股票")
 - 价值投资标的（长期持有）
 
 ### Q4: 如何提高体检速度？
-**A**: 
+**A**:
 - 减少分析天数（如60天）
 - 使用数据缓存（已自动启用）
 - 避免短时间重复体检同一股票
@@ -409,4 +409,3 @@ bash scripts/update_model_pipeline.sh
 ---
 
 **Happy Trading! 📈🚀**
-

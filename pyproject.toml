@@ -1,0 +1,24 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E402", "E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/archive/*" = ["E", "F", "W"]
+"scripts/data_prep/*" = ["E", "F", "W"]
+"scripts/batch/*" = ["E", "F", "W"]
+"tests/*" = ["E712", "E402", "F841", "F811"]
+"src/visualization/*" = ["F401", "E501"]
+
+[tool.black]
+line-length = 120
+target-version = ['py311']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

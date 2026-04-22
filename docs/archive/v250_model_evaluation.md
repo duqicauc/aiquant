@@ -1,6 +1,6 @@
 # v2.5.0 模型全面评估报告
 
-**评估时间**: 2026-01-13  
+**评估时间**: 2026-01-13
 **评估范围**: 训练样本、特征工程、验证过程、模型参数
 
 ---
@@ -249,7 +249,7 @@ num_boost_round=500
        n = len(df)
        test_start = int(n * (1 - test_size))
        cal_start = int(n * (1 - test_size - cal_size))
-       
+
        train = df.iloc[:cal_start]
        cal = df.iloc[cal_start:test_start]
        test = df.iloc[test_start:]
@@ -269,10 +269,10 @@ num_boost_round=500
 3. **补充评估指标**
    ```python
    from sklearn.metrics import (
-       roc_auc_score, precision_recall_curve, 
+       roc_auc_score, precision_recall_curve,
        classification_report, confusion_matrix
    )
-   
+
    # 计算完整指标
    auc = roc_auc_score(y_test, cal_probs)
    report = classification_report(y_test, (cal_probs >= 0.5).astype(int))

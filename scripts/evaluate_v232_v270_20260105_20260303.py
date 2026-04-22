@@ -17,7 +17,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 import pandas as pd
-import numpy as np
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -91,17 +90,19 @@ def evaluate_one_file(dm, predict_date, version, top10_df, days_after):
         if eval_price is None:
             continue
         return_pct = (eval_price / predict_price - 1) * 100
-        results.append({
-            "ts_code": ts_code,
-            "name": row["name"],
-            "predict_date": predict_date,
-            "eval_date": eval_date,
-            "predict_price": predict_price,
-            "eval_price": eval_price,
-            "return_pct": return_pct,
-            "version": version,
-            "days_hold": days_after,
-        })
+        results.append(
+            {
+                "ts_code": ts_code,
+                "name": row["name"],
+                "predict_date": predict_date,
+                "eval_date": eval_date,
+                "predict_price": predict_price,
+                "eval_price": eval_price,
+                "return_pct": return_pct,
+                "version": version,
+                "days_hold": days_after,
+            }
+        )
     return pd.DataFrame(results)
 
 
@@ -168,20 +169,22 @@ def run_evaluation(start_date: str = None, end_date: str = None):
                 continue
             n = len(sub)
             win = (sub["return_pct"] > 0).sum()
-            summary_rows.append({
-                "version": version,
-                "days_hold": days_hold,
-                "sample_count": n,
-                "win_count": int(win),
-                "win_rate_pct": round(win / n * 100, 2),
-                "avg_return_pct": round(sub["return_pct"].mean(), 2),
-                "median_return_pct": round(sub["return_pct"].median(), 2),
-                "max_return_pct": round(sub["return_pct"].max(), 2),
-                "min_return_pct": round(sub["return_pct"].min(), 2),
-                "std_return_pct": round(sub["return_pct"].std(), 2),
-                "big_win_count": (sub["return_pct"] > 20).sum(),
-                "big_loss_count": (sub["return_pct"] < -10).sum(),
-            })
+            summary_rows.append(
+                {
+                    "version": version,
+                    "days_hold": days_hold,
+                    "sample_count": n,
+                    "win_count": int(win),
+                    "win_rate_pct": round(win / n * 100, 2),
+                    "avg_return_pct": round(sub["return_pct"].mean(), 2),
+                    "median_return_pct": round(sub["return_pct"].median(), 2),
+                    "max_return_pct": round(sub["return_pct"].max(), 2),
+                    "min_return_pct": round(sub["return_pct"].min(), 2),
+                    "std_return_pct": round(sub["return_pct"].std(), 2),
+                    "big_win_count": (sub["return_pct"] > 20).sum(),
+                    "big_loss_count": (sub["return_pct"] < -10).sum(),
+                }
+            )
 
     df_summary = pd.DataFrame(summary_rows)
     summary_path = OUTPUT_DIR / f"v232_v270_eval_{suffix}_summary.csv"
@@ -210,11 +213,19 @@ def run_evaluation(start_date: str = None, end_date: str = None):
     md_path = OUTPUT_DIR / f"v232_v270_eval_{suffix}_report.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("# v2.3.2 与 v2.7.0 模型效果评估报告\n\n")
-        f.write(f"**评估区间**：预测日 {start_date} 至 {end_date}（以预测日收盘价为买入价，T+N 交易日收盘价为卖出价）。\n\n")
-        f.write("**数据说明**：v2.3.2 使用 `v2.3.2_top10_YYYYMMDD.csv`，v2.7.0 使用 `v270_ensemble_all_YYYYMMDD.csv` 按 probability 取 Top10。\n\n")
+        f.write(
+            f"**评估区间**：预测日 {start_date} 至 {end_date}（以预测日收盘价为买入价，T+N 交易日收盘价为卖出价）。\n\n"
+        )
+        f.write(
+            "**数据说明**：v2.3.2 使用 `v2.3.2_top10_YYYYMMDD.csv`，v2.7.0 使用 `v270_ensemble_all_YYYYMMDD.csv` 按 probability 取 Top10。\n\n"
+        )
         f.write("## 汇总表\n\n")
-        f.write("| 模型 | 持有天数 | 样本数 | 胜率(%) | 平均收益(%) | 中位数收益(%) | 最大(%) | 最小(%) | 标准差(%) | 大盈(>20%) | 大亏(<-10%) |\n")
-        f.write("|------|----------|--------|--------|-------------|---------------|--------|--------|-----------|------------|-------------|\n")
+        f.write(
+            "| 模型 | 持有天数 | 样本数 | 胜率(%) | 平均收益(%) | 中位数收益(%) | 最大(%) | 最小(%) | 标准差(%) | 大盈(>20%) | 大亏(<-10%) |\n"
+        )
+        f.write(
+            "|------|----------|--------|--------|-------------|---------------|--------|--------|-----------|------------|-------------|\n"
+        )
         for _, row in df_summary.iterrows():
             f.write(
                 f"| {row['version']} | {row['days_hold']} | {row['sample_count']} | {row['win_rate_pct']} | "
@@ -227,8 +238,12 @@ def run_evaluation(start_date: str = None, end_date: str = None):
         v270_5 = df_summary[(df_summary["version"] == "v2.7.0") & (df_summary["days_hold"] == 5)]
         if not v232_5.empty and not v270_5.empty:
             v232_5, v270_5 = v232_5.iloc[0], v270_5.iloc[0]
-            f.write(f"- **v2.3.2**（5 日）：胜率 {v232_5['win_rate_pct']}%，平均收益 {v232_5['avg_return_pct']:+.2f}%。\n")
-            f.write(f"- **v2.7.0**（5 日）：胜率 {v270_5['win_rate_pct']}%，平均收益 {v270_5['avg_return_pct']:+.2f}%。\n")
+            f.write(
+                f"- **v2.3.2**（5 日）：胜率 {v232_5['win_rate_pct']}%，平均收益 {v232_5['avg_return_pct']:+.2f}%。\n"
+            )
+            f.write(
+                f"- **v2.7.0**（5 日）：胜率 {v270_5['win_rate_pct']}%，平均收益 {v270_5['avg_return_pct']:+.2f}%。\n"
+            )
         f.write(f"\n明细见同目录下 `v232_v270_eval_{suffix}_detail.csv`。\n")
     log.success(f"报告已保存: {md_path}")
 

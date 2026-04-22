@@ -34,4 +34,3 @@ echo "  ls -lh data/analysis/"
 echo ""
 echo "在浏览器中打开图表:"
 echo "  open data/analysis/chart_*.html"
-

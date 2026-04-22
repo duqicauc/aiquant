@@ -108,7 +108,7 @@ feature_importance = pd.DataFrame({
     'importance': [0.1, 0.2, ...]
 })
 visualizer.visualize_feature_importance(
-    feature_importance, 
+    feature_importance,
     model_name="my_model",
     top_n=20
 )
@@ -227,4 +227,3 @@ ls -la data/training/samples/
 - 查看生成的图表，分析样本质量和因子重要性
 - 根据分析结果调整特征工程或模型参数
 - 对比不同版本的图表，跟踪模型改进情况
-

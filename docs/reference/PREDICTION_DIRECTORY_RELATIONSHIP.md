@@ -78,7 +78,7 @@ results/
 
 **生成时机**: `scripts/score_current_stocks.py` 执行时（与 results/ 同时生成）
 
-**使用场景**: 
+**使用场景**:
 - `scripts/analyze_prediction_accuracy.py` 读取 metadata，获取推荐股票列表
 - 然后获取这些股票的实际表现，计算准确率
 
@@ -109,7 +109,7 @@ results/
 
 **生成时机**: `scripts/analyze_prediction_accuracy.py` 执行时
 
-**数据来源**: 
+**数据来源**:
 - 输入: `metadata/` 中的预测元数据
 - 数据: 从 API 获取实际股价数据
 - 输出: `analysis/` 中的分析结果
@@ -240,4 +240,3 @@ history/
    - `results/` 和 `metadata/`: 使用时间戳（精确到秒）
    - `analysis/`: 使用日期 + 观察周期（如 `_4w`）
    - `history/`: 按日期（YYYYMMDD）组织目录
-

@@ -91,7 +91,7 @@
 | 3 | **普负** | T+5 涨幅 < 5% **且** T+15 涨幅 < 10% | 短期/中期都偏弱（含 T+15<0） |
 | 4 | **普正** | 其余 | 未达硬正/硬负/普负，即有一定正收益但未达硬正 |
 
-**类别编码建议**（与 sklearn/XGB 一致）：  
+**类别编码建议**（与 sklearn/XGB 一致）：
 `硬正=0, 普正=1, 普负=2, 硬负=3`，或按业务顺序自定，训练与评估时保持一致即可。
 
 ---
@@ -226,12 +226,12 @@ v270 使用 v5 共同数值特征（排除 6 个低效二值特征）+ 14 个增
 
 **T0 严格版筛选所用两特征**（必须与上面公式一致）：
 
-- **`resonance_volume_confirm == 1`**（B.1）：  
-  `(breakout_resonance > 0).astype(int) * (breakout_volume_strength > 1.2).astype(int)`  
-  其中 breakout_resonance = 10/20/55 日三个周期突破前高的计数（0～3），breakout_volume_strength = vol / vol_ma20。  
+- **`resonance_volume_confirm == 1`**（B.1）：
+  `(breakout_resonance > 0).astype(int) * (breakout_volume_strength > 1.2).astype(int)`
+  其中 breakout_resonance = 10/20/55 日三个周期突破前高的计数（0～3），breakout_volume_strength = vol / vol_ma20。
   含义：至少一个周期突破前高 **且** 当日量能 > 20 日均量 1.2 倍。
-- **`price_position_34d < 40`**（B.2）：  
-  `(close - low.rolling(34, min_periods=17).min()) / (high.rolling(34, min_periods=17).max() - low.rolling(34, min_periods=17).min() + 1e-8) * 100`  
+- **`price_position_34d < 40`**（B.2）：
+  `(close - low.rolling(34, min_periods=17).min()) / (high.rolling(34, min_periods=17).max() - low.rolling(34, min_periods=17).min() + 1e-8) * 100`
   取值 0～100，< 40 表示价格在 34 日区间偏下沿（底部）。
 
 ---

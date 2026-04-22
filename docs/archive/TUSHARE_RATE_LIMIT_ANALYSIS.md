@@ -151,9 +151,8 @@
 
 ---
 
-**文档版本**: v1.0  
-**创建日期**: 2025-12-28  
-**参考文档**: 
+**文档版本**: v1.0
+**创建日期**: 2025-12-28
+**参考文档**:
 - https://tushare.pro/document/1?doc_id=108
 - https://tushare.pro/document/1?doc_id=290
-

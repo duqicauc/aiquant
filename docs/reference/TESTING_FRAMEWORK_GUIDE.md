@@ -86,13 +86,13 @@ from src.data.data_manager import DataManager
 
 class TestDataManager:
     """DataManager测试类"""
-    
+
     @pytest.mark.unit
     def test_init(self, mock_data_manager):
         """测试初始化"""
         dm = DataManager(source='tushare')
         assert dm.source == 'tushare'
-    
+
     @pytest.mark.unit
     def test_get_stock_list(self, mock_data_manager):
         """测试获取股票列表"""
@@ -223,21 +223,21 @@ python scripts/ensure_tests.py --generate
 ```python
 class TestSomeClass:
     """SomeClass测试类"""
-    
+
     def test_init(self):
         """测试初始化"""
         # Arrange: 准备测试数据
         # Act: 执行测试
         # Assert: 验证结果
-    
+
     def test_method_success(self):
         """测试方法成功情况"""
         pass
-    
+
     def test_method_failure(self):
         """测试方法失败情况"""
         pass
-    
+
     def test_edge_cases(self):
         """测试边界情况"""
         pass
@@ -371,4 +371,3 @@ pytest -m "not slow"
 - [ ] 建立CI/CD测试流程
 - [ ] 添加性能测试
 - [ ] 添加端到端测试
-

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 from src.trading.models import AccountSnapshot, ExecutionReport, OrderIntent, PositionSnapshot
 

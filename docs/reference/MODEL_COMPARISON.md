@@ -49,9 +49,9 @@
 - 难以捕捉复杂的时序依赖
 
 #### 适用场景
-✅ **你的数据已经是表格型特征** → 完美匹配！  
-✅ **样本量2000+** → 足够了！  
-✅ **需要快速验证** → 最佳选择！  
+✅ **你的数据已经是表格型特征** → 完美匹配！
+✅ **样本量2000+** → 足够了！
+✅ **需要快速验证** → 最佳选择！
 ✅ **想知道哪些指标重要** → 可解释性强！
 
 #### 实现示例
@@ -83,43 +83,43 @@ df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 features = []
 for sample_id in df['sample_id'].unique():
     sample_data = df[df['sample_id'] == sample_id].sort_values('days_to_t1')
-    
+
     feature_dict = {
         'sample_id': sample_id,
         'label': sample_data['label'].iloc[0],
-        
+
         # 价格相关
         'close_mean': sample_data['close'].mean(),
         'close_std': sample_data['close'].std(),
         'close_max': sample_data['close'].max(),
         'close_min': sample_data['close'].min(),
         'close_trend': (sample_data['close'].iloc[-1] - sample_data['close'].iloc[0]) / sample_data['close'].iloc[0],
-        
+
         # 涨跌幅
         'pct_chg_mean': sample_data['pct_chg'].mean(),
         'pct_chg_std': sample_data['pct_chg'].std(),
         'pct_chg_sum': sample_data['pct_chg'].sum(),
         'positive_days': (sample_data['pct_chg'] > 0).sum(),
         'negative_days': (sample_data['pct_chg'] < 0).sum(),
-        
+
         # 量比
         'volume_ratio_mean': sample_data['volume_ratio'].mean(),
         'volume_ratio_max': sample_data['volume_ratio'].max(),
         'volume_ratio_gt_2': (sample_data['volume_ratio'] > 2).sum(),
-        
+
         # MACD（如果有）
         'macd_mean': sample_data['macd'].mean() if 'macd' in sample_data.columns else np.nan,
         'macd_positive_days': (sample_data['macd'] > 0).sum() if 'macd' in sample_data.columns else np.nan,
-        
+
         # MA
         'ma5_mean': sample_data['ma5'].mean() if 'ma5' in sample_data.columns else np.nan,
         'ma10_mean': sample_data['ma10'].mean() if 'ma10' in sample_data.columns else np.nan,
         'price_above_ma5': (sample_data['close'] > sample_data['ma5']).sum() if 'ma5' in sample_data.columns else np.nan,
-        
+
         # 市值
         'total_mv_mean': sample_data['total_mv'].mean() if 'total_mv' in sample_data.columns else np.nan,
     }
-    
+
     features.append(feature_dict)
 
 df_features = pd.DataFrame(features)
@@ -553,21 +553,21 @@ xgb.XGBClassifier(
 ### 🚀 行动计划
 
 ```
-第1天: 
+第1天:
   - 准备数据（特征展平）
   - 训练XGBoost baseline
   - 查看效果和特征重要性
-  
+
 第2天:
   - 优化特征工程
   - 调整超参数
   - 对比V1和V2负样本
-  
+
 第3-5天:
   - 尝试LightGBM、Random Forest
   - Ensemble多个模型
   - 回测验证
-  
+
 如果效果卡住（1-2周后）:
   - 再考虑LSTM
   - 或者收集更多数据
@@ -588,7 +588,6 @@ xgb.XGBClassifier(
 
 ---
 
-**文档版本**: v1.0  
-**创建时间**: 2024-12-23  
+**文档版本**: v1.0
+**创建时间**: 2024-12-23
 **最后更新**: 2024-12-23
-

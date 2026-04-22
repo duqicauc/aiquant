@@ -65,12 +65,12 @@ if [ ! -f "$MONITOR_PID_FILE" ]; then
         --interval 60 \
         --retry 3 \
         > "$MONITOR_LOG" 2>&1 &
-    
+
     MONITOR_PID=$!
     echo $MONITOR_PID > "$MONITOR_PID_FILE"
     log_info "✓ 网络监控已启动 (PID: $MONITOR_PID)"
     log_info "  日志文件: $MONITOR_LOG"
-    
+
     # 等待监控初始化
     sleep 3
 fi
@@ -181,4 +181,3 @@ log_info ""
 log_info "🚀 下一步："
 log_info "  python scripts/score_current_stocks.py  # 使用新模型评分"
 log_info ""
-

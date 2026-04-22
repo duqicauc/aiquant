@@ -287,6 +287,6 @@ python scripts/train_breakout_launch_scorer.py --version v1.4.0 --neg-version v2
 
 ---
 
-**文档版本**: v2.0  
-**创建时间**: 2024-12-23  
+**文档版本**: v2.0
+**创建时间**: 2024-12-23
 **最后更新**: 2025-12-30

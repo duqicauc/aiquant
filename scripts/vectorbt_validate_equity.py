@@ -74,8 +74,12 @@ def main():
     sharpe_vbt = float(st.get("Sharpe Ratio", np.nan)) if hasattr(st, "get") else float("nan")
     max_dd_vbt = float(st.get("Max Drawdown [%]", np.nan)) if hasattr(st, "get") else float("nan")
 
-    out = Path(args.output) if args.output else (
-        PROJECT_ROOT / "data" / "prediction" / "results" / f"vectorbt_validate_{args.start_date}_{args.end_date}.md"
+    out = (
+        Path(args.output)
+        if args.output
+        else (
+            PROJECT_ROOT / "data" / "prediction" / "results" / f"vectorbt_validate_{args.start_date}_{args.end_date}.md"
+        )
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     lines = [

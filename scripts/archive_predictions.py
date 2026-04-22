@@ -12,15 +12,12 @@ python scripts/archive_predictions.py --clean --keep-days 7  # 清理7天前的�
 import sys
 import os
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.utils.prediction_organizer import (
-    archive_prediction_to_history,
-    clean_old_results
-)
+from src.utils.prediction_organizer import archive_prediction_to_history, clean_old_results
 from src.utils.logger import log
 
 
@@ -33,7 +30,7 @@ def archive_model_predictions(model_name: str, prediction_date: str = None):
         prediction_date: 预测日期（YYYYMMDD），如果为None则归档今天的结果
     """
     if prediction_date is None:
-        prediction_date = datetime.now().strftime('%Y%m%d')
+        prediction_date = datetime.now().strftime("%Y%m%d")
 
     log.info("=" * 60)
     log.info(f"📦 归档 {model_name} 模型的预测结果")
@@ -65,7 +62,7 @@ def auto_archive_all_models():
     log.info("📦 自动归档所有模型的预测结果")
     log.info("=" * 60)
 
-    today = datetime.now().strftime('%Y%m%d')
+    today = datetime.now().strftime("%Y%m%d")
     success_count = 0
 
     for model_name in models:
@@ -110,17 +107,12 @@ def clean_old_predictions(model_name: str = None, keep_days: int = 7):
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='预测结果归档工具')
-    parser.add_argument('--model', type=str, default=None,
-                       help='模型名称')
-    parser.add_argument('--date', type=str, default=None,
-                       help='预测日期（YYYYMMDD格式，默认今天）')
-    parser.add_argument('--auto', action='store_true',
-                       help='自动归档所有模型的最新结果')
-    parser.add_argument('--clean', action='store_true',
-                       help='清理旧文件')
-    parser.add_argument('--keep-days', type=int, default=7,
-                       help='清理时保留的天数（默认7天）')
+    parser = argparse.ArgumentParser(description="预测结果归档工具")
+    parser.add_argument("--model", type=str, default=None, help="模型名称")
+    parser.add_argument("--date", type=str, default=None, help="预测日期（YYYYMMDD格式，默认今天）")
+    parser.add_argument("--auto", action="store_true", help="自动归档所有模型的最新结果")
+    parser.add_argument("--clean", action="store_true", help="清理旧文件")
+    parser.add_argument("--keep-days", type=int, default=7, help="清理时保留的天数（默认7天）")
 
     args = parser.parse_args()
 
@@ -141,10 +133,10 @@ def main():
     except Exception as e:
         log.error(f"❌ 归档失败: {e}")
         import traceback
+
         log.error(traceback.format_exc())
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
-

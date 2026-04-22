@@ -23,15 +23,15 @@ for date in "${dates[@]}"; do
     echo "处理日期: $date"
     echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "=========================================="
-    
+
     python scripts/predict_v232_top10.py --date "$date"
-    
+
     if [ $? -eq 0 ]; then
         echo "✓ $date 预测完成"
     else
         echo "✗ $date 预测失败"
     fi
-    
+
     echo ""
 done
 

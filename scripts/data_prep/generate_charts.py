@@ -17,62 +17,66 @@ sys.path.insert(0, str(project_root))
 
 from src.utils.logger import log
 
+
 class ChartGenerator:
     """图表生成器"""
-    
+
     def __init__(self, output_dir: str = "data/training/charts"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         log.info(f"图表输出目录: {self.output_dir}")
-    
+
     def generate_sample_distribution(self):
         """生成样本分布图"""
         log.info("生成样本分布图...")
-        
+
         # 加载正样本（使用新路径）
         positive_file = Path("data/training/samples/positive_samples.csv")
         if not positive_file.exists():
             log.warning("正样本文件不存在")
             return
-        
+
         df = pd.read_csv(positive_file)
-        
+
         # 1. 涨幅分布
-        if 'rise_pct' in df.columns:
-            fig = px.histogram(df, x='rise_pct', nbins=50,
-                             title='正样本涨幅分布',
-                             labels={'rise_pct': '涨幅 (%)', 'count': '样本数'})
-            fig.update_traces(marker_color='#1f77b4')
+        if "rise_pct" in df.columns:
+            fig = px.histogram(
+                df, x="rise_pct", nbins=50, title="正样本涨幅分布", labels={"rise_pct": "涨幅 (%)", "count": "样本数"}
+            )
+            fig.update_traces(marker_color="#1f77b4")
             fig.write_html(str(self.output_dir / "sample_rise_distribution.html"))
             log.info("✓ 生成: sample_rise_distribution.html")
-        
+
         # 2. 时间分布
-        if 'start_date' in df.columns:
-            df['year'] = pd.to_datetime(df['start_date']).dt.year
-            year_counts = df['year'].value_counts().sort_index()
-            
-            fig = px.bar(x=year_counts.index, y=year_counts.values,
-                        title='正样本时间分布',
-                        labels={'x': '年份', 'y': '样本数'})
-            fig.update_traces(marker_color='#2ca02c')
+        if "start_date" in df.columns:
+            df["year"] = pd.to_datetime(df["start_date"]).dt.year
+            year_counts = df["year"].value_counts().sort_index()
+
+            fig = px.bar(
+                x=year_counts.index, y=year_counts.values, title="正样本时间分布", labels={"x": "年份", "y": "样本数"}
+            )
+            fig.update_traces(marker_color="#2ca02c")
             fig.write_html(str(self.output_dir / "sample_time_distribution.html"))
             log.info("✓ 生成: sample_time_distribution.html")
-        
+
         # 3. 股票分布 (Top 20)
-        if 'ts_code' in df.columns:
-            stock_counts = df['ts_code'].value_counts().head(20)
-            
-            fig = px.bar(x=stock_counts.index, y=stock_counts.values,
-                        title='正样本股票分布 (Top 20)',
-                        labels={'x': '股票代码', 'y': '样本数'})
+        if "ts_code" in df.columns:
+            stock_counts = df["ts_code"].value_counts().head(20)
+
+            fig = px.bar(
+                x=stock_counts.index,
+                y=stock_counts.values,
+                title="正样本股票分布 (Top 20)",
+                labels={"x": "股票代码", "y": "样本数"},
+            )
             fig.update_xaxes(tickangle=45)
             fig.write_html(str(self.output_dir / "sample_stock_distribution.html"))
             log.info("✓ 生成: sample_stock_distribution.html")
-    
+
     def generate_feature_importance(self):
         """生成特征重要性图"""
         log.info("生成特征重要性图...")
-        
+
         # 尝试从模型中提取特征重要性（使用新路径）
         # 查找最新的模型文件
         model_dir = Path("data/training/models")
@@ -80,167 +84,198 @@ class ChartGenerator:
         if not model_files:
             log.warning("模型文件不存在")
             return
-        
+
         model_file = max(model_files, key=lambda x: x.stat().st_mtime)
         if not model_file.exists():
             log.warning("模型文件不存在")
             return
-        
+
         try:
             import joblib
+
             model = joblib.load(model_file)
-            
-            if hasattr(model, 'feature_importances_'):
-                feature_names = model.feature_names_in_ if hasattr(model, 'feature_names_in_') else [f"feature_{i}" for i in range(len(model.feature_importances_))]
+
+            if hasattr(model, "feature_importances_"):
+                feature_names = (
+                    model.feature_names_in_
+                    if hasattr(model, "feature_names_in_")
+                    else [f"feature_{i}" for i in range(len(model.feature_importances_))]
+                )
                 importance = model.feature_importances_
-                
+
                 # 排序并取Top 20
-                df_importance = pd.DataFrame({
-                    'feature': feature_names,
-                    'importance': importance
-                }).sort_values('importance', ascending=True).tail(20)
-                
-                fig = px.bar(df_importance, x='importance', y='feature',
-                            orientation='h',
-                            title='特征重要性 (Top 20)',
-                            labels={'importance': '重要性', 'feature': '特征'})
+                df_importance = (
+                    pd.DataFrame({"feature": feature_names, "importance": importance})
+                    .sort_values("importance", ascending=True)
+                    .tail(20)
+                )
+
+                fig = px.bar(
+                    df_importance,
+                    x="importance",
+                    y="feature",
+                    orientation="h",
+                    title="特征重要性 (Top 20)",
+                    labels={"importance": "重要性", "feature": "特征"},
+                )
                 fig.write_html(str(self.output_dir / "feature_importance.html"))
                 log.info("✓ 生成: feature_importance.html")
-        
+
         except Exception as e:
             log.error(f"生成特征重要性图失败: {e}")
-    
+
     def generate_prediction_analysis(self):
         """生成预测结果分析图"""
         log.info("生成预测结果分析图...")
-        
+
         # 查找最新预测结果（使用新路径）
         pred_results_dir = Path("data/prediction/results")
         if not pred_results_dir.exists():
             log.warning("预测结果目录不存在")
             return
-        
+
         result_files = sorted(pred_results_dir.glob("stock_scores_*.csv"), reverse=True)
         if not result_files:
             log.warning("没有找到评分文件")
             return
-        
+
         df = pd.read_csv(result_files[0])
-        
+
         # 1. 概率分布
-        if '牛股概率' in df.columns:
-            fig = px.histogram(df, x='牛股概率', nbins=50,
-                             title='预测概率分布',
-                             labels={'牛股概率': '牛股概率', 'count': '股票数量'})
-            fig.update_traces(marker_color='#ff7f0e')
+        if "牛股概率" in df.columns:
+            fig = px.histogram(
+                df, x="牛股概率", nbins=50, title="预测概率分布", labels={"牛股概率": "牛股概率", "count": "股票数量"}
+            )
+            fig.update_traces(marker_color="#ff7f0e")
             fig.write_html(str(self.output_dir / "prediction_probability_distribution.html"))
             log.info("✓ 生成: prediction_probability_distribution.html")
-        
+
         # 2. Top 20 概率条形图
-        if '牛股概率' in df.columns and '股票代码' in df.columns:
+        if "牛股概率" in df.columns and "股票代码" in df.columns:
             top_20 = df.head(20)
-            
-            fig = px.bar(top_20, x='股票代码', y='牛股概率',
-                        title='Top 20 股票预测概率',
-                        labels={'股票代码': '股票代码', '牛股概率': '牛股概率'},
-                        text='股票名称' if '股票名称' in top_20.columns else None)
+
+            fig = px.bar(
+                top_20,
+                x="股票代码",
+                y="牛股概率",
+                title="Top 20 股票预测概率",
+                labels={"股票代码": "股票代码", "牛股概率": "牛股概率"},
+                text="股票名称" if "股票名称" in top_20.columns else None,
+            )
             fig.update_xaxes(tickangle=45)
             fig.write_html(str(self.output_dir / "prediction_top20.html"))
             log.info("✓ 生成: prediction_top20.html")
-        
+
         # 3. 概率 vs 涨幅散点图
-        if '牛股概率' in df.columns and '34日涨幅%' in df.columns:
-            fig = px.scatter(df.head(100), x='34日涨幅%', y='牛股概率',
-                           title='预测概率 vs 历史涨幅 (Top 100)',
-                           labels={'34日涨幅%': '34日涨幅 (%)', '牛股概率': '牛股概率'},
-                           hover_data=['股票代码', '股票名称'] if '股票代码' in df.columns else None)
+        if "牛股概率" in df.columns and "34日涨幅%" in df.columns:
+            fig = px.scatter(
+                df.head(100),
+                x="34日涨幅%",
+                y="牛股概率",
+                title="预测概率 vs 历史涨幅 (Top 100)",
+                labels={"34日涨幅%": "34日涨幅 (%)", "牛股概率": "牛股概率"},
+                hover_data=["股票代码", "股票名称"] if "股票代码" in df.columns else None,
+            )
             fig.write_html(str(self.output_dir / "prediction_scatter.html"))
             log.info("✓ 生成: prediction_scatter.html")
-    
+
     def generate_walk_forward_analysis(self):
         """生成Walk-Forward验证分析图"""
         log.info("生成Walk-Forward验证分析图...")
-        
+
         # 使用新路径查找Walk-Forward验证结果
         result_file = Path("data/training/metrics/walk_forward_validation_results.json")
         if not result_file.exists():
             log.warning("Walk-Forward验证结果不存在")
             return
-        
-        with open(result_file, 'r', encoding='utf-8') as f:
+
+        with open(result_file, "r", encoding="utf-8") as f:
             results = json.load(f)
-        
-        windows = results.get('windows', [])
+
+        windows = results.get("windows", [])
         if not windows:
             log.warning("没有验证窗口数据")
             return
-        
+
         df = pd.DataFrame(windows)
-        
+
         # 创建2x2子图
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('准确率', 'AUC-ROC', '精确率', '召回率')
-        )
-        
+        fig = make_subplots(rows=2, cols=2, subplot_titles=("准确率", "AUC-ROC", "精确率", "召回率"))
+
         # 准确率
         fig.add_trace(
-            go.Scatter(x=df['window_id'], y=df['accuracy'],
-                      mode='lines+markers', name='准确率',
-                      line=dict(color='#1f77b4', width=3)),
-            row=1, col=1
+            go.Scatter(
+                x=df["window_id"],
+                y=df["accuracy"],
+                mode="lines+markers",
+                name="准确率",
+                line=dict(color="#1f77b4", width=3),
+            ),
+            row=1,
+            col=1,
         )
-        
+
         # AUC
         fig.add_trace(
-            go.Scatter(x=df['window_id'], y=df['auc'],
-                      mode='lines+markers', name='AUC',
-                      line=dict(color='#ff7f0e', width=3)),
-            row=1, col=2
+            go.Scatter(
+                x=df["window_id"], y=df["auc"], mode="lines+markers", name="AUC", line=dict(color="#ff7f0e", width=3)
+            ),
+            row=1,
+            col=2,
         )
-        
+
         # 精确率
         fig.add_trace(
-            go.Scatter(x=df['window_id'], y=df['precision'],
-                      mode='lines+markers', name='精确率',
-                      line=dict(color='#2ca02c', width=3)),
-            row=2, col=1
+            go.Scatter(
+                x=df["window_id"],
+                y=df["precision"],
+                mode="lines+markers",
+                name="精确率",
+                line=dict(color="#2ca02c", width=3),
+            ),
+            row=2,
+            col=1,
         )
-        
+
         # 召回率
         fig.add_trace(
-            go.Scatter(x=df['window_id'], y=df['recall'],
-                      mode='lines+markers', name='召回率',
-                      line=dict(color='#d62728', width=3)),
-            row=2, col=2
+            go.Scatter(
+                x=df["window_id"],
+                y=df["recall"],
+                mode="lines+markers",
+                name="召回率",
+                line=dict(color="#d62728", width=3),
+            ),
+            row=2,
+            col=2,
         )
-        
-        fig.update_layout(height=800, showlegend=False,
-                         title_text="Walk-Forward 验证结果")
+
+        fig.update_layout(height=800, showlegend=False, title_text="Walk-Forward 验证结果")
         fig.write_html(str(self.output_dir / "walk_forward_results.html"))
         log.info("✓ 生成: walk_forward_results.html")
-    
+
     def generate_all(self):
         """生成所有图表"""
         log.info("=" * 60)
         log.info("开始生成所有图表...")
         log.info("=" * 60)
-        
+
         self.generate_sample_distribution()
         self.generate_feature_importance()
         self.generate_prediction_analysis()
         self.generate_walk_forward_analysis()
-        
+
         log.info("=" * 60)
         log.info(f"✓ 所有图表已生成到: {self.output_dir}")
         log.info("=" * 60)
-        
+
         # 生成索引页面
         self.generate_index()
-    
+
     def generate_index(self):
         """生成图表索引页面"""
-        html_content = """
+        html_content = (
+            """
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -309,7 +344,7 @@ class ChartGenerator:
 </head>
 <body>
     <h1>📊 AIQuant 可视化图表</h1>
-    
+
     <div class="category">
         <h2>📈 样本分析</h2>
         <div class="chart-grid">
@@ -330,7 +365,7 @@ class ChartGenerator:
             </div>
         </div>
     </div>
-    
+
     <div class="category">
         <h2>🎯 模型分析</h2>
         <div class="chart-grid">
@@ -346,7 +381,7 @@ class ChartGenerator:
             </div>
         </div>
     </div>
-    
+
     <div class="category">
         <h2>💎 预测分析</h2>
         <div class="chart-grid">
@@ -367,50 +402,55 @@ class ChartGenerator:
             </div>
         </div>
     </div>
-    
+
     <div class="category">
     <footer style="text-align: center; margin-top: 50px; color: #666;">
-        <p>AIQuant v3.0 | 生成时间: """ + str(pd.Timestamp.now()) + """</p>
+        <p>AIQuant v3.0 | 生成时间: """
+            + str(pd.Timestamp.now())
+            + """</p>
     </footer>
 </body>
 </html>
         """
-        
-        with open(self.output_dir / "index.html", 'w', encoding='utf-8') as f:
+        )
+
+        with open(self.output_dir / "index.html", "w", encoding="utf-8") as f:
             f.write(html_content)
-        
+
         log.info(f"✓ 生成索引页面: {self.output_dir / 'index.html'}")
 
 
 def main():
     """主函数"""
     import argparse
-    
-    parser = argparse.ArgumentParser(description='生成可视化图表')
-    parser.add_argument('--output', type=str, default='data/charts',
-                       help='输出目录，默认: data/charts')
-    parser.add_argument('--type', type=str, default='all',
-                       choices=['all', 'sample', 'feature', 'prediction', 'walk_forward'],
-                       help='图表类型，默认: all')
-    
+
+    parser = argparse.ArgumentParser(description="生成可视化图表")
+    parser.add_argument("--output", type=str, default="data/charts", help="输出目录，默认: data/charts")
+    parser.add_argument(
+        "--type",
+        type=str,
+        default="all",
+        choices=["all", "sample", "feature", "prediction", "walk_forward"],
+        help="图表类型，默认: all",
+    )
+
     args = parser.parse_args()
-    
+
     generator = ChartGenerator(output_dir=args.output)
-    
-    if args.type == 'all':
+
+    if args.type == "all":
         generator.generate_all()
-    elif args.type == 'sample':
+    elif args.type == "sample":
         generator.generate_sample_distribution()
-    elif args.type == 'feature':
+    elif args.type == "feature":
         generator.generate_feature_importance()
-    elif args.type == 'prediction':
+    elif args.type == "prediction":
         generator.generate_prediction_analysis()
-    elif args.type == 'walk_forward':
+    elif args.type == "walk_forward":
         generator.generate_walk_forward_analysis()
-    
+
     log.info(f"\n📊 查看图表: open {args.output}/index.html")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

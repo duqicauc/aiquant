@@ -24,27 +24,27 @@ from src.utils.logger import log
 
 def get_trading_dates(start_date: str, end_date: str):
     """返回区间内所有工作日（简单按周一到周五，不考虑节假日）。"""
-    start_dt = datetime.strptime(start_date, '%Y%m%d')
-    end_dt = datetime.strptime(end_date, '%Y%m%d')
+    start_dt = datetime.strptime(start_date, "%Y%m%d")
+    end_dt = datetime.strptime(end_date, "%Y%m%d")
     dates = []
     current = start_dt
     while current <= end_dt:
         if current.weekday() < 5:
-            dates.append(current.strftime('%Y%m%d'))
+            dates.append(current.strftime("%Y%m%d"))
         current += timedelta(days=1)
     return dates
 
 
 def main():
-    parser = argparse.ArgumentParser(description='批量生成 v253 预测（用于回测对比）')
-    parser.add_argument('--start-date', type=str, default='20260105', help='开始日期 YYYYMMDD')
-    parser.add_argument('--end-date', type=str, default='20260129', help='结束日期 YYYYMMDD')
+    parser = argparse.ArgumentParser(description="批量生成 v253 预测（用于回测对比）")
+    parser.add_argument("--start-date", type=str, default="20260105", help="开始日期 YYYYMMDD")
+    parser.add_argument("--end-date", type=str, default="20260129", help="结束日期 YYYYMMDD")
     args = parser.parse_args()
 
     dates = get_trading_dates(args.start_date, args.end_date)
     log.info(f"将对 {len(dates)} 个交易日生成 v253 预测: {args.start_date} ~ {args.end_date}")
 
-    script = PROJECT_ROOT / 'scripts' / 'predict_v253_top10.py'
+    script = PROJECT_ROOT / "scripts" / "predict_v253_top10.py"
     if not script.exists():
         log.error(f"预测脚本不存在: {script}")
         sys.exit(1)
@@ -53,7 +53,7 @@ def main():
     for i, date in enumerate(dates):
         log.info(f"[{i+1}/{len(dates)}] 运行 v253 预测: {date}")
         ret = subprocess.run(
-            [sys.executable, str(script), '--date', date],
+            [sys.executable, str(script), "--date", date],
             cwd=str(PROJECT_ROOT),
             capture_output=False,
         )
@@ -70,5 +70,5 @@ def main():
     log.info("输出目录: data/prediction/results/ (v2.5.3_full_*.csv, v2.5.3_top10_*.csv)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

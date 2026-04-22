@@ -19,7 +19,7 @@ def get_daily_data(self, stock_code, start_date, end_date, adjust='qfq'):
         if self.cache.has_data(stock_code, 'daily_data', start_date, end_date):
             df = self.cache.get_data(...)  # 从缓存读取
             return df
-        
+
         # 2. 检查是否需要增量更新
         missing_range = self.cache.get_missing_dates(...)
         if missing_range:
@@ -29,14 +29,14 @@ def get_daily_data(self, stock_code, start_date, end_date, adjust='qfq'):
             # 从缓存获取完整数据
             df = self.cache.get_data(...)
             return df
-    
+
     # 3. 从API获取数据（如果缓存没有）
     df = self._fetch_daily_data_from_api(...)
-    
+
     # 4. 保存到缓存
     if self.use_cache and self.cache and not df.empty:
         self.cache.save_data(df, 'daily_data', stock_code)
-    
+
     return df
 ```
 
@@ -72,7 +72,7 @@ def batch_get_daily_data(self, stock_codes, start_date, end_date, adjust='qfq'):
 # src/data/fetcher/tushare_fetcher.py:38-53
 def __init__(self, use_cache: bool = True, points: int = 5000):
     self.use_cache = use_cache
-    
+
     # 初始化缓存管理器
     if use_cache:
         self.cache = CacheManager()  # SQLite缓存
@@ -208,13 +208,12 @@ daily_data_dict = dm.batch_get_daily_data(stock_codes, start_date, end_date)
 - 性能提升：缓存命中时速度提升100倍
 - API配额：大幅节省API调用次数
 
-**建议**: 
+**建议**:
 - 首次运行会较慢（需要下载数据）
 - 后续运行会很快（从缓存读取）
 - 定期运行可以保持缓存更新
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.0
 **创建日期**: 2025-12-28
-
