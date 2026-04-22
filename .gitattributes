@@ -1,0 +1,45 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python files
+*.py text eol=lf
+*.sh text eol=lf
+
+# Config files
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# Binary files
+*.pkl binary
+*.joblib binary
+*.h5 binary
+*.hdf5 binary
+*.ckpt binary
+*.pt binary
+*.pth binary
+*.onnx binary
+*.pb binary
+*.cbm binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.zip binary
+*.tar.gz binary
+*.rar binary
+*.7z binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
