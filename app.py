@@ -261,7 +261,14 @@ with st.sidebar:
     
     page = st.radio(
         "导航",
-        ["🏠 市场概况", "🏥 股票诊断", "📁 批量分析", "💎 预测结果", "🌐 深度分析"],
+        [
+            "🏠 市场概况",
+            "🏥 股票诊断",
+            "📁 批量分析",
+            "💎 预测结果",
+            "🌐 深度分析",
+            "📊 v232回测报告",
+        ],
         index=0
     )
     
@@ -1210,6 +1217,74 @@ elif page == "🌐 深度分析":
                 import traceback
                 with st.expander("错误详情"):
                     st.code(traceback.format_exc())
+
+elif page == "📊 v232回测报告":
+    st.markdown('<h1 class="main-header">📊 v232_v270 互补策略回测报告</h1>', unsafe_allow_html=True)
+    st.markdown(
+        "查看 `data/prediction/results/` 下由 "
+        "`scripts/backtest_v232_v270_complementary.py` 生成的 Markdown / 每日 CSV / 操作明细。"
+    )
+    results_dir = project_root / "data" / "prediction" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    md_files = sorted(
+        results_dir.glob("backtest_report_*.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not md_files:
+        st.warning("暂无回测报告。请运行：")
+        st.code(
+            "python scripts/backtest_v232_v270_complementary.py --start-date YYYYMMDD --end-date YYYYMMDD --stop-loss-mode close",
+            language="bash",
+        )
+    else:
+        labels = [p.name for p in md_files]
+        choice = st.selectbox("选择报告文件", labels, index=0)
+        path = results_dir / choice
+        body = path.read_text(encoding="utf-8", errors="replace")
+
+        # 同前缀 PNG 资金曲线
+        stem = path.stem.replace("backtest_report_", "")
+        png_candidates = list(results_dir.glob(f"backtest_equity_curve_{stem}.png"))
+        if png_candidates:
+            st.image(str(png_candidates[0]), use_container_width=True)
+
+        st.subheader("报告正文")
+        st.markdown(body)
+
+        daily_glob = f"backtest_daily_{stem}.csv"
+        daily_files = list(results_dir.glob(daily_glob))
+        if daily_files:
+            st.subheader("每日资产（CSV）")
+            df_d = pd.read_csv(daily_files[0], encoding="utf-8-sig")
+            st.dataframe(df_d, use_container_width=True, height=320)
+            st.download_button(
+                "📥 下载每日资产 CSV",
+                df_d.to_csv(index=False, encoding="utf-8-sig"),
+                file_name=daily_files[0].name,
+                mime="text/csv",
+            )
+
+        op_glob = f"backtest_operations_{stem}.csv"
+        op_files = list(results_dir.glob(op_glob))
+        if op_files:
+            st.subheader("操作明细（CSV）")
+            df_o = pd.read_csv(op_files[0], encoding="utf-8-sig")
+            st.dataframe(df_o, use_container_width=True, height=360)
+            st.download_button(
+                "📥 下载操作明细 CSV",
+                df_o.to_csv(index=False, encoding="utf-8-sig"),
+                file_name=op_files[0].name,
+                mime="text/csv",
+            )
+
+        st.download_button(
+            "📥 下载当前 Markdown 报告",
+            body,
+            file_name=choice,
+            mime="text/markdown",
+        )
 
 # 页脚
 st.markdown("---")

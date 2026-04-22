@@ -1,0 +1,6 @@
+{
+  "max_negative_window_ratio": 0.3,
+  "min_sharpe": 0.0,
+  "max_drawdown_pct": -15.0,
+  "notes": "walkforward_v232_v270.py 可读取本文件做 Go/No-Go 汇总（模拟盘前）"
+}

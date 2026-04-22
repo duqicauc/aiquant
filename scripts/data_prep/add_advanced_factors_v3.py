@@ -14,7 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.data_manager import DataManager
 from src.utils.logger import log
-from scripts.add_advanced_factors_v2 import add_advanced_factors_with_checkpoint
+from scripts.data_prep.add_advanced_factors_v2 import add_advanced_factors_with_checkpoint
 
 
 def main():

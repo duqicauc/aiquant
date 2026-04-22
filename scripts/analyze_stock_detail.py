@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore')
 
 from src.utils.logger import log
 from src.data.data_manager import DataManager
-from scripts.predict_v240 import extract_features, load_model
+from scripts.archive.predict_v240 import extract_features, load_model
 
 
 def analyze_stock(ts_code, predict_date='20260107'):

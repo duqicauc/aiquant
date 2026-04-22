@@ -116,7 +116,7 @@ class TestEnsurer:
     
     def generate_missing_tests(self, files: List[Path]):
         """为缺失测试的文件生成测试模板"""
-        from scripts.generate_test_template import TestTemplateGenerator
+        from scripts.data_prep.generate_test_template import TestTemplateGenerator
         
         for source_file in files:
             try:

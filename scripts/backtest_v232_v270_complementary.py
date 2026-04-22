@@ -37,6 +37,23 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.logger import log
 from src.data.data_manager import DataManager
+from src.trading.ashare_rules import (
+    calc_trade_fee,
+    infer_limit_pct,
+    is_limit_down,
+    is_open_limit_up,
+    is_suspended_or_no_trade,
+    participation_ok,
+    round_price_a_share,
+    REASON_AUCTION_DEVIATION,
+    REASON_LIMIT_DOWN_NO_SELL,
+    REASON_LIMIT_UP_NO_BUY,
+    REASON_SUSPENDED,
+    REASON_VOLUME_INSUFFICIENT,
+)
+from src.trading.execution_gate import ExecutionGate
+from src.trading.models import OrderIntent, OrderSide
+from src.trading.risk_engine import RiskConfig, RiskEngine
 
 # 买入时排除的板块（行业名称包含任一词即排除）
 EXCLUDED_SECTORS_FOR_BUY = ['银行', '证券', '白酒', '房地产', '地产']
@@ -222,6 +239,23 @@ def get_stock_close_and_low(date: str, ts_code: str, dm: DataManager) -> Tuple[O
     return (None, None)
 
 
+def get_stock_snapshot(date: str, ts_code: str, dm: DataManager) -> Optional[Dict[str, float]]:
+    """获取股票在指定日期的行情快照（open/close/low/high/pre_close/vol/amount/pct_chg）。"""
+    try:
+        df_daily = dm.get_daily_data(ts_code, date, date)
+        if df_daily is None or df_daily.empty:
+            return None
+        row = df_daily.iloc[-1]
+        snap = {}
+        for col in ['open', 'close', 'low', 'high', 'pre_close', 'vol', 'amount', 'pct_chg']:
+            v = row.get(col)
+            snap[col] = float(v) if pd.notna(v) else np.nan
+        return snap
+    except Exception as e:
+        log.debug(f"获取{ts_code}在{date}的行情快照失败: {e}")
+        return None
+
+
 def calculate_position_value(holdings: Dict, date: str, dm: DataManager, 
                             predictions_cache: Dict[str, pd.DataFrame]) -> float:
     """
@@ -252,7 +286,21 @@ def backtest_complementary_strategy(
     use_ma5_sell: bool = True,         # 使用5日均线卖出策略
     stop_loss_pct: float = 4.0,        # 单标亏损达此比例即卖（默认4%）
     stop_loss_mode: str = 'none',      # 4%止损模式: 'none'=不加(默认) | 'close'=收盘价触发按收盘卖 | 'intraday_low'=日内最低触及按止损价卖
-    exclude_sectors: bool = False      # 是否排除银行/证券/白酒/房地产后再取Top10（默认不排除）
+    exclude_sectors: bool = False,     # 是否排除银行/证券/白酒/房地产后再取Top10（默认不排除）
+    buy_slippage_bps: float = 15.0,    # 买入滑点（bp）
+    sell_slippage_bps: float = 20.0,   # 卖出滑点（bp）
+    commission_rate: float = 0.0003,   # 佣金费率
+    min_commission: float = 5.0,       # 最低佣金
+    transfer_fee_rate: float = 0.00001,  # 过户费率（简化）
+    stamp_tax_rate: float = 0.001,     # 印花税（卖出）
+    max_participation_rate: float = 0.05,  # 单笔成交额占当日成交额比例上限
+    apply_frictions: bool = True,  # True：滑点+费用+涨跌停/停牌/量能约束；False：理想成交（与旧版接近）
+    enable_fees: Optional[bool] = None,  # None 时跟随 apply_frictions
+    enable_slippage: Optional[bool] = None,  # None 时跟随 apply_frictions
+    enable_execution_constraints: Optional[bool] = None,  # None 时跟随 apply_frictions
+    enable_risk_gate: Optional[bool] = None,  # None 时默认关闭，保持历史兼容
+    risk_max_daily_loss_pct: float = 3.0,
+    risk_max_drawdown_pct: float = 12.0,
 ) -> Dict:
     """
     回测互补策略
@@ -268,6 +316,15 @@ def backtest_complementary_strategy(
     Returns:
         回测结果字典
     """
+    if enable_fees is None:
+        enable_fees = bool(apply_frictions)
+    if enable_slippage is None:
+        enable_slippage = bool(apply_frictions)
+    if enable_execution_constraints is None:
+        enable_execution_constraints = bool(apply_frictions)
+    if enable_risk_gate is None:
+        enable_risk_gate = False
+
     log.info("="*80)
     log.info("v232_v270互补策略回测")
     log.info("="*80)
@@ -275,6 +332,13 @@ def backtest_complementary_strategy(
     log.info(f"初始资金: {initial_cash:,.0f}元")
     log.info(f"每支股票买入金额: {stock_amount:,.0f}元")
     log.info(f"买入Top{top_n_buy}" + ("（排除银行/证券/白酒/房地产后取）" if exclude_sectors else ""))
+    log.info(
+        f"执行参数: apply_frictions={apply_frictions}, fees={enable_fees}, slippage={enable_slippage}, "
+        f"execution_constraints={enable_execution_constraints}, risk_gate={enable_risk_gate}, "
+        f"买滑点{buy_slippage_bps:.1f}bp, 卖滑点{sell_slippage_bps:.1f}bp, "
+        f"佣金{commission_rate:.4%}(最低{min_commission:.2f}), 过户费{transfer_fee_rate:.4%}, "
+        f"印花税(卖){stamp_tax_rate:.3%}, 参与率上限{max_participation_rate:.1%}"
+    )
     if stop_loss_mode == 'none':
         log.info(f"卖出策略: 无4%硬止损；" + ("排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖" if use_ma5_sell else f"跌出Top{top_n_hold}则卖出"))
     elif stop_loss_mode == 'close':
@@ -311,6 +375,28 @@ def backtest_complementary_strategy(
     # 初始化
     cash = initial_cash
     holdings: Dict[str, Dict] = {}  # {ts_code: {'quantity': int, 'cost': float, 'buy_date': str, 'below_ma5_days': int}}
+    total_buy_fees = 0.0
+    total_sell_fees = 0.0
+    blocked_reasons: Dict[str, int] = {}
+
+    risk_engine: Optional[RiskEngine] = None
+    execution_gate: Optional[ExecutionGate] = None
+    if enable_risk_gate:
+        risk_engine = RiskEngine(
+            RiskConfig(
+                max_daily_loss_pct=risk_max_daily_loss_pct,
+                max_drawdown_pct=risk_max_drawdown_pct,
+            )
+        )
+        execution_gate = ExecutionGate(risk_engine)
+
+    stock_name_map: Dict[str, str] = {}
+    try:
+        df_stocks = dm.get_stock_list()
+        if df_stocks is not None and not df_stocks.empty and 'name' in df_stocks.columns:
+            stock_name_map = df_stocks.set_index('ts_code')['name'].astype(str).to_dict()
+    except Exception as e:
+        log.debug(f"获取股票名称映射失败: {e}")
     
     # 记录每日状态
     daily_records = []
@@ -319,11 +405,15 @@ def backtest_complementary_strategy(
     # 缓存预测结果
     predictions_cache: Dict[str, pd.DataFrame] = {}
     
-    # 逐日回测
+    # 逐日回测（prev_total_assets：风控日初净值）
+    prev_total_assets = initial_cash
     for i, date in enumerate(trading_dates):
         log.info(f"\n{'='*80}")
         log.info(f"日期: {date} ({i+1}/{len(trading_dates)})")
         log.info(f"{'='*80}")
+
+        if enable_risk_gate and risk_engine is not None:
+            risk_engine.on_day_start(prev_total_assets)
         
         # 加载「前一交易日」的互补结果，用于当日买入（选股日=前一交易日，买入日=当日）
         # 首日若无前一交易日文件（如1月5日前为元旦假期），则跳过，实际首日建仓为次日
@@ -379,51 +469,113 @@ def backtest_complementary_strategy(
                 log.info(f"现金不足，无法继续买入（剩余现金: {cash:,.0f}元）")
                 break
             
-            price = get_stock_open(date, ts_code, dm)
-            if price is None or price <= 0:
+            raw_open = get_stock_open(date, ts_code, dm)
+            if raw_open is None or raw_open <= 0:
                 log.warning(f"无法获取{ts_code}当日开盘价或价格无效，跳过买入")
                 continue
-            
+
+            name_hint = stock_name_map.get(ts_code, '')
+            limit_pct = infer_limit_pct(ts_code, name_hint)
+            snap = get_stock_snapshot(date, ts_code, dm)
+
+            if enable_execution_constraints:
+                if is_suspended_or_no_trade(snap):
+                    blocked_reasons[REASON_SUSPENDED] = blocked_reasons.get(REASON_SUSPENDED, 0) + 1
+                    log.info(f"跳过买入 {ts_code}: 停牌或无成交")
+                    continue
+                pre_close = snap.get('pre_close', np.nan) if snap else np.nan
+                if not np.isnan(pre_close) and pre_close > 0 and is_open_limit_up(raw_open, float(pre_close), limit_pct):
+                    blocked_reasons[REASON_LIMIT_UP_NO_BUY] = blocked_reasons.get(REASON_LIMIT_UP_NO_BUY, 0) + 1
+                    log.info(f"跳过买入 {ts_code}: 开盘涨停难以成交")
+                    continue
+            if enable_risk_gate and execution_gate is not None:
+                gate_intent = OrderIntent(
+                    client_order_id=f"{date}_{ts_code}_buy",
+                    ts_code=ts_code,
+                    side=OrderSide.BUY,
+                    quantity=0,
+                    limit_price=raw_open,
+                    reason="backtest_buy",
+                )
+                allowed, gate_reason = execution_gate.allow_intent(gate_intent)
+                if not allowed:
+                    blocked_reasons[gate_reason] = blocked_reasons.get(gate_reason, 0) + 1
+                    log.info(f"跳过买入 {ts_code}: 风控门控 {gate_reason}")
+                    continue
+
+            if enable_slippage:
+                price = round_price_a_share(raw_open * (1.0 + buy_slippage_bps / 10000.0))
+            else:
+                price = raw_open
+
             quantity = int(stock_amount / price / 100) * 100  # 按手买入（100股为1手）
             if quantity < 100:
-                log.warning(f"{ts_code}价格过高，无法买入1手（开盘价: {price:.2f}元）")
+                log.warning(f"{ts_code}价格过高，无法买入1手（价: {price:.2f}元）")
                 continue
-            
-            buy_amount = quantity * price
-            
-            if buy_amount > cash:
-                quantity = int(cash / price / 100) * 100
+
+            gross = quantity * price
+            buy_fee = calc_trade_fee(
+                gross, False, commission_rate, min_commission, transfer_fee_rate, stamp_tax_rate
+            ) if enable_fees else 0.0
+            total_out = gross + buy_fee
+
+            while quantity >= 100 and total_out > cash:
+                quantity -= 100
                 if quantity < 100:
                     break
-                buy_amount = quantity * price
-            
-            cash -= buy_amount
-            
+                gross = quantity * price
+                buy_fee = calc_trade_fee(
+                    gross, False, commission_rate, min_commission, transfer_fee_rate, stamp_tax_rate
+                ) if enable_fees else 0.0
+                total_out = gross + buy_fee
+            if quantity < 100 or total_out > cash:
+                log.info(f"现金不足，无法买入 {ts_code}（需约 {total_out:,.0f} 元，现金 {cash:,.0f}）")
+                continue
+
+            if enable_execution_constraints:
+                amt_thousand = snap.get('amount', np.nan) if snap else np.nan
+                if not np.isnan(amt_thousand) and float(amt_thousand) > 0:
+                    ok_part, part = participation_ok(gross, float(amt_thousand), max_participation_rate)
+                    if not ok_part:
+                        blocked_reasons[REASON_VOLUME_INSUFFICIENT] = blocked_reasons.get(REASON_VOLUME_INSUFFICIENT, 0) + 1
+                        log.info(f"跳过买入 {ts_code}: 参与率 {part:.2%} 超过上限 {max_participation_rate:.2%}")
+                        continue
+
+            cash -= total_out
+            total_buy_fees += buy_fee
+
             if ts_code not in holdings:
                 holdings[ts_code] = {
                     'quantity': quantity,
-                    'cost': buy_amount,
+                    'cost': gross + buy_fee,
                     'buy_date': date,
                     'below_ma5_days': 0
                 }
             else:
                 holdings[ts_code]['quantity'] += quantity
-                holdings[ts_code]['cost'] += buy_amount
+                holdings[ts_code]['cost'] += gross + buy_fee
                 holdings[ts_code]['below_ma5_days'] = 0
             today_bought.add(ts_code)
-            
+
             buy_reason = f"进入Top10(选股日{signal_date})，当日开盘价买入"
-            log.info(f"买入: {ts_code} - {quantity}股 @ {price:.2f}元(开盘) = {buy_amount:,.0f}元 ({buy_reason})")
-            
-            operations_log.append({
+            log.info(
+                f"买入: {ts_code} - {quantity}股 @ {price:.2f}元 = {gross:,.0f}元"
+                + (f" 费用{buy_fee:,.2f}元" if enable_fees else "")
+                + f" ({buy_reason})"
+            )
+
+            op_row = {
                 'date': date,
                 'operation': '买入',
                 'ts_code': ts_code,
                 'quantity': quantity,
                 'price': price,
-                'amount': buy_amount,
-                'reason': buy_reason
-            })
+                'amount': gross,
+                'fee': buy_fee,
+                'net_cash': -total_out,
+                'reason': buy_reason,
+            }
+            operations_log.append(op_row)
         
         # 第二步：卖出（可选4%止损；或 排名50名之后 且 连续两日收盘价低于五日均价，在D日收盘价卖）
         # T+1 规则：当日买入的标的不可卖出（不触发4%止损），但参与MA5计数（从买入当日开始累计）
@@ -501,31 +653,55 @@ def backtest_complementary_strategy(
         for sell_info in stocks_to_sell:
             ts_code, price, ma5, reason = sell_info
             position = holdings[ts_code]
-            
-            sell_amount = position['quantity'] * price
-            profit = sell_amount - position['cost']
+
+            snap_sell = get_stock_snapshot(date, ts_code, dm)
+            name_h = stock_name_map.get(ts_code, '')
+            lim_pct = infer_limit_pct(ts_code, name_h)
+            if enable_execution_constraints and snap_sell and not is_suspended_or_no_trade(snap_sell):
+                if is_limit_down(snap_sell, lim_pct):
+                    blocked_reasons[REASON_LIMIT_DOWN_NO_SELL] = blocked_reasons.get(REASON_LIMIT_DOWN_NO_SELL, 0) + 1
+                    log.info(f"无法卖出 {ts_code}: 收盘跌停，流动性不足")
+                    continue
+
+            exec_price = price
+            if enable_slippage:
+                exec_price = round_price_a_share(price * (1.0 - sell_slippage_bps / 10000.0))
+
+            qty = position['quantity']
+            sell_gross = qty * exec_price
+            sell_fee = calc_trade_fee(
+                sell_gross, True, commission_rate, min_commission, transfer_fee_rate, stamp_tax_rate
+            ) if enable_fees else 0.0
+            net_proceeds = sell_gross - sell_fee
+            profit = net_proceeds - position['cost']
             profit_pct = (profit / position['cost'] * 100) if position['cost'] > 0 else 0
-            
-            cash += sell_amount
+
+            cash += net_proceeds
+            total_sell_fees += sell_fee
             ma5_info = f"，MA5={ma5:.2f}" if ma5 else ""
-            log.info(f"卖出: {ts_code} - {position['quantity']}股 @ {price:.2f}元(收盘){ma5_info} = {sell_amount:,.0f}元 "
-                    f"(盈亏: {profit:+,.0f}元, {profit_pct:+.2f}%，{reason})")
-            
+            log.info(
+                f"卖出: {ts_code} - {qty}股 @ {exec_price:.2f}元{ma5_info} = {sell_gross:,.0f}元"
+                + (f" 费用{sell_fee:,.2f}元 净入{net_proceeds:,.0f}元" if enable_fees else "")
+                + f" (盈亏: {profit:+,.0f}元, {profit_pct:+.2f}%，{reason})"
+            )
+
             operations_log.append({
                 'date': date,
                 'operation': '卖出',
                 'ts_code': ts_code,
-                'quantity': position['quantity'],
-                'price': price,
-                'amount': sell_amount,
+                'quantity': qty,
+                'price': exec_price,
+                'amount': sell_gross,
+                'fee': sell_fee,
+                'net_cash': net_proceeds,
                 'cost': position['cost'],
                 'profit': profit,
                 'profit_pct': profit_pct,
                 'reason': reason,
                 'ma5': ma5,
-                'buy_date': position.get('buy_date', date)
+                'buy_date': position.get('buy_date', date),
             })
-            
+
             del holdings[ts_code]
         
         # 当日买卖原因备注（用于每日记录）
@@ -541,14 +717,20 @@ def backtest_complementary_strategy(
         total_assets = cash + position_value
         total_return = total_assets - initial_cash
         total_return_pct = (total_return / initial_cash * 100) if initial_cash > 0 else 0
-        
+
+        risk_halt = False
+        risk_reason = ""
+        if enable_risk_gate and risk_engine is not None:
+            risk_halt, risk_reason = risk_engine.on_day_end(total_assets)
+        prev_total_assets = total_assets
+
         log.info(f"\n当日资产:")
         log.info(f"  现金: {cash:,.0f}元")
         log.info(f"  持仓市值: {position_value:,.0f}元")
         log.info(f"  总资产: {total_assets:,.0f}元")
         log.info(f"  总收益: {total_return:+,.0f}元 ({total_return_pct:+.2f}%)")
         log.info(f"  持仓数量: {len(holdings)}只")
-        
+
         # 记录每日状态（含买卖原因备注）
         daily_records.append({
             'date': date,
@@ -561,7 +743,9 @@ def backtest_complementary_strategy(
             'buy_count': buy_count_today,
             'sell_count': len(stocks_to_sell),
             'buy_reason_remark': buy_reason_remark,
-            'sell_reason_remark': sell_reason_remark
+            'sell_reason_remark': sell_reason_remark,
+            'risk_halt': risk_halt,
+            'risk_reason': risk_reason,
         })
     
     # 计算回测指标
@@ -643,6 +827,15 @@ def backtest_complementary_strategy(
     except Exception as e:
         log.warning(f"获取沪深300数据失败，报告中不包含指数对比: {e}")
     
+    blocked_reasons_std = {
+        REASON_LIMIT_UP_NO_BUY: blocked_reasons.get(REASON_LIMIT_UP_NO_BUY, 0),
+        REASON_LIMIT_DOWN_NO_SELL: blocked_reasons.get(REASON_LIMIT_DOWN_NO_SELL, 0),
+        REASON_SUSPENDED: blocked_reasons.get(REASON_SUSPENDED, 0),
+        REASON_VOLUME_INSUFFICIENT: blocked_reasons.get(REASON_VOLUME_INSUFFICIENT, 0),
+        REASON_AUCTION_DEVIATION: blocked_reasons.get(REASON_AUCTION_DEVIATION, 0),
+        "halt_new_buy": blocked_reasons.get("halt_new_buy", 0),
+    }
+
     # 汇总结果
     result = {
         'start_date': start_date,
@@ -679,7 +872,25 @@ def backtest_complementary_strategy(
         'csi300_curve': csi300_curve,
         'n_trading_days': n_trading_days,
         'annualized_return_pct': annualized_return_pct,
-        'sharpe_ratio': sharpe_ratio
+        'sharpe_ratio': sharpe_ratio,
+        'apply_frictions': apply_frictions,
+        'enable_fees': enable_fees,
+        'enable_slippage': enable_slippage,
+        'enable_execution_constraints': enable_execution_constraints,
+        'enable_risk_gate': enable_risk_gate,
+        'total_buy_fees': total_buy_fees,
+        'total_sell_fees': total_sell_fees,
+        'total_fees': total_buy_fees + total_sell_fees,
+        'blocked_reasons': blocked_reasons_std,
+        'attribution_meta': {
+            'enable_fees': enable_fees,
+            'enable_slippage': enable_slippage,
+            'enable_execution_constraints': enable_execution_constraints,
+            'enable_risk_gate': enable_risk_gate,
+            'risk_max_daily_loss_pct': risk_max_daily_loss_pct,
+            'risk_max_drawdown_pct': risk_max_drawdown_pct,
+        },
+        'friction_tag': '' if apply_frictions else '_ideal',
     }
     
     return result
@@ -731,7 +942,8 @@ def _plot_equity_curve(result: Dict, output_dir: Path, df_curve: pd.DataFrame, c
         fig.tight_layout()
         sl_tag = result.get('stop_loss_mode', 'none')
         file_suffix = '_exclude_sectors' if result.get('exclude_sectors') else ''
-        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.png"
+        ft = result.get('friction_tag', '')
+        name = f"backtest_equity_curve_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}{ft}.png"
         out_path = output_dir / name
         plt.savefig(out_path, dpi=120, bbox_inches='tight')
         plt.close()
@@ -788,10 +1000,12 @@ def generate_report(result: Dict, output_dir: Path):
         if df_stocks is not None and not df_stocks.empty and 'name' in df_stocks.columns:
             stock_name_map = df_stocks.set_index('ts_code')['name'].astype(str).to_dict()
         # 报告涉及的所有股票代码（操作记录 + 最终持仓）
-        all_ts_codes = list(set(
-            result['operations_log']['ts_code'].tolist() if not result['operations_log'].empty else []
-            + list(result.get('final_holdings', {}).keys())
-        ))
+        codes_from_ops = (
+            result['operations_log']['ts_code'].tolist()
+            if not result['operations_log'].empty
+            else []
+        )
+        all_ts_codes = list(set(codes_from_ops + list(result.get('final_holdings', {}).keys())))
         if all_ts_codes:
             stock_sector_map = dm.fetcher.get_stock_industry_map(all_ts_codes) or {}
     except Exception as e:
@@ -809,15 +1023,16 @@ def generate_report(result: Dict, output_dir: Path):
     sl_tag = result.get('stop_loss_mode', 'none')
     # 开启排除板块时文件名加后缀，避免覆盖未排除版的结果
     file_suffix = '_exclude_sectors' if result.get('exclude_sectors') else ''
+    friction_tag = '' if result.get('apply_frictions', True) else '_ideal'
     
     # 保存每日记录
-    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.csv"
+    daily_file = output_dir / f"backtest_daily_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}{friction_tag}.csv"
     result['daily_records'].to_csv(daily_file, index=False, encoding='utf-8-sig')
     log.success(f"\n✓ 每日记录已保存: {daily_file}")
     
     # 保存操作日志（含股票名称、板块列）
     if not result['operations_log'].empty:
-        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.csv"
+        operations_file = output_dir / f"backtest_operations_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}{friction_tag}.csv"
         df_op_save = result['operations_log'].copy()
         idx = list(df_op_save.columns).index('ts_code') + 1
         df_op_save.insert(idx, 'name', df_op_save['ts_code'].map(lambda c: stock_name_map.get(c, c)))
@@ -826,7 +1041,7 @@ def generate_report(result: Dict, output_dir: Path):
         log.success(f"✓ 操作日志已保存: {operations_file}")
     
     # 生成文本报告
-    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}.md"
+    report_file = output_dir / f"backtest_report_{result['start_date']}_{result['end_date']}_sl_{sl_tag}{file_suffix}{friction_tag}.md"
     with open(report_file, 'w', encoding='utf-8') as f:
         df_op = result['operations_log']  # 供持仓与盈亏统计、详细买卖记录等使用
         # 提前计算卖出记录与平均持仓时间，供「交易统计」与「持仓与盈亏统计」共用
@@ -863,10 +1078,24 @@ def generate_report(result: Dict, output_dir: Path):
         f.write(f"- 当日顺序: 先买后卖；T日卖出资金T+1日开盘用于买\n")
         f.write(f"- 止损模式: {sl_label}\n")
         if result.get('use_ma5_sell', True):
-            f.write(f"- 卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖\n\n")
+            f.write(f"- 卖出策略: 排名50名之后 且 连续两日收盘价低于五日均价，在T2收盘价卖\n")
         else:
-            f.write(f"- 卖出策略: 跌出Top{result.get('top_n_hold', 50)}则卖出\n\n")
-        
+            f.write(f"- 卖出策略: 跌出Top{result.get('top_n_hold', 50)}则卖出\n")
+        f.write(f"- 执行口径: {'含滑点+费用+涨跌停/停牌/量能约束（贴近实盘）' if result.get('apply_frictions', True) else '理想成交（无摩擦，用于对比）'}\n\n")
+
+        f.write(f"## 执行与成本\n\n")
+        f.write(f"- 累计买入费用: {result.get('total_buy_fees', 0):,.2f} 元\n")
+        f.write(f"- 累计卖出费用: {result.get('total_sell_fees', 0):,.2f} 元\n")
+        f.write(f"- 费用合计: {result.get('total_fees', 0):,.2f} 元\n")
+        br = result.get('blocked_reasons') or {}
+        if br:
+            f.write(f"- 阻塞统计（不可成交次数）:\n")
+            for k, v in sorted(br.items(), key=lambda x: -x[1]):
+                f.write(f"  - {k}: {v}\n")
+        else:
+            f.write(f"- 阻塞统计: 无\n")
+        f.write(f"\n")
+
         f.write(f"## 资金情况\n\n")
         f.write(f"- 初始资金: {result['initial_cash']:,.0f}元\n")
         f.write(f"- 最终资产: {result['final_assets']:,.0f}元\n")
@@ -1118,6 +1347,14 @@ def main():
     parser.add_argument('--exclude-sectors', action='store_true',
                         help='买入时排除银行、证券、白酒、房地产板块后再取Top10（默认不排除）')
     parser.add_argument('--output-dir', type=str, default=None, help='输出目录')
+    parser.add_argument('--no-frictions', action='store_true', help='理想成交：不计滑点/费用/涨跌停与量能阻塞（输出文件名带 _ideal）')
+    parser.add_argument('--buy-slippage-bps', type=float, default=15.0, help='买入滑点(bp)')
+    parser.add_argument('--sell-slippage-bps', type=float, default=20.0, help='卖出滑点(bp)')
+    parser.add_argument('--commission-rate', type=float, default=0.0003, help='佣金费率')
+    parser.add_argument('--min-commission', type=float, default=5.0, help='单笔最低佣金(元)')
+    parser.add_argument('--transfer-fee-rate', type=float, default=0.00001, help='过户费率')
+    parser.add_argument('--stamp-tax-rate', type=float, default=0.001, help='卖出印花税税率')
+    parser.add_argument('--max-participation-rate', type=float, default=0.05, help='单笔成交额占当日成交额比例上限')
     
     args = parser.parse_args()
     
@@ -1139,7 +1376,15 @@ def main():
         use_ma5_sell=use_ma5_sell,
         stop_loss_pct=args.stop_loss_pct,
         stop_loss_mode=args.stop_loss_mode,
-        exclude_sectors=args.exclude_sectors
+        exclude_sectors=args.exclude_sectors,
+        apply_frictions=not args.no_frictions,
+        buy_slippage_bps=args.buy_slippage_bps,
+        sell_slippage_bps=args.sell_slippage_bps,
+        commission_rate=args.commission_rate,
+        min_commission=args.min_commission,
+        transfer_fee_rate=args.transfer_fee_rate,
+        stamp_tax_rate=args.stamp_tax_rate,
+        max_participation_rate=args.max_participation_rate,
     )
     
     if result:
