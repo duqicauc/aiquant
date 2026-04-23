@@ -316,7 +316,11 @@ def main():
     else:
         df_combined = df_features_34d.copy()
 
-    # 11. 保存
+    # 11. 保存（统一 trade_date 格式，避免与旧数据混合格式冲突）
+    for df_save in [df_existing_features, df_combined, df_all_neg]:
+        if "trade_date" in df_save.columns:
+            df_save["trade_date"] = pd.to_datetime(df_save["trade_date"]).dt.strftime("%Y-%m-%d")
+
     backup_file = enhanced_file.parent / f"negative_feature_data_v2_34d_v5_enhanced_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     if enhanced_file.exists():
         df_existing_features.to_csv(backup_file, index=False)

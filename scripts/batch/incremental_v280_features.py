@@ -290,7 +290,11 @@ def main():
         df_features_34d[common_cols]
     ], ignore_index=True)
 
-    # 12. 保存
+    # 12. 保存（统一 trade_date 格式，避免与旧数据混合格式冲突）
+    for df_save in [df_existing_features, df_combined, df_all_samples]:
+        if "trade_date" in df_save.columns:
+            df_save["trade_date"] = pd.to_datetime(df_save["trade_date"]).dt.strftime("%Y-%m-%d")
+
     backup_file = enhanced_file.parent / f"feature_data_34d_v5_enhanced_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     df_existing_features.to_csv(backup_file, index=False)
     log.info(f"原文件已备份: {backup_file}")
