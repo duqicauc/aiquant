@@ -27,7 +27,8 @@ def main():
     parser.add_argument("--per-stock", type=float, default=300_000, help="每只股票买入金额")
     parser.add_argument("--top-n", type=int, default=10, help="每日买入数量")
     parser.add_argument("--stop-loss", type=float, default=4.0, help="止损百分比")
-    parser.add_argument("--take-profit", type=float, default=5.0, help="止盈百分比")
+    parser.add_argument("--trailing-stop", type=float, default=5.0, help="移动止盈回撤百分比")
+    parser.add_argument("--trailing-activation", type=float, default=5.0, help="移动止盈激活阈值百分比")
     parser.add_argument("--capital", type=float, default=10_000_000, help="初始资金")
     args = parser.parse_args()
 
@@ -40,7 +41,8 @@ def main():
         per_stock_amount=args.per_stock,
         top_n_buy=args.top_n,
         stop_loss_pct=args.stop_loss,
-        take_profit_pct=args.take_profit,
+        trailing_stop_pct=args.trailing_stop,
+        trailing_stop_activation=args.trailing_activation,
         ma_window=5,
         ma_consecutive_days=2,
         buy_slippage_bps=15.0,

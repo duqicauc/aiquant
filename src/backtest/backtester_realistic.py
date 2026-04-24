@@ -45,7 +45,8 @@ class RealisticBacktester:
         per_stock_amount: float = 300_000,  # 每只股票固定买入金额
         top_n_buy: int = 10,
         stop_loss_pct: float = 4.0,
-        take_profit_pct: float = 5.0,
+        trailing_stop_pct: float = 3.0,
+        trailing_stop_activation: float = 5.0,
         ma_window: int = 5,
         ma_consecutive_days: int = 2,
         buy_slippage_bps: float = 15.0,
@@ -60,7 +61,8 @@ class RealisticBacktester:
         self.per_stock_amount = per_stock_amount
         self.top_n_buy = top_n_buy
         self.stop_loss_pct = stop_loss_pct
-        self.take_profit_pct = take_profit_pct
+        self.trailing_stop_pct = trailing_stop_pct
+        self.trailing_stop_activation = trailing_stop_activation
         self.ma_window = ma_window
         self.ma_consecutive_days = ma_consecutive_days
         self.buy_slippage_bps = buy_slippage_bps
@@ -449,15 +451,19 @@ class RealisticBacktester:
                             })
                     continue
 
-                # 止盈检查 → 立即卖出（当日收盘价），无论市场环境
+                # 移动止盈检查 → 盈利超激活阈值后，从峰值回撤超过阈值时卖出
+                peak_price = pos.get("peak_price", cost)
                 profit_pct = (close - cost) / cost * 100
-                if profit_pct >= self.take_profit_pct:
+                peak_pct = (peak_price - cost) / cost * 100
+                if peak_pct >= self.trailing_stop_activation and close < peak_price * (1 - self.trailing_stop_pct / 100):
                     if self._can_sell(ts_code, row):
                         sell_price = close * (1 - self.sell_slippage_bps / 10000)
                         amount = sell_price * pos["qty"]
                         commission = self._calc_sell_cost(amount)
                         net_proceeds = amount - commission
                         profit = (sell_price - cost) * pos["qty"] - commission
+                        profit_pct = (close - cost) / cost * 100
+                        peak_pct = (peak_price - cost) / cost * 100
 
                         next_trade_date = trade_dates[i + 1] if i + 1 < len(trade_dates) else None
                         if next_trade_date:
@@ -469,18 +475,18 @@ class RealisticBacktester:
                             "date": date, "ts_code": ts_code, "action": "SELL",
                             "price": sell_price, "qty": pos["qty"], "amount": amount,
                             "commission": commission, "profit": profit,
-                            "reason": f"止盈({profit_pct:.1f}%)"
+                            "reason": f"移动止盈(峰值{peak_pct:.1f}%, 回撤{self.trailing_stop_pct:.0f}%)"
                         })
                         sold_today.append(ts_code)
-                        log.info(f"  卖出 {ts_code}: 止盈 {profit_pct:.1f}% @ {sell_price:.2f}, 费用{commission:.0f}元")
+                        log.info(f"  卖出 {ts_code}: 移动止盈 峰值{peak_pct:.1f}%→现价{profit_pct:.1f}% @ {sell_price:.2f}, 费用{commission:.0f}元")
                     else:
-                        log.info(f"  止盈触发 {ts_code}: 但无法卖出(跌停/停牌), 顺延")
+                        log.info(f"  移动止盈触发 {ts_code}: 但无法卖出(跌停/停牌), 顺延")
                         next_trade_date = trade_dates[i + 1] if i + 1 < len(trade_dates) else None
                         if next_trade_date:
                             pending_sells.append({
                                 "ts_code": ts_code,
                                 "sell_date": next_trade_date,
-                                "reason": f"止盈顺延"
+                                "reason": f"移动止盈顺延"
                             })
                     continue
 
