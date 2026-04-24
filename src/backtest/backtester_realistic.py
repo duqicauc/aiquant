@@ -31,6 +31,7 @@ import os
 from src.data.tushare_data_provider import TushareDataProvider
 from src.trading.position_sizer import PositionSizer
 from src.trading.sector_filter import SectorFilter
+from src.trading.event_calendar import EventCalendar
 from src.utils.logger import log
 
 load_dotenv()
@@ -84,6 +85,7 @@ class RealisticBacktester:
         if enable_sector_filter:
             cfg = sector_filter_config or {}
             self.sector_filter = SectorFilter(**cfg)
+        self.event_calendar = EventCalendar()
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
@@ -223,6 +225,7 @@ class RealisticBacktester:
         daily_values = []
         frozen_proceeds = {}  # {解冻日期: 金额}
         pending_sells = []  # [{ts_code, sell_date, reason}]
+        price_history = {}  # {ts_code: [近20日close]} 用于波动率计算
 
         for i, date in enumerate(trade_dates):
             signal_date = trade_dates[i - 1] if i > 0 else date
@@ -248,6 +251,15 @@ class RealisticBacktester:
                 log.warning(f"  {date} 无价格数据")
                 continue
 
+            # 更新价格历史缓存（用于波动率计算）
+            for ts_code in df_daily.index:
+                close = float(df_daily.loc[ts_code]["close"])
+                if ts_code not in price_history:
+                    price_history[ts_code] = []
+                price_history[ts_code].append(close)
+                if len(price_history[ts_code]) > 20:
+                    price_history[ts_code].pop(0)
+
             bought_today = set()
             sold_today = []
 
@@ -261,6 +273,10 @@ class RealisticBacktester:
                 log.info(f"  市场环境: {market_type} 上证{sh_close:.0f}<MA20{sh_ma20:.0f}，暂停买入 + 清空持仓")
             else:
                 log.info(f"  市场环境: {market_type} 上证{sh_close:.0f}>=MA20{sh_ma20:.0f}，全局仓位{global_ratio*100:.0f}%")
+
+            # 事件驱动仓位调整
+            event_impact = self.event_calendar.get_event_impact(date)
+            event_mult = event_impact["position_mult"]
 
             # ========== 阶段A: 市场环境清仓（熊市时清空所有非当日买入持仓） ==========
             if not is_bull:
@@ -363,6 +379,15 @@ class RealisticBacktester:
                     open_price = float(row["open"])
                     buy_price = open_price * (1 + self.buy_slippage_bps / 10000)
 
+                    # 计算个股波动率（近20日收盘价）
+                    vol_annual = None
+                    if ts_code in price_history and len(price_history[ts_code]) >= 10:
+                        closes = price_history[ts_code]
+                        returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
+                        if returns:
+                            vol_daily = np.std(returns)
+                            vol_annual = vol_daily * np.sqrt(252)
+
                     # 动态仓位管理: 计算买入金额
                     buy_amount = self.position_sizer.calculate(
                         market_state=market_state,
@@ -370,6 +395,8 @@ class RealisticBacktester:
                         portfolio_value=portfolio_value,
                         holding_value=holding_value,
                         current_holding_count=len(holdings),
+                        volatility_annual=vol_annual,
+                        event_mult=event_mult,
                     )
                     if buy_amount <= 0:
                         continue
@@ -398,6 +425,25 @@ class RealisticBacktester:
                                     log.info(f"  板块加成 {ts_code}: +{(boost-1)*100:.0f}%")
                                 elif boost < 1.0:
                                     log.info(f"  板块折扣 {ts_code}: {(boost-1)*100:.0f}%")
+
+                            # 事件主题加成（如两会期间政策主题额外加成）
+                            if event_impact["sector_boost"] > 0 and self.sector_filter:
+                                stock_concepts = self.sector_filter.get_stock_concepts(ts_code)
+                                stock_ind = self.sector_filter.get_stock_industry(ts_code)
+                                all_labels = stock_concepts + [stock_ind]
+                                from src.trading.sector_filter import POLICY_THEME_MAP
+                                matched = False
+                                for theme, keywords in POLICY_THEME_MAP.items():
+                                    for label in all_labels:
+                                        for kw in keywords:
+                                            if kw in label or label in kw:
+                                                event_boost = 1.0 + event_impact["sector_boost"]
+                                                buy_amount *= event_boost
+                                                log.info(f"  事件加成 {ts_code}: 政策主题[{theme}] +{event_impact['sector_boost']*100:.0f}%")
+                                                matched = True
+                                                break
+                                    if matched:
+                                        break
 
                             # 记录该行业已买入
                             if stock_ind:

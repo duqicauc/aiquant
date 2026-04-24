@@ -96,6 +96,8 @@ class PositionSizer:
         portfolio_value: float,
         holding_value: float = 0.0,
         current_holding_count: int = 0,
+        volatility_annual: Optional[float] = None,
+        event_mult: float = 1.0,
     ) -> float:
         """
         计算单票买入金额
@@ -127,8 +129,20 @@ class PositionSizer:
         # 第二层: 置信度权重
         confidence_w = self.get_confidence_weight(rank)
 
-        # 第三层: 基础金额计算
+        # 第三层: 基础金额计算 + 波动率调整
         base_amount = self.base_per_stock * global_ratio * confidence_w
+
+        # 波动率调整: 高波动降仓，低波动加仓
+        if volatility_annual is not None and volatility_annual > 0:
+            vol_factor = 0.30 / volatility_annual
+            vol_factor = max(0.5, min(1.5, vol_factor))
+            base_amount *= vol_factor
+            log.debug(f"  波动率调整: 年化{volatility_annual:.1%}, 因子{vol_factor:.2f}")
+
+        # 事件驱动仓位调整
+        if event_mult != 1.0:
+            base_amount *= event_mult
+            log.debug(f"  事件调整: 仓位×{event_mult:.0%}")
 
         # 第四层: 组合约束
         # 4.1 单票上限
