@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-热点板块过滤器 - 结合Tushare板块数据增强选股
+热点板块过滤器 v2 - 结合Tushare板块数据增强选股
 
-功能：
-1. 获取当日热门行业/概念板块
-2. 判断股票是否属于热点板块
-3. 计算板块热度加成系数（用于调整买入金额）
-4. 支持十五五政策主题映射
+优化点：
+1. 市场环境感知：bear/oscillation市降低加成、非热点反向过滤
+2. 热点持续性：连续多日上榜的热点才给高加成
+3. 板块轮动检测：热点切换过快时整体降权
+4. 政策主题映射：十五五政策主题关键词匹配
 """
 
 import json
@@ -34,9 +34,41 @@ POLICY_THEME_MAP = {
     "自主可控": ["信创", "国产替代", "操作系统", "数据库", "中间件", "办公软件"],
 }
 
+# 市场环境 → 加成参数映射
+MARKET_BOOST_CONFIG = {
+    "strong_bull": {
+        "industry_max": 0.30,
+        "concept_max": 0.40,
+        "policy_max": 0.25,
+        "non_hot_multiplier": 1.0,
+        "overall_cap": 2.5,
+    },
+    "weak_bull": {
+        "industry_max": 0.20,
+        "concept_max": 0.30,
+        "policy_max": 0.15,
+        "non_hot_multiplier": 0.85,
+        "overall_cap": 2.0,
+    },
+    "oscillating": {
+        "industry_max": 0.08,
+        "concept_max": 0.08,
+        "policy_max": 0.05,
+        "non_hot_multiplier": 0.60,
+        "overall_cap": 1.3,
+    },
+    "bear": {
+        "industry_max": 0.05,
+        "concept_max": 0.05,
+        "policy_max": 0.0,
+        "non_hot_multiplier": 0.50,
+        "overall_cap": 1.15,
+    },
+}
+
 
 class SectorFilter:
-    """热点板块过滤器"""
+    """热点板块过滤器 v2"""
 
     def __init__(
         self,
@@ -45,10 +77,10 @@ class SectorFilter:
         hot_industry_top_n: int = 10,
         hot_concept_top_n: int = 20,
         hot_moneyflow_top_n: int = 15,
-        industry_boost_max: float = 0.30,
-        concept_boost_max: float = 0.40,
-        policy_boost_max: float = 0.25,
         enable_policy: bool = True,
+        lookback_days: int = 2,
+        rotation_threshold: float = 0.30,
+        rotation_penalty: float = 0.70,
     ):
         self.fetcher = tushare_fetcher or TushareFetcher()
         self.cache_dir = Path(cache_dir)
@@ -57,16 +89,15 @@ class SectorFilter:
         self.hot_industry_top_n = hot_industry_top_n
         self.hot_concept_top_n = hot_concept_top_n
         self.hot_moneyflow_top_n = hot_moneyflow_top_n
-        self.industry_boost_max = industry_boost_max
-        self.concept_boost_max = concept_boost_max
-        self.policy_boost_max = policy_boost_max
         self.enable_policy = enable_policy
+        self.lookback_days = lookback_days
+        self.rotation_threshold = rotation_threshold
+        self.rotation_penalty = rotation_penalty
 
         # 内存缓存
         self._hot_sectors_cache: Dict[str, dict] = {}
         self._stock_industry_cache: Dict[str, str] = {}
         self._stock_concepts_cache: Dict[str, List[str]] = {}
-        self._concept_members_cache: Dict[str, Set[str]] = {}
 
     # ------------------------------------------------------------------
     # 缓存读写
@@ -96,21 +127,10 @@ class SectorFilter:
     # 热点板块获取
     # ------------------------------------------------------------------
     def get_hot_sectors(self, trade_date: str, force_refresh: bool = False) -> dict:
-        """
-        获取当日热门板块信息（三层数据源）
-
-        Returns:
-            {
-                "industries": ["行业名1", "行业名2", ...],   # 申万热门行业TopN
-                "concepts": ["概念名1", "概念名2", ...],     # 同花顺热门概念TopN
-                "moneyflow": ["板块名1", ...],               # 资金流向TopN
-                "policy_themes": ["政策主题1", ...],         # 当日活跃的政策主题
-            }
-        """
+        """获取当日热门板块信息"""
         if not force_refresh and trade_date in self._hot_sectors_cache:
             return self._hot_sectors_cache[trade_date]
 
-        # 尝试从本地缓存读取
         cached = self._load_cache(trade_date, "hot_sectors")
         if cached and not force_refresh:
             self._hot_sectors_cache[trade_date] = cached
@@ -121,6 +141,7 @@ class SectorFilter:
             "concepts": [],
             "moneyflow": [],
             "policy_themes": [],
+            "all_hot_names": [],
         }
 
         # 1. 热门申万行业
@@ -153,7 +174,7 @@ class SectorFilter:
         except Exception as e:
             log.debug(f"获取板块资金流向失败 {trade_date}: {e}")
 
-        # 4. 政策主题匹配：从热门概念/行业中识别活跃政策主题
+        # 4. 政策主题匹配
         if self.enable_policy:
             all_hot_names = result["industries"] + result["concepts"] + result["moneyflow"]
             matched_themes = set()
@@ -164,11 +185,74 @@ class SectorFilter:
                             matched_themes.add(theme)
                             break
             result["policy_themes"] = list(matched_themes)
+            result["all_hot_names"] = all_hot_names
 
         self._hot_sectors_cache[trade_date] = result
         self._save_cache(trade_date, "hot_sectors", result)
-        log.info(f"  热点板块 [{trade_date}]: 行业{len(result['industries'])}个, 概念{len(result['concepts'])}个, 政策主题{len(result['policy_themes'])}个")
+        log.info(
+            f"  热点板块 [{trade_date}]: 行业{len(result['industries'])}个, "
+            f"概念{len(result['concepts'])}个, 政策主题{len(result['policy_themes'])}个"
+        )
         return result
+
+    # ------------------------------------------------------------------
+    # 热点持续性 & 板块轮动检测
+    # ------------------------------------------------------------------
+    def _get_sector_history(self, trade_date: str) -> List[dict]:
+        """获取过去N天的热点板块历史"""
+        history = []
+        # trade_date格式为YYYYMMDD，转为int便于减天数
+        try:
+            from datetime import datetime, timedelta
+            base = datetime.strptime(trade_date, "%Y%m%d")
+            for i in range(1, self.lookback_days + 1):
+                prev_date = (base - timedelta(days=i)).strftime("%Y%m%d")
+                # 检查缓存（可能非交易日，尝试向前找）
+                for j in range(5):
+                    check_date = (base - timedelta(days=i + j)).strftime("%Y%m%d")
+                    cached = self._load_cache(check_date, "hot_sectors")
+                    if cached:
+                        history.append(cached)
+                        break
+        except Exception:
+            pass
+        return history
+
+    def _is_persistent_hot(
+        self, sector_name: str, history: List[dict], sector_type: str = "concept"
+    ) -> bool:
+        """检查板块是否持续上榜（过去N天至少出现1次）"""
+        if not history:
+            return False
+        key = "concepts" if sector_type == "concept" else "industries"
+        count = 0
+        for h in history:
+            for name in h.get(key, []):
+                if sector_name in name or name in sector_name:
+                    count += 1
+                    break
+        return count >= 1  # 过去N天至少出现1次即视为持续
+
+    def _detect_rotation(self, today: dict, history: List[dict]) -> float:
+        """检测板块轮动速度，返回惩罚系数（1.0=无惩罚）"""
+        if not history:
+            return 1.0
+
+        yesterday = history[0]
+        today_set = set(today.get("concepts", []) + today.get("industries", []))
+        yest_set = set(yesterday.get("concepts", []) + yesterday.get("industries", []))
+
+        if not today_set or not yest_set:
+            return 1.0
+
+        intersection = len(today_set & yest_set)
+        union = len(today_set | yest_set)
+        overlap_ratio = intersection / union if union > 0 else 1.0
+
+        if overlap_ratio < self.rotation_threshold:
+            log.info(f"  板块轮动剧烈(重叠{overlap_ratio:.0%})，整体加成×{self.rotation_penalty:.0%}")
+            return self.rotation_penalty
+        return 1.0
 
     # ------------------------------------------------------------------
     # 股票板块信息获取
@@ -177,13 +261,11 @@ class SectorFilter:
         """获取股票所属申万行业（带缓存）"""
         if ts_code in self._stock_industry_cache:
             return self._stock_industry_cache[ts_code]
-
         try:
             mapping = self.fetcher.get_stock_industry_map([ts_code])
             industry = mapping.get(ts_code, "")
         except Exception:
             industry = ""
-
         self._stock_industry_cache[ts_code] = industry
         return industry
 
@@ -191,7 +273,6 @@ class SectorFilter:
         """获取股票所属概念列表（带缓存）"""
         if ts_code in self._stock_concepts_cache:
             return self._stock_concepts_cache[ts_code]
-
         try:
             df = self.fetcher.concept_detail(ts_code=ts_code)
             if df is not None and not df.empty and "concept_name" in df.columns:
@@ -200,34 +281,41 @@ class SectorFilter:
                 concepts = []
         except Exception:
             concepts = []
-
         self._stock_concepts_cache[ts_code] = concepts
         return concepts
 
     # ------------------------------------------------------------------
-    # 热度加成计算
+    # 热度加成计算 v2
     # ------------------------------------------------------------------
     def get_sector_boost(
         self,
         ts_code: str,
         trade_date: str,
+        market_state: str = "weak_bull",
         hot_sectors: Optional[dict] = None,
     ) -> float:
         """
-        计算股票的板块热度加成系数
+        计算股票的板块热度加成系数 v2
 
-        Args:
-            ts_code: 股票代码
-            trade_date: 交易日期 YYYYMMDD
-            hot_sectors: 预计算的热点板块（避免重复查询）
-
-        Returns:
-            boost: 加成系数，默认1.0，热点股票>1.0，最大约2.0
+        核心逻辑：
+        1. 根据市场环境设定加成上限（bear市几乎无加成）
+        2. 热点持续性：首日上榜只给50%加成，持续上榜给100%
+        3. 板块轮动：热点切换过快时整体降权
+        4. 反向过滤：非热点股票乘以市场对应的折扣系数
         """
+        cfg = MARKET_BOOST_CONFIG.get(market_state, MARKET_BOOST_CONFIG["weak_bull"])
+
         if hot_sectors is None:
             hot_sectors = self.get_hot_sectors(trade_date)
 
+        # 获取历史热点（用于持续性和轮动检测）
+        history = self._get_sector_history(trade_date)
+
+        # 轮动检测惩罚
+        rotation_penalty = self._detect_rotation(hot_sectors, history)
+
         boost = 1.0
+        is_hot = False
 
         # 1. 行业热点匹配
         if hot_sectors["industries"]:
@@ -235,8 +323,12 @@ class SectorFilter:
             if stock_ind:
                 for rank, hot_ind in enumerate(hot_sectors["industries"]):
                     if stock_ind == hot_ind or hot_ind in stock_ind or stock_ind in hot_ind:
+                        is_hot = True
                         weight = 1.0 - rank / len(hot_sectors["industries"])
-                        boost *= (1.0 + self.industry_boost_max * weight)
+                        # 持续性检查
+                        persistent = self._is_persistent_hot(hot_ind, history, "industry")
+                        persist_factor = 1.0 if persistent else 0.5
+                        boost *= (1.0 + cfg["industry_max"] * weight * persist_factor * rotation_penalty)
                         break
 
         # 2. 概念热点匹配
@@ -249,12 +341,15 @@ class SectorFilter:
                         matched = True
                         break
                 if matched:
+                    is_hot = True
                     weight = 1.0 - rank / len(hot_sectors["concepts"])
-                    boost *= (1.0 + self.concept_boost_max * weight)
+                    persistent = self._is_persistent_hot(hot_con, history, "concept")
+                    persist_factor = 1.0 if persistent else 0.5
+                    boost *= (1.0 + cfg["concept_max"] * weight * persist_factor * rotation_penalty)
                     break
 
         # 3. 政策主题匹配（额外加成）
-        if self.enable_policy and hot_sectors.get("policy_themes"):
+        if cfg["policy_max"] > 0 and self.enable_policy and hot_sectors.get("policy_themes"):
             stock_concepts = self.get_stock_concepts(ts_code)
             stock_ind = self.get_stock_industry(ts_code)
             all_labels = stock_concepts + [stock_ind]
@@ -264,39 +359,39 @@ class SectorFilter:
                 for label in all_labels:
                     for kw in keywords:
                         if kw in label or label in kw:
-                            boost *= (1.0 + self.policy_boost_max)
+                            is_hot = True
+                            boost *= (1.0 + cfg["policy_max"] * rotation_penalty)
                             break
 
-        return min(boost, 2.5)
+        # 4. 反向过滤：非热点股票打折
+        if not is_hot:
+            boost = cfg["non_hot_multiplier"]
+
+        return min(boost, cfg["overall_cap"])
+
+    def get_stock_sector_labels(self, ts_code: str) -> dict:
+        """获取股票的所有板块标签（用于同板块去重）"""
+        return {
+            "industry": self.get_stock_industry(ts_code),
+            "concepts": self.get_stock_concepts(ts_code),
+        }
 
     def filter_hot_stocks(
         self,
         df_preds: pd.DataFrame,
         trade_date: str,
-        min_boost: float = 1.0,
+        market_state: str = "weak_bull",
         hot_sectors: Optional[dict] = None,
     ) -> pd.DataFrame:
-        """
-        对预测结果叠加板块热度筛选/排序
-
-        Args:
-            df_preds: 预测结果DataFrame，含 ts_code, score/prob 等
-            trade_date: 交易日期
-            min_boost: 最小加成阈值（<1.0表示允许非热点但降低权重）
-            hot_sectors: 预计算的热点板块
-
-        Returns:
-            增加 'sector_boost' 列的DataFrame，按 (score * boost) 降序排列
-        """
+        """对预测结果叠加板块热度筛选/排序"""
         if hot_sectors is None:
             hot_sectors = self.get_hot_sectors(trade_date)
 
         df = df_preds.copy()
         df["sector_boost"] = df["ts_code"].apply(
-            lambda x: self.get_sector_boost(x, trade_date, hot_sectors)
+            lambda x: self.get_sector_boost(x, trade_date, market_state, hot_sectors)
         )
 
-        # 如果模型有 score/prob 列，叠加板块加成重新排序
         score_col = None
         for col in ["score", "prob", "prediction", "predicted_score"]:
             if col in df.columns:

@@ -340,6 +340,9 @@ class RealisticBacktester:
                     except Exception as e:
                         log.debug(f"获取热点板块失败 {date}: {e}")
 
+                # 同板块去重计数器 {industry: count}
+                bought_sectors_today: Dict[str, int] = {}
+
                 for rank, (_, row_pred) in enumerate(top10.iterrows(), 1):
                     ts_code = row_pred["ts_code"]
 
@@ -371,13 +374,34 @@ class RealisticBacktester:
                     if buy_amount <= 0:
                         continue
 
-                    # 热点板块加成
+                    # 热点板块加成 + 同板块去重
                     if self.sector_filter and hot_sectors is not None:
                         try:
-                            boost = self.sector_filter.get_sector_boost(ts_code, date, hot_sectors)
+                            boost = self.sector_filter.get_sector_boost(
+                                ts_code, date, market_state=market_state, hot_sectors=hot_sectors
+                            )
+                            # 同板块去重：同一交易日同一行业已买入，降权或跳过
+                            sector_labels = self.sector_filter.get_stock_sector_labels(ts_code)
+                            stock_ind = sector_labels.get("industry", "")
+                            if stock_ind and stock_ind in bought_sectors_today:
+                                # 同板块已买过，限制该板块单日最多2只
+                                if bought_sectors_today[stock_ind] >= 2:
+                                    log.info(f"  跳过 {ts_code}: 行业[{stock_ind}]单日已满2只")
+                                    continue
+                                else:
+                                    boost *= 0.7  # 同板块第二只降权
+                                    log.info(f"  板块降权 {ts_code}: 行业[{stock_ind}]已买入，第二只×0.7")
+
                             if boost != 1.0:
                                 buy_amount = buy_amount * boost
-                                log.info(f"  板块加成 {ts_code}: +{(boost-1)*100:.0f}%")
+                                if boost > 1.0:
+                                    log.info(f"  板块加成 {ts_code}: +{(boost-1)*100:.0f}%")
+                                elif boost < 1.0:
+                                    log.info(f"  板块折扣 {ts_code}: {(boost-1)*100:.0f}%")
+
+                            # 记录该行业已买入
+                            if stock_ind:
+                                bought_sectors_today[stock_ind] = bought_sectors_today.get(stock_ind, 0) + 1
                         except Exception as e:
                             log.debug(f"板块加成计算失败 {ts_code}: {e}")
 
