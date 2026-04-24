@@ -11,6 +11,7 @@
 """
 
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -296,6 +297,7 @@ class SectorFilter:
         if ts_code in self._stock_industry_cache:
             return self._stock_industry_cache[ts_code]
         try:
+            time.sleep(0.2)  # 限流保护
             mapping = self.fetcher.get_stock_industry_map([ts_code])
             industry = mapping.get(ts_code, "")
         except Exception:
@@ -308,6 +310,7 @@ class SectorFilter:
         if ts_code in self._stock_concepts_cache:
             return self._stock_concepts_cache[ts_code]
         try:
+            time.sleep(0.2)  # 限流保护
             df = self.fetcher.concept_detail(ts_code=ts_code)
             if df is not None and not df.empty and "concept_name" in df.columns:
                 concepts = df["concept_name"].astype(str).tolist()
