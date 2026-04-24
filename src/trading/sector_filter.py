@@ -98,6 +98,7 @@ class SectorFilter:
         self._hot_sectors_cache: Dict[str, dict] = {}
         self._stock_industry_cache: Dict[str, str] = {}
         self._stock_concepts_cache: Dict[str, List[str]] = {}
+        self._top_list_cache: Dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # 缓存读写
@@ -142,6 +143,8 @@ class SectorFilter:
             "moneyflow": [],
             "policy_themes": [],
             "all_hot_names": [],
+            "top_list": {},  # {ts_code: net_amount}
+            "top_inst": {},  # {ts_code: inst_net_buy}
         }
 
         # 1. 热门申万行业
@@ -174,7 +177,38 @@ class SectorFilter:
         except Exception as e:
             log.debug(f"获取板块资金流向失败 {trade_date}: {e}")
 
-        # 4. 政策主题匹配
+        # 4. 龙虎榜数据
+        try:
+            df_top = self.fetcher.get_top_list(trade_date)
+            if not df_top.empty and "ts_code" in df_top.columns:
+                for _, row in df_top.iterrows():
+                    code = row["ts_code"]
+                    net = row.get("net_amount", 0)
+                    try:
+                        net_val = float(net) if net else 0
+                    except Exception:
+                        net_val = 0
+                    result["top_list"][code] = net_val
+        except Exception as e:
+            log.debug(f"获取龙虎榜失败 {trade_date}: {e}")
+
+        try:
+            df_inst = self.fetcher.get_top_inst(trade_date)
+            if not df_inst.empty and "ts_code" in df_inst.columns:
+                inst_map = {}
+                for _, row in df_inst.iterrows():
+                    code = row["ts_code"]
+                    net_buy = row.get("net_buy", 0)
+                    try:
+                        nb = float(net_buy) if net_buy else 0
+                    except Exception:
+                        nb = 0
+                    inst_map[code] = inst_map.get(code, 0) + nb
+                result["top_inst"] = inst_map
+        except Exception as e:
+            log.debug(f"获取龙虎榜机构明细失败 {trade_date}: {e}")
+
+        # 5. 政策主题匹配
         if self.enable_policy:
             all_hot_names = result["industries"] + result["concepts"] + result["moneyflow"]
             matched_themes = set()
@@ -363,8 +397,27 @@ class SectorFilter:
                             boost *= (1.0 + cfg["policy_max"] * rotation_penalty)
                             break
 
-        # 4. 反向过滤：非热点股票打折
-        if not is_hot:
+        # 4. 龙虎榜加成
+        top_list = hot_sectors.get("top_list", {})
+        top_inst = hot_sectors.get("top_inst", {})
+
+        if ts_code in top_inst:
+            inst_net = top_inst[ts_code]
+            if inst_net > 100_000_000:  # 机构净买入>1亿
+                boost *= 1.15
+                log.info(f"  龙虎榜加成 {ts_code}: 机构净买入{inst_net/1e8:.2f}亿 +15%")
+            elif inst_net > 50_000_000:  # 机构净买入>5000万
+                boost *= 1.10
+                log.info(f"  龙虎榜加成 {ts_code}: 机构净买入{inst_net/1e8:.2f}亿 +10%")
+
+        if ts_code in top_list:
+            net_amount = top_list[ts_code]
+            if net_amount > 50_000_000:  # 龙虎榜净买入>5000万
+                boost *= 1.05
+                log.info(f"  龙虎榜加成 {ts_code}: 净买入{net_amount/1e8:.2f}亿 +5%")
+
+        # 5. 反向过滤：非热点股票打折
+        if not is_hot and ts_code not in top_list and ts_code not in top_inst:
             boost = cfg["non_hot_multiplier"]
 
         return min(boost, cfg["overall_cap"])

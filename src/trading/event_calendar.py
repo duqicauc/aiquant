@@ -17,11 +17,11 @@ from src.utils.logger import log
 
 # === 周期性事件窗口 ===
 PERIODIC_EVENTS = {
-    "两会": {"months": [3], "day_start": 1, "day_end": 15, "position_mult": 0.90, "sector_boost": 0.15},
-    "中报预告": {"months": [7], "day_start": 1, "day_end": 15, "position_mult": 0.90, "sector_boost": 0.0},
-    "三季报": {"months": [10], "day_start": 1, "day_end": 31, "position_mult": 0.85, "sector_boost": 0.0},
-    "年报披露": {"months": [4], "day_start": 1, "day_end": 30, "position_mult": 0.85, "sector_boost": 0.0},
-    "一季报": {"months": [1], "day_start": 15, "day_end": 31, "position_mult": 0.90, "sector_boost": 0.0},
+    "两会": {"months": [3], "day_start": 1, "day_end": 15, "position_mult": 0.95, "sector_boost": 0.15},
+    "中报预告": {"months": [7], "day_start": 1, "day_end": 15, "position_mult": 0.95, "sector_boost": 0.0},
+    "三季报": {"months": [10], "day_start": 1, "day_end": 31, "position_mult": 0.95, "sector_boost": 0.0},
+    "年报披露": {"months": [4], "day_start": 1, "day_end": 30, "position_mult": 0.95, "sector_boost": 0.0},
+    "一季报": {"months": [1], "day_start": 15, "day_end": 31, "position_mult": 0.95, "sector_boost": 0.0},
 }
 
 # === FOMC 硬编码日期（2025-2027年）===

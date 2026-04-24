@@ -111,28 +111,130 @@ class RealisticBacktester:
             pass
         return pd.DataFrame()
 
-    def get_market_trend(self, date: str) -> tuple[bool, float, float, float]:
-        """获取市场环境趋势（上证指数MA20/MA60判断）
+    def get_market_trend(self, date: str) -> tuple[bool, float, float, float, str]:
+        """获取市场环境趋势（多指数+情绪+量能综合评分）
+
         Returns:
-            (is_bull, close, ma20, ma60) — is_bull=True表示收盘价>=MA20
+            (is_bull, close, ma20, ma60, market_type) — is_bull=True表示可买入
         """
         try:
             start = (datetime.strptime(date, "%Y%m%d") - timedelta(days=120)).strftime("%Y%m%d")
-            df = self.data_provider.pro.index_daily(ts_code="000001.SH", start_date=start, end_date=date)
-            if df is None or df.empty or len(df) < 60:
-                return True, 0, 0, 0  # 数据不足时默认允许买入
-            df = df.sort_values("trade_date").reset_index(drop=True)
-            df["ma20"] = df["close"].rolling(20).mean()
-            df["ma60"] = df["close"].rolling(60).mean()
-            latest = df.iloc[-1]
-            close = float(latest["close"])
-            ma20 = float(latest["ma20"]) if pd.notna(latest["ma20"]) else 0
-            ma60 = float(latest["ma60"]) if pd.notna(latest["ma60"]) else 0
-            is_bull = close >= ma20 if ma20 > 0 else True
-            return is_bull, close, ma20, ma60
+
+            # 1. 多指数MA排列评分
+            indices = {
+                "000001.SH": 0.30,  # 上证 30%
+                "399001.SZ": 0.25,  # 深证 25%
+                "399006.SZ": 0.25,  # 创业板 25%
+                "000300.SH": 0.20,  # 沪深300 20%
+            }
+            index_score = 0.0
+            sh_close = sh_ma20 = sh_ma60 = 0.0
+
+            for ts_code, weight in indices.items():
+                df = self.data_provider.pro.index_daily(ts_code=ts_code, start_date=start, end_date=date)
+                if df is None or df.empty or len(df) < 60:
+                    continue
+                df = df.sort_values("trade_date").reset_index(drop=True)
+                df["ma20"] = df["close"].rolling(20).mean()
+                df["ma60"] = df["close"].rolling(60).mean()
+                latest = df.iloc[-1]
+                close = float(latest["close"])
+                ma20 = float(latest["ma20"]) if pd.notna(latest["ma20"]) else 0
+                ma60 = float(latest["ma60"]) if pd.notna(latest["ma60"]) else 0
+
+                if ts_code == "000001.SH":
+                    sh_close, sh_ma20, sh_ma60 = close, ma20, ma60
+
+                if ma20 <= 0 or ma60 <= 0:
+                    index_score += 1.5 * weight  # 数据不足默认中性
+                    continue
+
+                # 评分: strong_bull=3, weak_bull=2, oscillation=1, bear=0
+                if close > ma20 > ma60:
+                    index_score += 3.0 * weight
+                elif close > ma20 and ma20 < ma60:
+                    index_score += 2.0 * weight
+                elif abs((close - ma20) / ma20) <= 0.02:
+                    index_score += 1.0 * weight
+                elif close < ma20 < ma60:
+                    index_score += 0.0 * weight
+                elif close >= ma20:
+                    index_score += 1.5 * weight
+                else:
+                    index_score += 0.5 * weight
+
+            # 2. 涨跌停情绪评分
+            sentiment_score = 1.5  # 默认中性
+            try:
+                df_limit = self.data_provider.pro.limit_list_d(trade_date=date)
+                if df_limit is not None and not df_limit.empty:
+                    up_count = len(df_limit[df_limit["limit"] == "U"])
+                    down_count = len(df_limit[df_limit["limit"] == "D"])
+                    if down_count == 0:
+                        sentiment_score = 3.0 if up_count > 50 else 2.5
+                    else:
+                        ratio = up_count / down_count
+                        if ratio >= 3.0:
+                            sentiment_score = 3.0
+                        elif ratio >= 1.5:
+                            sentiment_score = 2.5
+                        elif ratio >= 1.0:
+                            sentiment_score = 2.0
+                        elif ratio >= 0.5:
+                            sentiment_score = 1.0
+                        else:
+                            sentiment_score = 0.0
+            except Exception:
+                pass
+
+            # 3. 量能趋势评分
+            volume_score = 1.5  # 默认中性
+            try:
+                df_sh = self.data_provider.pro.index_daily(ts_code="000001.SH", start_date=start, end_date=date)
+                if df_sh is not None and not df_sh.empty and len(df_sh) >= 20:
+                    df_sh = df_sh.sort_values("trade_date").reset_index(drop=True)
+                    vol_5d = df_sh["vol"].tail(5).mean()
+                    vol_20d = df_sh["vol"].tail(20).mean()
+                    if vol_20d > 0:
+                        vol_ratio = vol_5d / vol_20d
+                        if vol_ratio >= 1.3:
+                            volume_score = 3.0  # 显著放量
+                        elif vol_ratio >= 1.1:
+                            volume_score = 2.5  # 温和放量
+                        elif vol_ratio >= 0.9:
+                            volume_score = 2.0  # 平量
+                        elif vol_ratio >= 0.7:
+                            volume_score = 1.0  # 温和缩量
+                        else:
+                            volume_score = 0.0  # 显著缩量
+            except Exception:
+                pass
+
+            # 4. 综合评分
+            total_score = index_score * 0.40 + sentiment_score * 0.30 + volume_score * 0.30
+
+            # 映射到市场状态（阈值适当放宽，避免结构性牛市被误判为震荡）
+            if total_score >= 2.0:
+                market_type = "strong_bull"
+            elif total_score >= 1.3:
+                market_type = "weak_bull"
+            elif total_score >= 0.6:
+                market_type = "oscillation"
+            else:
+                market_type = "bear"
+
+            is_bull = market_type in ("strong_bull", "weak_bull")
+
+            log.info(
+                f"  市场环境 [{date}]: 指数{index_score:.1f}/3.0 情绪{sentiment_score:.1f}/3.0 量能{volume_score:.1f}/3.0 "
+                f"→ 综合{total_score:.2f} → {market_type}"
+            )
+
+            return is_bull, sh_close, sh_ma20, sh_ma60, market_type
+
         except Exception as e:
             log.warning(f"获取市场环境({date})失败: {e}")
-            return True, 0, 0, 0
+            return True, 0, 0, 0, "weak_bull"
 
     def get_daily_prices(self, trade_date: str) -> pd.DataFrame:
         """获取当日全市场价格数据"""
@@ -264,9 +366,8 @@ class RealisticBacktester:
             sold_today = []
 
             # ========== 市场环境判断 ==========
-            is_bull, sh_close, sh_ma20, sh_ma60 = self.get_market_trend(date)
+            is_bull, sh_close, sh_ma20, sh_ma60, market_type = self.get_market_trend(date)
             market_state = {"close": sh_close, "ma20": sh_ma20, "ma60": sh_ma60}
-            market_type = PositionSizer.classify_market(sh_close, sh_ma20, sh_ma60)
             global_ratio = PositionSizer.MARKET_POSITION_MAP.get(market_type, 1.0)
 
             if not is_bull:

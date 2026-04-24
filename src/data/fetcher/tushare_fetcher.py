@@ -693,3 +693,35 @@ class TushareFetcher(BaseFetcher):
         except Exception as e:
             log.warning(f"获取同花顺热榜失败 ({market}): {e}")
             return pd.DataFrame()
+
+    def get_top_list(self, trade_date: str, ts_code: str = None) -> pd.DataFrame:
+        """
+        获取龙虎榜每日明细 (top_list)
+        积分≥2000
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {"trade_date": self.format_date(trade_date)}
+            if ts_code:
+                params["ts_code"] = self.format_stock_code(ts_code)
+            df = self.pro.top_list(**params)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.debug(f"获取龙虎榜失败: {e}")
+            return pd.DataFrame()
+
+    def get_top_inst(self, trade_date: str, ts_code: str = None) -> pd.DataFrame:
+        """
+        获取龙虎榜机构成交明细 (top_inst)
+        积分≥5000
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {"trade_date": self.format_date(trade_date)}
+            if ts_code:
+                params["ts_code"] = self.format_stock_code(ts_code)
+            df = self.pro.top_inst(**params)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.debug(f"获取龙虎榜机构明细失败: {e}")
+            return pd.DataFrame()
