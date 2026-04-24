@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 import os
 
 from src.data.tushare_data_provider import TushareDataProvider
+from src.trading.position_sizer import PositionSizer
 from src.utils.logger import log
 
 load_dotenv()
@@ -44,6 +45,7 @@ class RealisticBacktester:
         per_stock_amount: float = 300_000,  # 每只股票固定买入金额
         top_n_buy: int = 10,
         stop_loss_pct: float = 4.0,
+        take_profit_pct: float = 5.0,
         ma_window: int = 5,
         ma_consecutive_days: int = 2,
         buy_slippage_bps: float = 15.0,
@@ -58,6 +60,7 @@ class RealisticBacktester:
         self.per_stock_amount = per_stock_amount
         self.top_n_buy = top_n_buy
         self.stop_loss_pct = stop_loss_pct
+        self.take_profit_pct = take_profit_pct
         self.ma_window = ma_window
         self.ma_consecutive_days = ma_consecutive_days
         self.buy_slippage_bps = buy_slippage_bps
@@ -67,6 +70,10 @@ class RealisticBacktester:
         self.stamp_duty_rate = stamp_duty_rate
         self.min_amount = min_amount
         self.data_provider = TushareDataProvider()
+        self.position_sizer = PositionSizer(
+            total_capital=initial_capital,
+            base_per_stock=per_stock_amount,
+        )
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
@@ -92,24 +99,28 @@ class RealisticBacktester:
             pass
         return pd.DataFrame()
 
-    def get_market_trend(self, date: str) -> tuple[bool, float, float]:
-        """获取市场环境趋势（上证指数MA20判断）
+    def get_market_trend(self, date: str) -> tuple[bool, float, float, float]:
+        """获取市场环境趋势（上证指数MA20/MA60判断）
         Returns:
-            (is_bull, close, ma20) — is_bull=True表示收盘价>=MA20，趋势向上
+            (is_bull, close, ma20, ma60) — is_bull=True表示收盘价>=MA20
         """
         try:
-            df = self.get_stock_hist("000001.SH", date, days=25)
-            if df.empty or len(df) < 20:
-                return True, 0, 0  # 数据不足时默认允许买入
+            start = (datetime.strptime(date, "%Y%m%d") - timedelta(days=120)).strftime("%Y%m%d")
+            df = self.data_provider.pro.index_daily(ts_code="000001.SH", start_date=start, end_date=date)
+            if df is None or df.empty or len(df) < 60:
+                return True, 0, 0, 0  # 数据不足时默认允许买入
+            df = df.sort_values("trade_date").reset_index(drop=True)
             df["ma20"] = df["close"].rolling(20).mean()
+            df["ma60"] = df["close"].rolling(60).mean()
             latest = df.iloc[-1]
             close = float(latest["close"])
-            ma20 = float(latest["ma20"])
-            is_bull = close >= ma20 if not pd.isna(ma20) else True
-            return is_bull, close, ma20
+            ma20 = float(latest["ma20"]) if pd.notna(latest["ma20"]) else 0
+            ma60 = float(latest["ma60"]) if pd.notna(latest["ma60"]) else 0
+            is_bull = close >= ma20 if ma20 > 0 else True
+            return is_bull, close, ma20, ma60
         except Exception as e:
             log.warning(f"获取市场环境({date})失败: {e}")
-            return True, 0, 0
+            return True, 0, 0, 0
 
     def get_daily_prices(self, trade_date: str) -> pd.DataFrame:
         """获取当日全市场价格数据"""
@@ -190,7 +201,7 @@ class RealisticBacktester:
 
         log.info("=" * 80)
         log.info(f"实盘策略回测: {trade_dates[0]} ~ {trade_dates[-1]} ({len(trade_dates)}个交易日)")
-        log.info(f"策略: 固定{self.per_stock_amount/10000:.0f}万/股, {self.stop_loss_pct}%止损, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1收盘卖)")
+        log.info(f"策略: 动态仓位(基础{self.per_stock_amount/10000:.0f}万/股), {self.stop_loss_pct}%止损, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1收盘卖)")
         log.info(f"费用: 佣金{self.commission_rate*100:.3f}%(最低{self.min_commission:.0f}元) + 印花税{self.stamp_duty_rate*100:.1f}%")
         log.info(f"滑点: 买入{self.buy_slippage_bps}bp / 卖出{self.sell_slippage_bps}bp")
         log.info(f"约束: 涨跌停过滤 + 停牌过滤 + 成交额>{self.min_amount/10000:.0f}万 + 市场环境过滤(上证>=MA20,跌破清仓)")
@@ -231,11 +242,15 @@ class RealisticBacktester:
             sold_today = []
 
             # ========== 市场环境判断 ==========
-            is_bull, sh_close, sh_ma20 = self.get_market_trend(date)
+            is_bull, sh_close, sh_ma20, sh_ma60 = self.get_market_trend(date)
+            market_state = {"close": sh_close, "ma20": sh_ma20, "ma60": sh_ma60}
+            market_type = PositionSizer.classify_market(sh_close, sh_ma20, sh_ma60)
+            global_ratio = PositionSizer.MARKET_POSITION_MAP.get(market_type, 1.0)
+
             if not is_bull:
-                log.info(f"  市场环境: 上证指数 {sh_close:.0f} < MA20 {sh_ma20:.0f}，暂停买入 + 清空持仓")
+                log.info(f"  市场环境: {market_type} 上证{sh_close:.0f}<MA20{sh_ma20:.0f}，暂停买入 + 清空持仓")
             else:
-                log.info(f"  市场环境: 上证指数 {sh_close:.0f} >= MA20 {sh_ma20:.0f}，允许买入")
+                log.info(f"  市场环境: {market_type} 上证{sh_close:.0f}>=MA20{sh_ma20:.0f}，全局仓位{global_ratio*100:.0f}%")
 
             # ========== 阶段A: 市场环境清仓（熊市时清空所有非当日买入持仓） ==========
             if not is_bull:
@@ -298,7 +313,16 @@ class RealisticBacktester:
 
             # ========== 阶段B: 买入（先买，仅牛市） ==========
             if is_bull:
-                for _, row_pred in top10.iterrows():
+                # 计算当前组合总市值和持仓市值（用于仓位管理）
+                portfolio_value = cash
+                holding_value = 0.0
+                for tc, pos in holdings.items():
+                    if tc in df_daily.index:
+                        hv = float(df_daily.loc[tc]["close"]) * pos["qty"]
+                        portfolio_value += hv
+                        holding_value += hv
+
+                for rank, (_, row_pred) in enumerate(top10.iterrows(), 1):
                     ts_code = row_pred["ts_code"]
 
                     # 已在持仓中，不重复买入
@@ -318,8 +342,19 @@ class RealisticBacktester:
                     open_price = float(row["open"])
                     buy_price = open_price * (1 + self.buy_slippage_bps / 10000)
 
+                    # 动态仓位管理: 计算买入金额
+                    buy_amount = self.position_sizer.calculate(
+                        market_state=market_state,
+                        rank=rank,
+                        portfolio_value=portfolio_value,
+                        holding_value=holding_value,
+                        current_holding_count=len(holdings),
+                    )
+                    if buy_amount <= 0:
+                        continue
+
                     # 计算可买股数（100股取整）
-                    qty = int(self.per_stock_amount / buy_price / 100) * 100
+                    qty = int(buy_amount / buy_price / 100) * 100
                     if qty <= 0:
                         continue
 
@@ -332,6 +367,7 @@ class RealisticBacktester:
                         continue
 
                     cash -= total_cost
+                    portfolio_value += total_amount  # 更新组合市值
                     holdings[ts_code] = {
                         "qty": qty,
                         "cost": buy_price,
@@ -342,9 +378,15 @@ class RealisticBacktester:
                     transactions.append({
                         "date": date, "ts_code": ts_code, "action": "BUY",
                         "price": buy_price, "qty": qty, "amount": total_amount,
-                        "commission": commission, "profit": -commission, "reason": "进入Top10"
+                        "commission": commission, "profit": -commission,
+                        "reason": f"Top{rank}"
                     })
-                    log.info(f"  买入 {ts_code}: {qty}股 @ {buy_price:.2f}, 费用{commission:.0f}元")
+                    log.info(f"  买入 {ts_code}: {qty}股 @ {buy_price:.2f}, 金额{total_amount:,.0f}元, 费用{commission:.0f}元")
+
+            # 移除阶段A/B已卖出的持仓，避免阶段C重复卖出
+            for ts_code in sold_today:
+                if ts_code in holdings:
+                    del holdings[ts_code]
 
             # ========== 阶段C: 检查持仓，标记待卖出（仅牛市时执行MA5退出，止损始终执行） ==========
             for ts_code in list(holdings.keys()):
@@ -404,6 +446,41 @@ class RealisticBacktester:
                                 "ts_code": ts_code,
                                 "sell_date": next_trade_date,
                                 "reason": f"止损顺延"
+                            })
+                    continue
+
+                # 止盈检查 → 立即卖出（当日收盘价），无论市场环境
+                profit_pct = (close - cost) / cost * 100
+                if profit_pct >= self.take_profit_pct:
+                    if self._can_sell(ts_code, row):
+                        sell_price = close * (1 - self.sell_slippage_bps / 10000)
+                        amount = sell_price * pos["qty"]
+                        commission = self._calc_sell_cost(amount)
+                        net_proceeds = amount - commission
+                        profit = (sell_price - cost) * pos["qty"] - commission
+
+                        next_trade_date = trade_dates[i + 1] if i + 1 < len(trade_dates) else None
+                        if next_trade_date:
+                            frozen_proceeds[next_trade_date] = frozen_proceeds.get(next_trade_date, 0) + net_proceeds
+                        else:
+                            cash += net_proceeds
+
+                        transactions.append({
+                            "date": date, "ts_code": ts_code, "action": "SELL",
+                            "price": sell_price, "qty": pos["qty"], "amount": amount,
+                            "commission": commission, "profit": profit,
+                            "reason": f"止盈({profit_pct:.1f}%)"
+                        })
+                        sold_today.append(ts_code)
+                        log.info(f"  卖出 {ts_code}: 止盈 {profit_pct:.1f}% @ {sell_price:.2f}, 费用{commission:.0f}元")
+                    else:
+                        log.info(f"  止盈触发 {ts_code}: 但无法卖出(跌停/停牌), 顺延")
+                        next_trade_date = trade_dates[i + 1] if i + 1 < len(trade_dates) else None
+                        if next_trade_date:
+                            pending_sells.append({
+                                "ts_code": ts_code,
+                                "sell_date": next_trade_date,
+                                "reason": f"止盈顺延"
                             })
                     continue
 
@@ -496,21 +573,21 @@ class RealisticBacktester:
                     del holdings[ts_code]
 
             # ========== 阶段D: 计算当日净值 ==========
-            holding_value = cash
+            total_value = cash + sum(frozen_proceeds.values())
             for ts_code, pos in holdings.items():
                 if ts_code in df_daily.index:
-                    holding_value += float(df_daily.loc[ts_code]["close"]) * pos["qty"]
+                    total_value += float(df_daily.loc[ts_code]["close"]) * pos["qty"]
 
             daily_values.append({
                 "date": date,
                 "cash": cash,
                 "frozen": sum(frozen_proceeds.values()),
-                "holding_value": holding_value - cash,
-                "total_value": holding_value,
+                "holding_value": total_value - cash - sum(frozen_proceeds.values()),
+                "total_value": total_value,
                 "holdings_count": len(holdings),
                 "pending_count": len(pending_sells),
             })
-            log.info(f"  净值: {holding_value:,.0f} (现金{cash:,.0f} + 冻结{sum(frozen_proceeds.values()):,.0f} + 持仓{holding_value-cash:,.0f}) | 持仓{len(holdings)}只 | 待卖{len(pending_sells)}只")
+            log.info(f"  净值: {total_value:,.0f} (现金{cash:,.0f} + 冻结{sum(frozen_proceeds.values()):,.0f} + 持仓{total_value-cash-sum(frozen_proceeds.values()):,.0f}) | 持仓{len(holdings)}只 | 待卖{len(pending_sells)}只")
 
         # 汇总
         df_values = pd.DataFrame(daily_values)
