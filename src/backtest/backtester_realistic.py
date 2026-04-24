@@ -670,22 +670,9 @@ class RealisticBacktester:
                 # 更新峰值
                 pos["peak_price"] = max(pos.get("peak_price", cost), high)
 
-                # ATR动态止损计算
-                dynamic_stop_pct = self.stop_loss_pct
-                if ts_code in price_history and len(price_history[ts_code]) >= 15:
-                    bars = price_history[ts_code]
-                    tr_list = []
-                    for j in range(1, len(bars)):
-                        h, l, prev_c = bars[j]["high"], bars[j]["low"], bars[j-1]["close"]
-                        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
-                        tr_list.append(tr)
-                    if len(tr_list) >= 14:
-                        atr = sum(tr_list[-14:]) / 14
-                        dynamic_stop_pct = max(2.0, min(8.0, (atr / cost) * 150))
-
                 # 止损检查 → 立即卖出（当日收盘价），无论市场环境
                 profit_pct = (close - cost) / cost * 100
-                if profit_pct <= -dynamic_stop_pct:
+                if profit_pct <= -self.stop_loss_pct:
                     if self._can_sell(ts_code, row):
                         sell_price = close * (1 - self.sell_slippage_bps / 10000)
                         amount = sell_price * pos["qty"]
