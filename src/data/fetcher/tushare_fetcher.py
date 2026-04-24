@@ -725,3 +725,20 @@ class TushareFetcher(BaseFetcher):
         except Exception as e:
             log.debug(f"获取龙虎榜机构明细失败: {e}")
             return pd.DataFrame()
+
+    def get_north_moneyflow(self, trade_date: str) -> pd.DataFrame:
+        """
+        获取沪深港通资金流向 (moneyflow_hsgt)
+        积分≥2000
+
+        Returns:
+            DataFrame with columns: trade_date, ggt_ss, ggt_sz, hgt, sgt,
+            north_money, south_money
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            df = self.pro.moneyflow_hsgt(trade_date=self.format_date(trade_date))
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.debug(f"获取北向资金失败: {e}")
+            return pd.DataFrame()

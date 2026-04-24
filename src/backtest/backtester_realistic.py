@@ -86,6 +86,7 @@ class RealisticBacktester:
             cfg = sector_filter_config or {}
             self.sector_filter = SectorFilter(**cfg)
         self.event_calendar = EventCalendar()
+        self.north_money_history = {}
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
@@ -210,8 +211,39 @@ class RealisticBacktester:
             except Exception:
                 pass
 
-            # 4. 综合评分
-            total_score = index_score * 0.40 + sentiment_score * 0.30 + volume_score * 0.30
+            # 4. 北向资金评分
+            north_score = 1.5  # 默认中性
+            try:
+                dt = datetime.strptime(date, "%Y%m%d")
+                north_sum = 0.0
+                north_days = 0
+                for offset in range(3):
+                    check_date = (dt - timedelta(days=offset)).strftime("%Y%m%d")
+                    if check_date in self.north_money_history:
+                        north_sum += self.north_money_history[check_date]
+                        north_days += 1
+                if north_days >= 2:
+                    # 单位: 亿元
+                    if north_sum > 50:
+                        north_score = 3.0
+                    elif north_sum > 20:
+                        north_score = 2.5
+                    elif north_sum > 0:
+                        north_score = 2.0
+                    elif north_sum > -20:
+                        north_score = 1.0
+                    else:
+                        north_score = 0.0
+            except Exception:
+                pass
+
+            # 5. 综合评分
+            total_score = (
+                index_score * 0.35 +
+                sentiment_score * 0.25 +
+                volume_score * 0.25 +
+                north_score * 0.15
+            )
 
             # 映射到市场状态（阈值适当放宽，避免结构性牛市被误判为震荡）
             if total_score >= 2.0:
@@ -226,8 +258,8 @@ class RealisticBacktester:
             is_bull = market_type in ("strong_bull", "weak_bull")
 
             log.info(
-                f"  市场环境 [{date}]: 指数{index_score:.1f}/3.0 情绪{sentiment_score:.1f}/3.0 量能{volume_score:.1f}/3.0 "
-                f"→ 综合{total_score:.2f} → {market_type}"
+                f"  市场环境 [{date}]: 指数{index_score:.1f} 情绪{sentiment_score:.1f} "
+                f"量能{volume_score:.1f} 北向{north_score:.1f} → 综合{total_score:.2f} → {market_type}"
             )
 
             return is_bull, sh_close, sh_ma20, sh_ma60, market_type
@@ -327,7 +359,7 @@ class RealisticBacktester:
         daily_values = []
         frozen_proceeds = {}  # {解冻日期: 金额}
         pending_sells = []  # [{ts_code, sell_date, reason}]
-        price_history = {}  # {ts_code: [近20日close]} 用于波动率计算
+        price_history = {}  # {ts_code: [bars]} 用于波动率/ATR计算
 
         for i, date in enumerate(trade_dates):
             signal_date = trade_dates[i - 1] if i > 0 else date
@@ -344,6 +376,16 @@ class RealisticBacktester:
                 log.warning(f"  {signal_date} 无预测结果")
                 continue
 
+            # 2.1 如启用 SectorFilter，用板块热度重新排序预测分数
+            if self.sector_filter:
+                try:
+                    market_state = self.get_market_trend(date)
+                    pred_df = self.sector_filter.filter_hot_stocks(
+                        pred_df, signal_date, market_state=market_state
+                    )
+                except Exception as e:
+                    log.debug(f"SectorFilter 排序失败 {signal_date}: {e}")
+
             top10 = pred_df.head(self.top_n_buy)
             top50_codes = set(pred_df.head(50)["ts_code"].tolist())
 
@@ -353,13 +395,18 @@ class RealisticBacktester:
                 log.warning(f"  {date} 无价格数据")
                 continue
 
-            # 更新价格历史缓存（用于波动率计算）
+            # 更新价格历史缓存（用于波动率/ATR计算）
             for ts_code in df_daily.index:
-                close = float(df_daily.loc[ts_code]["close"])
+                row = df_daily.loc[ts_code]
+                bar = {
+                    "close": float(row["close"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                }
                 if ts_code not in price_history:
                     price_history[ts_code] = []
-                price_history[ts_code].append(close)
-                if len(price_history[ts_code]) > 20:
+                price_history[ts_code].append(bar)
+                if len(price_history[ts_code]) > 25:
                     price_history[ts_code].pop(0)
 
             bought_today = set()
@@ -378,6 +425,18 @@ class RealisticBacktester:
             # 事件驱动仓位调整
             event_impact = self.event_calendar.get_event_impact(date)
             event_mult = event_impact["position_mult"]
+
+            # 北向资金数据获取 (moneyflow_hsgt 返回单位: 万元, 转换为亿元)
+            try:
+                df_north = self.data_provider.pro.moneyflow_hsgt(trade_date=date)
+                if df_north is not None and not df_north.empty:
+                    north_val = df_north["north_money"].iloc[0]
+                    try:
+                        self.north_money_history[date] = float(north_val) / 10000.0
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             # ========== 阶段A: 市场环境清仓（熊市时清空所有非当日买入持仓） ==========
             if not is_bull:
@@ -483,7 +542,7 @@ class RealisticBacktester:
                     # 计算个股波动率（近20日收盘价）
                     vol_annual = None
                     if ts_code in price_history and len(price_history[ts_code]) >= 10:
-                        closes = price_history[ts_code]
+                        closes = [b["close"] for b in price_history[ts_code]]
                         returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
                         if returns:
                             vol_daily = np.std(returns)
@@ -611,9 +670,22 @@ class RealisticBacktester:
                 # 更新峰值
                 pos["peak_price"] = max(pos.get("peak_price", cost), high)
 
-                # 4%止损检查 → 立即卖出（当日收盘价），无论市场环境
+                # ATR动态止损计算
+                dynamic_stop_pct = self.stop_loss_pct
+                if ts_code in price_history and len(price_history[ts_code]) >= 15:
+                    bars = price_history[ts_code]
+                    tr_list = []
+                    for j in range(1, len(bars)):
+                        h, l, prev_c = bars[j]["high"], bars[j]["low"], bars[j-1]["close"]
+                        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+                        tr_list.append(tr)
+                    if len(tr_list) >= 14:
+                        atr = sum(tr_list[-14:]) / 14
+                        dynamic_stop_pct = max(2.0, min(8.0, (atr / cost) * 150))
+
+                # 止损检查 → 立即卖出（当日收盘价），无论市场环境
                 profit_pct = (close - cost) / cost * 100
-                if profit_pct <= -self.stop_loss_pct:
+                if profit_pct <= -dynamic_stop_pct:
                     if self._can_sell(ts_code, row):
                         sell_price = close * (1 - self.sell_slippage_bps / 10000)
                         amount = sell_price * pos["qty"]
