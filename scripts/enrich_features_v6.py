@@ -96,14 +96,17 @@ def calculate_basic_features(df: pd.DataFrame) -> pd.DataFrame:
             g["return_34d"] = g["close"].pct_change(34) * 100
             g["return_55d"] = g["close"].pct_change(55) * 100
 
-        # KDJ指标
+        # KDJ指标（优先使用Tushare提供的，不存在时才本地计算）
         if "close" in g.columns:
-            low_9 = g["close"].rolling(9, min_periods=5).min()
-            high_9 = g["close"].rolling(9, min_periods=5).max()
-            rsv = np.where(high_9 > low_9, (g["close"] - low_9) / (high_9 - low_9) * 100, 50)
-            g["kdj_k"] = pd.Series(rsv).ewm(com=2, adjust=False).mean().values
-            g["kdj_d"] = pd.Series(g["kdj_k"]).ewm(com=2, adjust=False).mean().values
-            g["kdj_j"] = 3 * g["kdj_k"] - 2 * g["kdj_d"]
+            if "kdj_k" not in g.columns:
+                low_9 = g["close"].rolling(9, min_periods=5).min()
+                high_9 = g["close"].rolling(9, min_periods=5).max()
+                rsv = np.where(high_9 > low_9, (g["close"] - low_9) / (high_9 - low_9) * 100, 50)
+                g["kdj_k"] = pd.Series(rsv).ewm(com=2, adjust=False).mean().values
+            if "kdj_d" not in g.columns:
+                g["kdj_d"] = pd.Series(g["kdj_k"]).ewm(com=2, adjust=False).mean().values
+            if "kdj_j" not in g.columns:
+                g["kdj_j"] = 3 * g["kdj_k"] - 2 * g["kdj_d"]
 
         # 突破特征
         if "close" in g.columns and "high_10d" in g.columns:

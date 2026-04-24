@@ -30,7 +30,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 warnings.filterwarnings("ignore")
 
 from src.data.data_manager import DataManager
-from src.models.screening.fundamental_screener import FundamentalScreener
 from src.utils.logger import log
 
 # 初始化 Tushare
@@ -43,15 +42,7 @@ PRO = ts.pro_api(TUSHARE_TOKEN) if TUSHARE_TOKEN else None
 
 def load_ensemble_model():
     """加载集成模型"""
-    model_dir = (
-        PROJECT_ROOT
-        / "data"
-        / "models"
-        / "breakout_launch_scorer"
-        / "versions"
-        / "v2.8.0-ensemble"
-        / "model"
-    )
+    model_dir = PROJECT_ROOT / "data" / "models" / "breakout_launch_scorer" / "versions" / "v2.8.0-ensemble" / "model"
 
     xgb_model = xgb.Booster()
     xgb_model.load_model(str(model_dir / "xgboost.json"))
@@ -94,9 +85,7 @@ def batch_fetch_tushare_data(predict_date: str, lookback_days: int = 80) -> dict
     Returns:
         dict: {ts_code: DataFrame}，DataFrame包含前复权OHLCV + turnover_rate + volume_ratio
     """
-    start_date = (
-        datetime.strptime(predict_date, "%Y%m%d") - timedelta(days=lookback_days + 30)
-    ).strftime("%Y%m%d")
+    start_date = (datetime.strptime(predict_date, "%Y%m%d") - timedelta(days=lookback_days + 30)).strftime("%Y%m%d")
 
     trade_dates = get_trade_dates(start_date, predict_date)
     if len(trade_dates) > lookback_days:
@@ -220,9 +209,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     for period in [10, 20, 34]:
         df[f"volatility_{period}d"] = close.pct_change().rolling(period).std() * 100
 
-    df["volatility_regime"] = np.where(
-        df["volatility_20d"] > df["volatility_20d"].rolling(55).mean(), 1, 0
-    )
+    df["volatility_regime"] = np.where(df["volatility_20d"] > df["volatility_20d"].rolling(55).mean(), 1, 0)
 
     # 成交量特征
     for period in [5, 10, 20]:
@@ -231,9 +218,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df["volume_trend"] = df["volume_ma_5"] / df["volume_ma_20"]
 
     # 价格形态特征
-    df["price_position"] = (close - low.rolling(20).min()) / (
-        high.rolling(20).max() - low.rolling(20).min() + 1e-8
-    )
+    df["price_position"] = (close - low.rolling(20).min()) / (high.rolling(20).max() - low.rolling(20).min() + 1e-8)
 
     for period in [5, 10, 20]:
         rolling_low = low.rolling(period, min_periods=period // 2).min()
@@ -294,14 +279,157 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         df["turnover_spike"] = (tr > tr_mean * 2).astype(int)
 
     if "rsi_6" in df.columns and "kdj_j" in df.columns:
-        df["rsi_kdj_golden_cross"] = (
-            (df["rsi_6"] > 50) & (df["kdj_j"] > df["kdj_k"])
-        ).astype(int)
+        df["rsi_kdj_golden_cross"] = ((df["rsi_6"] > 50) & (df["kdj_j"] > df["kdj_k"])).astype(int)
         df["rsi_kdj_strength"] = (df["rsi_6"] / 100 + df["kdj_j"] / 100) / 2
         df["rsi_zone"] = np.where(df["rsi_6"] > 70, 1, np.where(df["rsi_6"] < 30, -1, 0))
         df["rsi_kdj_divergence"] = df["rsi_6"] - df["kdj_j"]
 
     return df
+
+
+def extract_features_batch(df_all: pd.DataFrame) -> pd.DataFrame:
+    """批量特征提取（groupby加速版）"""
+    if df_all is None or len(df_all) < 20:
+        return pd.DataFrame()
+
+    df = df_all.copy().sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
+    g = df.groupby("ts_code")
+
+    # 趋势特征
+    for period in [5, 10, 20, 34, 55]:
+        mp = period // 2
+        df[f"ma_{period}"] = g["close"].transform(lambda x: x.rolling(period, min_periods=mp).mean())
+        df[f"ema_{period}"] = g["close"].transform(lambda x: x.ewm(span=period, adjust=False).mean())
+
+    df["close_ma5_ratio"] = df["close"] / df["ma_5"] - 1
+    df["close_ma20_ratio"] = df["close"] / df["ma_20"] - 1
+    df["close_ma55_ratio"] = df["close"] / df["ma_55"] - 1
+    df["ma5_ma20_ratio"] = df["ma_5"] / df["ma_20"] - 1
+    df["ma20_ma55_ratio"] = df["ma_20"] / df["ma_55"] - 1
+
+    # 动量特征
+    for period in [5, 10, 20, 34]:
+        df[f"momentum_{period}d"] = g["close"].transform(lambda x: x.pct_change(period) * 100)
+
+    # 波动率特征
+    for period in [10, 20, 34]:
+        df[f"volatility_{period}d"] = g["close"].transform(
+            lambda x: x.pct_change().rolling(period, min_periods=period // 2).std() * 100
+        )
+
+    df["volatility_regime"] = g["volatility_20d"].transform(
+        lambda x: np.where(x > x.rolling(55, min_periods=10).mean(), 1, 0)
+    )
+
+    # 成交量特征
+    for period in [5, 10, 20]:
+        df[f"volume_ma_{period}"] = g["vol"].transform(lambda x: x.rolling(period).mean())
+    df["volume_ratio"] = df["vol"] / df["volume_ma_5"]
+    df["volume_trend"] = df["volume_ma_5"] / df["volume_ma_20"]
+
+    # 价格形态特征
+    df["price_position"] = g.apply(
+        lambda x: (x["close"] - x["low"].rolling(20, min_periods=5).min())
+        / (x["high"].rolling(20, min_periods=5).max() - x["low"].rolling(20, min_periods=5).min() + 1e-8)
+    ).reset_index(level=0, drop=True)
+
+    for period in [5, 10, 20]:
+        mp = period // 2
+        rolling_low = g["low"].transform(lambda x: x.rolling(period, min_periods=mp).min())
+        rolling_high = g["high"].transform(lambda x: x.rolling(period, min_periods=mp).max())
+        df[f"dist_to_support_{period}d"] = (df["close"] - rolling_low) / (df["close"] + 1e-8) * 100
+        df[f"dist_to_resistance_{period}d"] = (rolling_high - df["close"]) / (df["close"] + 1e-8) * 100
+
+    # 风险特征
+    for period in [10, 20, 55]:
+        mp = period // 2
+        rolling_max = g["close"].transform(lambda x: x.rolling(period, min_periods=mp).max())
+        drawdown = (df["close"] - rolling_max) / (rolling_max + 1e-8) * 100
+        df[f"max_drawdown_{period}d"] = g.apply(
+            lambda x: drawdown.loc[x.index].rolling(period, min_periods=mp).min()
+        ).reset_index(level=0, drop=True)
+
+    # ATR
+    df["atr_14"] = g.apply(
+        lambda x: pd.concat(
+            [x["high"] - x["low"], (x["high"] - x["close"].shift(1)).abs(), (x["low"] - x["close"].shift(1)).abs()],
+            axis=1,
+        )
+        .max(axis=1)
+        .rolling(14, min_periods=7)
+        .mean()
+    ).reset_index(level=0, drop=True)
+    df["atr_ratio_14"] = df["atr_14"] / (df["close"] + 1e-8) * 100
+
+    # RSI
+    delta = g["close"].transform(lambda x: x.diff())
+    gain = delta.where(delta > 0, 0)
+    loss = (-delta).where(delta < 0, 0)
+    for period in [6, 12, 24]:
+        avg_gain = g.apply(lambda x: gain.loc[x.index].rolling(period).mean()).reset_index(level=0, drop=True)
+        avg_loss = g.apply(lambda x: loss.loc[x.index].rolling(period).mean()).reset_index(level=0, drop=True)
+        rs = avg_gain / (avg_loss + 1e-8)
+        df[f"rsi_{period}"] = 100 - (100 / (1 + rs))
+
+    # MACD
+    ema12 = g["close"].transform(lambda x: x.ewm(span=12, adjust=False).mean())
+    ema26 = g["close"].transform(lambda x: x.ewm(span=26, adjust=False).mean())
+    df["macd_dif"] = ema12 - ema26
+    df["macd_dea"] = g["macd_dif"].transform(lambda x: x.ewm(span=9, adjust=False).mean())
+    df["macd"] = (df["macd_dif"] - df["macd_dea"]) * 2
+
+    # KDJ
+    low_9 = g["low"].transform(lambda x: x.rolling(9).min())
+    high_9 = g["high"].transform(lambda x: x.rolling(9).max())
+    rsv = (df["close"] - low_9) / (high_9 - low_9 + 1e-8) * 100
+    df["kdj_k"] = (
+        g["rsv"].transform(lambda x: x.ewm(com=2, adjust=False).mean())
+        if "rsv" in df.columns
+        else g.apply(
+            lambda x: (
+                (x["close"] - x["low"].rolling(9).min())
+                / (x["high"].rolling(9).max() - x["low"].rolling(9).min() + 1e-8)
+                * 100
+            )
+            .ewm(com=2, adjust=False)
+            .mean()
+        ).reset_index(level=0, drop=True)
+    )
+    # 简化KDJ批量计算
+    rsv = g.apply(
+        lambda x: (
+            (x["close"] - x["low"].rolling(9).min())
+            / (x["high"].rolling(9).max() - x["low"].rolling(9).min() + 1e-8)
+            * 100
+        )
+    ).reset_index(level=0, drop=True)
+    df["kdj_k"] = g.apply(lambda x: rsv.loc[x.index].ewm(com=2, adjust=False).mean()).reset_index(level=0, drop=True)
+    df["kdj_d"] = g.apply(lambda x: df.loc[x.index, "kdj_k"].ewm(com=2, adjust=False).mean()).reset_index(
+        level=0, drop=True
+    )
+    df["kdj_j"] = 3 * df["kdj_k"] - 2 * df["kdj_d"]
+
+    # 乖离率
+    for name, period in [("bias_short", 5), ("bias_mid", 10), ("bias_long", 20)]:
+        ma = g["close"].transform(lambda x: x.rolling(period).mean())
+        df[name] = (df["close"] - ma) / (ma + 1e-8) * 100
+
+    # 增强特征
+    if "turnover_rate" in df.columns:
+        tr_mean = g["turnover_rate"].transform(lambda x: x.rolling(20, min_periods=5).mean())
+        tr_std = g["turnover_rate"].transform(lambda x: x.rolling(20, min_periods=5).std())
+        df["turnover_zscore"] = (df["turnover_rate"] - tr_mean) / (tr_std + 1e-8)
+        df["turnover_change_rate"] = g["turnover_rate"].transform(lambda x: x.pct_change(5))
+        df["turnover_spike"] = (df["turnover_rate"] > tr_mean * 2).astype(int)
+
+    if "rsi_6" in df.columns and "kdj_j" in df.columns:
+        df["rsi_kdj_golden_cross"] = ((df["rsi_6"] > 50) & (df["kdj_j"] > df["kdj_k"])).astype(int)
+        df["rsi_kdj_strength"] = (df["rsi_6"] / 100 + df["kdj_j"] / 100) / 2
+        df["rsi_zone"] = np.where(df["rsi_6"] > 70, 1, np.where(df["rsi_6"] < 30, -1, 0))
+        df["rsi_kdj_divergence"] = df["rsi_6"] - df["kdj_j"]
+
+    # 取每只股票最后一行
+    return df.groupby("ts_code").last().reset_index()
 
 
 def ensemble_predict(models, weights, feature_vector, feature_names):
@@ -310,17 +438,11 @@ def ensemble_predict(models, weights, feature_vector, feature_names):
     xgb_pred = models["xgboost"].predict(dmatrix)[0]
     lgb_pred = models["lightgbm"].predict([feature_vector])[0]
     cat_pred = models["catboost"].predict_proba([feature_vector])[0, 1]
-    ensemble_pred = (
-        weights["xgboost"] * xgb_pred
-        + weights["lightgbm"] * lgb_pred
-        + weights["catboost"] * cat_pred
-    )
+    ensemble_pred = weights["xgboost"] * xgb_pred + weights["lightgbm"] * lgb_pred + weights["catboost"] * cat_pred
     return ensemble_pred, xgb_pred, lgb_pred, cat_pred
 
 
-def process_single_stock(
-    ts_code, name, feature_names, models, weights, daily_cache
-):
+def process_single_stock(ts_code, name, feature_names, models, weights, daily_cache):
     """处理单只股票"""
     try:
         df = daily_cache.get(ts_code)
@@ -342,9 +464,7 @@ def process_single_stock(
                 val = 0
             feature_vector.append(float(val))
 
-        ensemble_prob, xgb_prob, lgb_prob, cat_prob = ensemble_predict(
-            models, weights, feature_vector, feature_names
-        )
+        ensemble_prob, xgb_prob, lgb_prob, cat_prob = ensemble_predict(models, weights, feature_vector, feature_names)
 
         return {
             "ts_code": ts_code,
@@ -456,24 +576,12 @@ def predict_top50(predict_date: str):
         )
 
     # 保存结果
-    output_file = (
-        PROJECT_ROOT
-        / "data"
-        / "prediction"
-        / "results"
-        / f"v280_ensemble_top50_{predict_date}.csv"
-    )
+    output_file = PROJECT_ROOT / "data" / "prediction" / "results" / f"v280_ensemble_top50_{predict_date}.csv"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     top50.to_csv(output_file, index=False)
     log.info(f"\n结果已保存: {output_file}")
 
-    all_results_file = (
-        PROJECT_ROOT
-        / "data"
-        / "prediction"
-        / "results"
-        / f"v280_ensemble_all_{predict_date}.csv"
-    )
+    all_results_file = PROJECT_ROOT / "data" / "prediction" / "results" / f"v280_ensemble_all_{predict_date}.csv"
     df_results.to_csv(all_results_file, index=False)
 
     return top50, df_results

@@ -124,18 +124,31 @@ def get_feature_columns(df, feature_cols):
 
 
 def time_series_split(df, train_ratio=0.65, cal_ratio=0.15):
-    """时间序列划分"""
+    """严格按日期的时间序列划分（同一天的所有样本在同一集合）"""
     df = df.copy()
     df["trade_date"] = pd.to_datetime(df["trade_date"], format="mixed", errors="coerce")
-    df = df.sort_values("trade_date")
 
-    n = len(df)
-    train_end = int(n * train_ratio)
-    cal_end = int(n * (train_ratio + cal_ratio))
+    # 获取唯一日期并排序
+    unique_dates = sorted(df["trade_date"].dt.date.unique())
+    n_dates = len(unique_dates)
 
-    train = df.iloc[:train_end]
-    cal = df.iloc[train_end:cal_end]
-    test = df.iloc[cal_end:]
+    train_end = int(n_dates * train_ratio)
+    cal_end = int(n_dates * (train_ratio + cal_ratio))
+
+    train_dates = set(unique_dates[:train_end])
+    cal_dates = set(unique_dates[train_end:cal_end])
+    test_dates = set(unique_dates[cal_end:])
+
+    train = df[df["trade_date"].dt.date.isin(train_dates)].copy()
+    cal = df[df["trade_date"].dt.date.isin(cal_dates)].copy()
+    test = df[df["trade_date"].dt.date.isin(test_dates)].copy()
+
+    log.info(
+        f"日期切分: 训练 {len(train_dates)}天 ({unique_dates[0]} ~ {unique_dates[train_end-1]}), "
+        f"校准 {len(cal_dates)}天 ({unique_dates[train_end]} ~ {unique_dates[cal_end-1]}), "
+        f"测试 {len(test_dates)}天 ({unique_dates[cal_end]} ~ {unique_dates[-1]})"
+    )
+    log.info(f"样本切分: 训练 {len(train)}行, 校准 {len(cal)}行, 测试 {len(test)}行")
 
     return train, cal, test
 

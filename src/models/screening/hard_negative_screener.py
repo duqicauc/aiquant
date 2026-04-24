@@ -29,8 +29,8 @@ class HardNegativeSampleScreener:
     HARD_NEGATIVE_TYPES = {
         "near_miss": {
             "description": "涨幅接近但未达标",
-            "min_return": 20,
-            "max_return": 45,
+            "min_return": 15,  # 从20降至15，扩大下限
+            "max_return": 35,  # 从45降至35，远离正样本50%阈值
         },
         "high_position_fail": {
             "description": "高位启动后下跌",
@@ -65,7 +65,7 @@ class HardNegativeSampleScreener:
         self,
         positive_samples_df: pd.DataFrame,
         min_return: float = 20.0,
-        max_return: float = 45.0,
+        max_return: float = 35.0,
         samples_per_date: int = None,  # v3: 改为None，使用类型默认值
         random_seed: int = 42,
         include_high_position_fail: bool = True,
@@ -77,7 +77,7 @@ class HardNegativeSampleScreener:
         Args:
             positive_samples_df: 正样本DataFrame（用于获取T1日期）
             min_return: 最小34日涨幅阈值（默认20%）
-            max_return: 最大34日涨幅阈值（默认45%，低于正样本的50%）
+            max_return: 最大34日涨幅阈值（默认35%，低于正样本的50%）
             samples_per_date: 每个T1日期采样的硬负样本数量（None则使用默认值）
             random_seed: 随机种子
             include_high_position_fail: 是否包含高位假启动类型（v2.4.0新增）
