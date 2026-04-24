@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--stop-loss", type=float, default=4.0, help="止损百分比")
     parser.add_argument("--trailing-stop", type=float, default=5.0, help="移动止盈回撤百分比")
     parser.add_argument("--trailing-activation", type=float, default=5.0, help="移动止盈激活阈值百分比")
+    parser.add_argument("--enable-sector-filter", action="store_true", help="启用热点板块过滤/加成")
     parser.add_argument("--capital", type=float, default=10_000_000, help="初始资金")
     args = parser.parse_args()
 
@@ -43,6 +44,7 @@ def main():
         stop_loss_pct=args.stop_loss,
         trailing_stop_pct=args.trailing_stop,
         trailing_stop_activation=args.trailing_activation,
+        enable_sector_filter=args.enable_sector_filter,
         ma_window=5,
         ma_consecutive_days=2,
         buy_slippage_bps=15.0,

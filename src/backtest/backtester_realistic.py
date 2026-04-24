@@ -30,6 +30,7 @@ import os
 
 from src.data.tushare_data_provider import TushareDataProvider
 from src.trading.position_sizer import PositionSizer
+from src.trading.sector_filter import SectorFilter
 from src.utils.logger import log
 
 load_dotenv()
@@ -55,6 +56,8 @@ class RealisticBacktester:
         min_commission: float = 5.0,       # 最低佣金 5元
         stamp_duty_rate: float = 0.001,    # 印花税 0.1%（仅卖出）
         min_amount: float = 10_000,        # 最小成交额 1000万（Tushare amount单位为千元）
+        enable_sector_filter: bool = False,
+        sector_filter_config: Optional[dict] = None,
     ):
         self.prediction_dir = Path(prediction_dir)
         self.initial_capital = initial_capital
@@ -76,6 +79,11 @@ class RealisticBacktester:
             total_capital=initial_capital,
             base_per_stock=per_stock_amount,
         )
+        self.enable_sector_filter = enable_sector_filter
+        self.sector_filter = None
+        if enable_sector_filter:
+            cfg = sector_filter_config or {}
+            self.sector_filter = SectorFilter(**cfg)
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
@@ -324,6 +332,14 @@ class RealisticBacktester:
                         portfolio_value += hv
                         holding_value += hv
 
+                # 获取当日热点板块（如启用）
+                hot_sectors = None
+                if self.sector_filter:
+                    try:
+                        hot_sectors = self.sector_filter.get_hot_sectors(date)
+                    except Exception as e:
+                        log.debug(f"获取热点板块失败 {date}: {e}")
+
                 for rank, (_, row_pred) in enumerate(top10.iterrows(), 1):
                     ts_code = row_pred["ts_code"]
 
@@ -354,6 +370,16 @@ class RealisticBacktester:
                     )
                     if buy_amount <= 0:
                         continue
+
+                    # 热点板块加成
+                    if self.sector_filter and hot_sectors is not None:
+                        try:
+                            boost = self.sector_filter.get_sector_boost(ts_code, date, hot_sectors)
+                            if boost != 1.0:
+                                buy_amount = buy_amount * boost
+                                log.info(f"  板块加成 {ts_code}: +{(boost-1)*100:.0f}%")
+                        except Exception as e:
+                            log.debug(f"板块加成计算失败 {ts_code}: {e}")
 
                     # 计算可买股数（100股取整）
                     qty = int(buy_amount / buy_price / 100) * 100
