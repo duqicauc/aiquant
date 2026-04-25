@@ -26,7 +26,7 @@ class PositionSizer:
         "bear": 0.0,         # 熊市: close<MA20<MA60
     }
 
-    # 排名 -> 置信度权重
+    # 排名 -> 置信度权重（基线值，单票上限动态化已足够）
     CONFIDENCE_WEIGHT_MAP = {
         1: 2.0,
         2: 1.5,
@@ -40,11 +40,19 @@ class PositionSizer:
         10: 0.7,
     }
 
+    # 市场环境 -> 单票上限比例（Phase 2 优化：动态上限）
+    MARKET_SINGLE_LIMIT_MAP = {
+        "strong_bull": 0.10,   # 强牛: 龙头可重仓
+        "weak_bull": 0.08,     # 弱牛: 维持原上限
+        "oscillation": 0.06,   # 震荡: 收紧风险
+        "bear": 0.00,          # 熊市: 不买
+    }
+
     def __init__(
         self,
         total_capital: float = 10_000_000,
         base_per_stock: float = 300_000,
-        max_single_pct: float = 0.08,
+        max_single_pct: float = 0.08,  # 默认 fallback
         max_total_position_pct: float = 1.0,
     ):
         self.total_capital = total_capital
@@ -145,9 +153,11 @@ class PositionSizer:
             log.debug(f"  事件调整: 仓位×{event_mult:.0%}")
 
         # 第四层: 组合约束
-        # 4.1 单票上限
-        max_single = portfolio_value * self.max_single_pct
+        # 4.1 单票上限（动态化：根据市场环境调整）
+        dynamic_single_pct = self.MARKET_SINGLE_LIMIT_MAP.get(market_type, self.max_single_pct)
+        max_single = portfolio_value * dynamic_single_pct
         amount = min(base_amount, max_single)
+        log.debug(f"  单票上限({market_type}): {dynamic_single_pct*100:.0f}% → {max_single:,.0f}元")
 
         # 4.2 总仓位上限(基于持仓市值,不是总市值)
         max_total = self.total_capital * self.max_total_position_pct

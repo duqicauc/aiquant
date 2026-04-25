@@ -630,9 +630,9 @@ class TushareFetcher(BaseFetcher):
 
             if df is not None and not df.empty:
                 # 过滤最小涨幅
-                df = df[df["pct_chg"] >= min_pct_chg].copy()
+                df = df[df["pct_change"] >= min_pct_chg].copy()
                 # 按涨幅排序
-                df = df.sort_values("pct_chg", ascending=False).head(top_n)
+                df = df.sort_values("pct_change", ascending=False).head(top_n)
 
             return df if df is not None else pd.DataFrame()
         except Exception as e:

@@ -175,22 +175,22 @@ short_term_positive = {
 python3 scripts/generate_hard_negatives.py \
     --start-date 20200101 \
     --end-date 20260421 \
-    --output data/training/samples/hard_negatives_v290.csv
+    --output data/training/samples/hard_negatives_v291.csv
 
 # 生成短期正样本
 python3 scripts/generate_short_term_samples.py \
     --start-date 20200101 \
     --end-date 20260421 \
     --horizon 5 \
-    --output data/training/samples/short_term_positives_v290.csv
+    --output data/training/samples/short_term_positives_v291.csv
 
 # 合并所有样本
-python3 scripts/merge_samples_v290.py \
+python3 scripts/merge_samples_v291.py \
     --long-positive data/training/samples/positive_samples.csv \
-    --short-positive data/training/samples/short_term_positives_v290.csv \
+    --short-positive data/training/samples/short_term_positives_v291.csv \
     --negative data/training/samples/negative_samples_v2.csv \
-    --hard-negative data/training/samples/hard_negatives_v290.csv \
-    --output data/training/samples/all_samples_v290.csv
+    --hard-negative data/training/samples/hard_negatives_v291.csv \
+    --output data/training/samples/all_samples_v291.csv
 ```
 
 **验收标准**：
@@ -247,7 +247,7 @@ v2.9.0 模型架构
 
 **超参数搜索（Optuna）**：
 ```python
-# scripts/hyperparameter_search_v290.py
+# scripts/hyperparameter_search_v291.py
 import optuna
 
 def objective(trial):
@@ -285,10 +285,10 @@ study.optimize(objective, n_trials=100)
 ### 3.5 P1.5 Walk-Forward 验证（2-3 天）
 
 ```bash
-python3 scripts/walk_forward_validation_v290.py \
+python3 scripts/walk_forward_validation_v291.py \
     --model data/models/breakout_launch_scorer/versions/v2.9.0/ \
     --windows 5 \
-    --output data/training/quality_reports/v290_wfv_report.md
+    --output data/training/quality_reports/v291_wfv_report.md
 ```
 
 **验收标准**：
@@ -362,7 +362,7 @@ python3 scripts/grid_search_strategy_params.py \
     --model-version v2.9.0 \
     --periods 2024h2,2025q1 \
     --param-grid '{"stop_loss": [2,3,4,5,6], "ma_window": [3,5,10], "sell_timing": ["open", "close"]}' \
-    --output data/prediction/evaluation/grid_search_v290.md
+    --output data/prediction/evaluation/grid_search_v291.md
 ```
 
 **搜索维度**：
@@ -707,9 +707,9 @@ class RiskEngine:
 | Phase 0 | `docs/analysis/negative_sample_audit.md` |
 | Phase 0 | `docs/analysis/v281_vs_v270_comparison.md` |
 | Phase 1 | `data/models/breakout_launch_scorer/versions/v2.9.0/` |
-| Phase 1 | `data/training/quality_reports/v290_wfv_report.md` |
+| Phase 1 | `data/training/quality_reports/v291_wfv_report.md` |
 | Phase 2 | `src/trading/position_sizer.py` |
-| Phase 2 | `data/prediction/evaluation/grid_search_v290.md` |
+| Phase 2 | `data/prediction/evaluation/grid_search_v291.md` |
 | Phase 3 | `src/monitoring/data_updater.py` |
 | Phase 3 | `src/monitoring/model_monitor.py` |
 | Phase 3 | `src/monitoring/auto_retrain.py` |

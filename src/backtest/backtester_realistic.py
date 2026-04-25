@@ -347,7 +347,7 @@ class RealisticBacktester:
 
         log.info("=" * 80)
         log.info(f"实盘策略回测: {trade_dates[0]} ~ {trade_dates[-1]} ({len(trade_dates)}个交易日)")
-        log.info(f"策略: 动态仓位(基础{self.per_stock_amount/10000:.0f}万/股), {self.stop_loss_pct}%止损, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1收盘卖)")
+        log.info(f"策略: 动态仓位(基础{self.per_stock_amount/10000:.0f}万/股), {self.stop_loss_pct}%止损, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1开盘卖)")
         log.info(f"费用: 佣金{self.commission_rate*100:.3f}%(最低{self.min_commission:.0f}元) + 印花税{self.stamp_duty_rate*100:.1f}%")
         log.info(f"滑点: 买入{self.buy_slippage_bps}bp / 卖出{self.sell_slippage_bps}bp")
         log.info(f"约束: 涨跌停过滤 + 停牌过滤 + 成交额>{self.min_amount/10000:.0f}万 + 市场环境过滤(上证>=MA20,跌破清仓)")
@@ -360,6 +360,8 @@ class RealisticBacktester:
         frozen_proceeds = {}  # {解冻日期: 金额}
         pending_sells = []  # [{ts_code, sell_date, reason}]
         price_history = {}  # {ts_code: [bars]} 用于波动率/ATR计算
+        peak_value = self.initial_capital  # 历史峰值净值
+        risk_control_mode = False  # 风控模式（回撤≥15%触发）
 
         for i, date in enumerate(trade_dates):
             signal_date = trade_dates[i - 1] if i > 0 else date
@@ -416,6 +418,11 @@ class RealisticBacktester:
             is_bull, sh_close, sh_ma20, sh_ma60, market_type = self.get_market_trend(date)
             market_state = {"close": sh_close, "ma20": sh_ma20, "ma60": sh_ma60}
             global_ratio = PositionSizer.MARKET_POSITION_MAP.get(market_type, 1.0)
+
+            # 风控模式：回撤≥15%时限制全局仓位30%，直至净值恢复至峰值95%
+            if risk_control_mode:
+                global_ratio = min(global_ratio, 0.30)
+                log.info(f"  [风控模式] 全局仓位限制30%")
 
             if not is_bull:
                 log.info(f"  市场环境: {market_type} 上证{sh_close:.0f}<MA20{sh_ma20:.0f}，暂停买入 + 清空持仓")
@@ -764,7 +771,7 @@ class RealisticBacktester:
                                             "sell_date": next_trade_date,
                                             "reason": "MA5退出(跌出Top50)"
                                         })
-                                        log.info(f"  标记卖出 {ts_code}: MA5退出(跌出Top50), T+1({next_trade_date})收盘卖")
+                                        log.info(f"  标记卖出 {ts_code}: MA5退出(跌出Top50), T+1({next_trade_date})开盘卖")
                                     break
                             else:
                                 below_streak = 0
@@ -800,9 +807,9 @@ class RealisticBacktester:
                     continue
 
                 pos = holdings[ts_code]
-                close = float(row["close"])
+                open_price = float(row["open"])
                 cost = pos["cost"]
-                sell_price = close * (1 - self.sell_slippage_bps / 10000)
+                sell_price = open_price * (1 - self.sell_slippage_bps / 10000)
                 amount = sell_price * pos["qty"]
                 commission = self._calc_sell_cost(amount)
                 net_proceeds = amount - commission
@@ -849,6 +856,31 @@ class RealisticBacktester:
                 "holdings_count": len(holdings),
                 "pending_count": len(pending_sells),
             })
+            # 极简风控：回撤≥15%触发风控模式，清仓至30%仓位
+            if total_value > peak_value:
+                peak_value = total_value
+                if risk_control_mode:
+                    risk_control_mode = False
+                    log.info(f"  [风控解除] 净值恢复至峰值 {peak_value:,.0f}")
+            else:
+                drawdown = (peak_value - total_value) / peak_value
+                if drawdown >= 0.15 and not risk_control_mode:
+                    risk_control_mode = True
+                    log.warning(f"  [风控触发] 回撤 {drawdown*100:.1f}% ≥ 15%，进入风控模式，次日清仓至30%仓位")
+                    # 将所有非当日买入持仓标记为次日开盘卖出
+                    for ts_code in list(holdings.keys()):
+                        pos = holdings[ts_code]
+                        if pos.get("buy_date") != date:
+                            already_pending = any(p["ts_code"] == ts_code for p in pending_sells)
+                            if not already_pending:
+                                next_trade_date = trade_dates[i + 1] if i + 1 < len(trade_dates) else None
+                                if next_trade_date:
+                                    pending_sells.append({
+                                        "ts_code": ts_code,
+                                        "sell_date": next_trade_date,
+                                        "reason": "风控清仓(回撤≥15%)"
+                                    })
+
             log.info(f"  净值: {total_value:,.0f} (现金{cash:,.0f} + 冻结{sum(frozen_proceeds.values()):,.0f} + 持仓{total_value-cash-sum(frozen_proceeds.values()):,.0f}) | 持仓{len(holdings)}只 | 待卖{len(pending_sells)}只")
 
         # 汇总
@@ -922,7 +954,7 @@ class RealisticBacktester:
         with open(report_path, "w") as f:
             f.write("# 实盘策略回测报告\n\n")
             f.write(f"**回测期**: {result['trade_dates'][0]} ~ {result['trade_dates'][-1]}\n")
-            f.write(f"**策略**: 固定{self.per_stock_amount/10000:.0f}万/股, 先买后卖, T+1资金可用, {self.stop_loss_pct}%止损 + MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1收盘卖)\n\n")
+            f.write(f"**策略**: 固定{self.per_stock_amount/10000:.0f}万/股, 先买后卖, T+1资金可用, {self.stop_loss_pct}%止损 + MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1开盘卖)\n\n")
             f.write("## 收益汇总\n\n")
             f.write("| 指标 | 数值 |\n")
             f.write("|------|------|\n")

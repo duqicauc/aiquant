@@ -270,7 +270,8 @@ with st.sidebar:
             "📁 批量分析",
             "💎 预测结果",
             "🌐 深度分析",
-            "📊 v232回测报告",
+            "📊 v291回测报告",
+            "📋 策略监控",
         ],
         index=0,
     )
@@ -1052,7 +1053,7 @@ elif page == "💎 预测结果":
     # 加载预测结果
     @st.cache_data(ttl=60)
     def load_prediction_results():
-        pred_dir = Path("data/prediction/results")
+        pred_dir = Path("data/prediction/v291_stk_factor")
         if pred_dir.exists():
             # 优先加载高级版本结果
             advanced_files = sorted(pred_dir.glob("top_*_advanced_*.csv"), reverse=True)
@@ -1245,73 +1246,236 @@ elif page == "🌐 深度分析":
                 with st.expander("错误详情"):
                     st.code(traceback.format_exc())
 
-elif page == "📊 v232回测报告":
-    st.markdown('<h1 class="main-header">📊 v232_v270 互补策略回测报告</h1>', unsafe_allow_html=True)
-    st.markdown(
-        "查看 `data/prediction/results/` 下由 "
-        "`scripts/backtest_v232_v270_complementary.py` 生成的 Markdown / 每日 CSV / 操作明细。"
-    )
-    results_dir = project_root / "data" / "prediction" / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
+elif page == "📊 v291回测报告":
+    st.markdown('<h1 class="main-header">📊 v291 实盘策略回测报告</h1>', unsafe_allow_html=True)
+    st.markdown("查看 `data/results/p22_*` 下由 `backtest_v291_realistic.py` 生成的回测报告。")
 
-    md_files = sorted(
-        results_dir.glob("backtest_report_*.md"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not md_files:
-        st.warning("暂无回测报告。请运行：")
+    results_dir = project_root / "data" / "results"
+    p22_dirs = sorted([d for d in results_dir.glob("p22_*") if d.is_dir()], reverse=True)
+
+    if not p22_dirs:
+        st.warning("暂无 v291 回测结果。请运行：")
         st.code(
-            "python scripts/backtest_v232_v270_complementary.py --start-date YYYYMMDD --end-date YYYYMMDD --stop-loss-mode close",
+            "python scripts/backtest_v291_realistic.py --start-date YYYYMMDD --end-date YYYYMMDD",
             language="bash",
         )
     else:
-        labels = [p.name for p in md_files]
-        choice = st.selectbox("选择报告文件", labels, index=0)
-        path = results_dir / choice
-        body = path.read_text(encoding="utf-8", errors="replace")
+        labels = [d.name for d in p22_dirs]
+        choice = st.selectbox("选择回测结果", labels, index=0)
+        selected_dir = results_dir / choice
 
-        # 同前缀 PNG 资金曲线
-        stem = path.stem.replace("backtest_report_", "")
-        png_candidates = list(results_dir.glob(f"backtest_equity_curve_{stem}.png"))
-        if png_candidates:
-            st.image(str(png_candidates[0]), use_container_width=True)
+        # 加载报告
+        report_md = selected_dir / "backtest_report.md"
+        if report_md.exists():
+            body = report_md.read_text(encoding="utf-8", errors="replace")
+            st.subheader("📄 报告摘要")
+            st.markdown(body)
+        else:
+            st.warning("该目录下无报告文件")
 
-        st.subheader("报告正文")
-        st.markdown(body)
+        # 每日净值曲线
+        daily_csv = selected_dir / "backtest_daily.csv"
+        if daily_csv.exists():
+            st.subheader("📈 净值曲线")
+            df_daily = pd.read_csv(daily_csv, encoding="utf-8-sig")
+            if "date" in df_daily.columns and "total_value" in df_daily.columns:
+                df_daily["date"] = pd.to_datetime(df_daily["date"], format="%Y%m%d")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_daily["date"], y=df_daily["total_value"],
+                    mode="lines", name="净值",
+                    line=dict(color="#3fb950", width=2)
+                ))
+                # 标注初始资金线
+                init = df_daily["total_value"].iloc[0]
+                fig.add_hline(y=init, line_dash="dash", line_color="#8b949e",
+                              annotation_text=f"初始资金 {init:,.0f}")
+                fig.update_layout(
+                    template="plotly_dark",
+                    height=400,
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    xaxis_title="日期", yaxis_title="净值",
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-        daily_glob = f"backtest_daily_{stem}.csv"
-        daily_files = list(results_dir.glob(daily_glob))
-        if daily_files:
-            st.subheader("每日资产（CSV）")
-            df_d = pd.read_csv(daily_files[0], encoding="utf-8-sig")
-            st.dataframe(df_d, use_container_width=True, height=320)
+                # 回撤曲线
+                if "total_value" in df_daily.columns:
+                    df_daily["peak"] = df_daily["total_value"].cummax()
+                    df_daily["drawdown"] = (df_daily["total_value"] - df_daily["peak"]) / df_daily["peak"] * 100
+                    fig_dd = go.Figure()
+                    fig_dd.add_trace(go.Scatter(
+                        x=df_daily["date"], y=df_daily["drawdown"],
+                        mode="lines", name="回撤",
+                        fill="tozeroy", line=dict(color="#f85149", width=1),
+                        fillcolor="rgba(248,81,73,0.2)"
+                    ))
+                    fig_dd.update_layout(
+                        template="plotly_dark",
+                        height=300,
+                        margin=dict(l=40, r=40, t=40, b=40),
+                        xaxis_title="日期", yaxis_title="回撤 %",
+                    )
+                    st.plotly_chart(fig_dd, use_container_width=True)
+
+            st.subheader("📋 每日资产")
+            st.dataframe(df_daily, use_container_width=True, height=320)
             st.download_button(
                 "📥 下载每日资产 CSV",
-                df_d.to_csv(index=False, encoding="utf-8-sig"),
-                file_name=daily_files[0].name,
+                df_daily.to_csv(index=False, encoding="utf-8-sig"),
+                file_name=daily_csv.name,
                 mime="text/csv",
             )
 
-        op_glob = f"backtest_operations_{stem}.csv"
-        op_files = list(results_dir.glob(op_glob))
-        if op_files:
-            st.subheader("操作明细（CSV）")
-            df_o = pd.read_csv(op_files[0], encoding="utf-8-sig")
-            st.dataframe(df_o, use_container_width=True, height=360)
+        # 交易明细
+        txn_csv = selected_dir / "backtest_transactions.csv"
+        if txn_csv.exists():
+            st.subheader("📋 交易明细")
+            df_txn = pd.read_csv(txn_csv, encoding="utf-8-sig")
+            st.dataframe(df_txn, use_container_width=True, height=360)
             st.download_button(
-                "📥 下载操作明细 CSV",
-                df_o.to_csv(index=False, encoding="utf-8-sig"),
-                file_name=op_files[0].name,
+                "📥 下载交易明细 CSV",
+                df_txn.to_csv(index=False, encoding="utf-8-sig"),
+                file_name=txn_csv.name,
                 mime="text/csv",
             )
 
-        st.download_button(
-            "📥 下载当前 Markdown 报告",
-            body,
-            file_name=choice,
-            mime="text/markdown",
-        )
+elif page == "📋 策略监控":
+    st.markdown('<h1 class="main-header">📋 策略监控看板</h1>', unsafe_allow_html=True)
+
+    # ========== 三季收益对比 ==========
+    st.markdown("### 📈 三季收益对比")
+    comparison_data = {
+        "季度": ["2024Q4", "2025Q1", "2026Q1", "合计"],
+        "基线": ["+20.62%", "+7.24%", "+1.71%", "+29.57%"],
+        "P2.2最终版": ["+30.35%", "+1.93%", "+5.85%", "+38.13%"],
+        "提升": ["+9.73pp", "-5.31pp", "+4.14pp", "+8.56pp"],
+    }
+    df_comp = pd.DataFrame(comparison_data)
+    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+
+    col1, col2, col3, col4 = st.columns(4)
+    metrics = [
+        ("2024Q4", 30.35, 20.62),
+        ("2025Q1", 1.93, 7.24),
+        ("2026Q1", 5.85, 1.71),
+        ("合计", 38.13, 29.57),
+    ]
+    for col, (label, final, base) in zip([col1, col2, col3, col4], metrics):
+        with col:
+            st.metric(label=label, value=f"+{final:.2f}%", delta=f"+{final-base:.2f}pp")
+
+    # 三季净值曲线对比
+    st.markdown("#### 📊 三季净值曲线对比")
+    quarter_dirs = {
+        "2024Q4": project_root / "data" / "results" / "p22_2024q4",
+        "2025Q1": project_root / "data" / "results" / "p22_2025q1",
+        "2026Q1": project_root / "data" / "results" / "p22_2026q1",
+    }
+    fig_quarter = go.Figure()
+    colors = {"2024Q4": "#3fb950", "2025Q1": "#58a6ff", "2026Q1": "#d29922"}
+    for q_name, q_dir in quarter_dirs.items():
+        daily_file = q_dir / "backtest_daily.csv"
+        if daily_file.exists():
+            df_q = pd.read_csv(daily_file, encoding="utf-8-sig")
+            if "date" in df_q.columns and "total_value" in df_q.columns:
+                df_q["date"] = pd.to_datetime(df_q["date"], format="%Y%m%d")
+                fig_quarter.add_trace(go.Scatter(
+                    x=df_q["date"], y=df_q["total_value"],
+                    mode="lines", name=q_name,
+                    line=dict(color=colors.get(q_name, "#fff"), width=2)
+                ))
+    fig_quarter.update_layout(
+        template="plotly_dark", height=400,
+        margin=dict(l=40, r=40, t=40, b=40),
+        xaxis_title="日期", yaxis_title="净值",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_quarter, use_container_width=True)
+
+    # 三季回撤对比
+    st.markdown("#### 📉 三季回撤对比")
+    fig_dd_q = go.Figure()
+    for q_name, q_dir in quarter_dirs.items():
+        daily_file = q_dir / "backtest_daily.csv"
+        if daily_file.exists():
+            df_q = pd.read_csv(daily_file, encoding="utf-8-sig")
+            if "date" in df_q.columns and "total_value" in df_q.columns:
+                df_q["date"] = pd.to_datetime(df_q["date"], format="%Y%m%d")
+                df_q["peak"] = df_q["total_value"].cummax()
+                df_q["drawdown"] = (df_q["total_value"] - df_q["peak"]) / df_q["peak"] * 100
+                fig_dd_q.add_trace(go.Scatter(
+                    x=df_q["date"], y=df_q["drawdown"],
+                    mode="lines", name=q_name,
+                    line=dict(color=colors.get(q_name, "#fff"), width=1.5)
+                ))
+    fig_dd_q.update_layout(
+        template="plotly_dark", height=300,
+        margin=dict(l=40, r=40, t=40, b=40),
+        xaxis_title="日期", yaxis_title="回撤 %",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_dd_q, use_container_width=True)
+
+    # ========== 策略参数看板 ==========
+    st.markdown("---")
+    st.markdown("### ⚙️ 当前策略参数")
+    param_data = {
+        "参数": [
+            "初始资金", "每只股票基础金额", "TopN买入", "止损比例",
+            "移动止盈回撤", "移动止盈激活阈值", "强牛单票上限", "弱牛单票上限",
+            "震荡单票上限", "Top1权重", "Top2-3权重", "市场环境阈值",
+            "T+1卖出价格", "滑点(买/卖)", "佣金费率",
+        ],
+        "当前值": [
+            "50万", "5万", "10只", "4%",
+            "5%", "5%", "10%", "8%",
+            "6%", "2.0×", "1.5×", "1.3",
+            "开盘价", "15bp / 20bp", "0.03%",
+        ],
+    }
+    df_param = pd.DataFrame(param_data)
+    st.dataframe(df_param, use_container_width=True, hide_index=True)
+
+    # ========== 模型漂移监控 ==========
+    st.markdown("---")
+    st.markdown("### 🔍 模型漂移监控")
+
+    # 读取最新的监控报告
+    monitor_dir = project_root / "logs" / "auto_pipeline_v291"
+    report_files = sorted(monitor_dir.glob("report_*.json"), reverse=True)
+
+    if report_files:
+        latest_report = json.loads(report_files[0].read_text(encoding="utf-8"))
+        monitor_data = latest_report.get("monitor", {})
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            psi_info = monitor_data.get("psi", {})
+            psi_val = psi_info.get("psi", "N/A")
+            psi_status = psi_info.get("status", "unknown")
+            color = {"green": "正常", "yellow": "预警", "red": "告警", "unknown": "未知"}.get(psi_status, "未知")
+            st.metric("PSI (预测漂移)", psi_val if psi_val != "N/A" else "无数据", color)
+        with c2:
+            tq = monitor_data.get("trade_quality", {})
+            wr = tq.get("avg_win_rate", 0)
+            st.metric("近7日胜率", f"{wr*100:.1f}%")
+        with c3:
+            pr = tq.get("avg_profit_ratio", 0)
+            st.metric("近7日盈亏比", f"{pr:.2f}")
+
+        # 告警信息
+        alerts = tq.get("alerts", [])
+        if alerts:
+            for alert in alerts:
+                st.error(f"⚠️ {alert}")
+        else:
+            st.success("✅ 无异常告警")
+
+        # 预测覆盖率
+        coverage = monitor_data.get("prediction_coverage", 0)
+        st.progress(min(coverage / 6000, 1.0), text=f"预测覆盖率: {coverage} / ~5600 只股票")
+    else:
+        st.info("暂无监控数据。请先运行自动流水线或手动触发监控检查。")
 
 # 页脚
 st.markdown("---")

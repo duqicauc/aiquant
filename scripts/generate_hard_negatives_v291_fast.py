@@ -16,7 +16,7 @@ from collections import defaultdict
 
 DB_PATH = "data/cache/quant_data.db"
 POSITIVE_SAMPLES = "data/training/samples/positive_samples.csv"
-OUTPUT = "data/training/samples/hard_negatives_v290.csv"
+OUTPUT = "data/training/samples/hard_negatives_v291.csv"
 
 def get_trade_date_offset(conn, trade_date, offset):
     """获取 trade_date 前后 offset 个交易日的日期"""

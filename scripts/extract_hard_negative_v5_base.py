@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-为新硬负样本(v290)提取v5格式基础数据
+为新硬负样本(v291)提取v5格式基础数据
 
-输入: data/training/samples/hard_negatives_v290.csv
+输入: data/training/samples/hard_negatives_v291.csv
 输出: data/training/features/hard_negative_v5_base.csv
 
 从 cache DB 批量查询:
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.logger import log
 
-INPUT = "data/training/samples/hard_negatives_v290.csv"
+INPUT = "data/training/samples/hard_negatives_v291.csv"
 OUTPUT = "data/training/features/hard_negative_v5_base.csv"
 DB_PATH = "data/cache/quant_data.db"
 LOOKBACK = 34  # v5是34天数据

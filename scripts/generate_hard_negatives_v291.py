@@ -24,7 +24,7 @@ from src.models.screening.hard_negative_screener import HardNegativeSampleScreen
 from src.utils.logger import log
 
 POSITIVE_SAMPLES = "data/training/samples/positive_samples.csv"
-OUTPUT = "data/training/samples/hard_negatives_v290.csv"
+OUTPUT = "data/training/samples/hard_negatives_v291.csv"
 
 def main():
     log.info("=" * 80)

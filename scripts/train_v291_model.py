@@ -10,10 +10,10 @@ v2.9.0 集成模型训练脚本
 - 正样本: feature_data_34d_v6.csv (Tushare指标 + 市场环境特征)
 - 负样本: negative_feature_data_v2_34d_v6.csv
 - 旧硬负: hard_negative_feature_data_34d_v6.csv
-- 新硬负: hard_negative_feature_data_34d_v290.csv (2,492个，14x扩充)
+- 新硬负: hard_negative_feature_data_34d_v291.csv (2,492个，14x扩充)
 
 Usage:
-    python scripts/train_v290_model.py
+    python scripts/train_v291_model.py
 """
 
 import json

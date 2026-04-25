@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-给新硬负样本提取完整特征（v290版）
+给新硬负样本提取完整特征（v291版）
 
-输入：data/training/samples/hard_negatives_v290.csv (2,500个)
-输出：data/training/features/hard_negative_feature_data_34d_v290.csv
+输入：data/training/samples/hard_negatives_v291.csv (2,500个)
+输出：data/training/features/hard_negative_feature_data_34d_v291.csv
 
 流程：
 1. 从 cache DB 查询 daily_data + stk_factor_pro + daily_basic
@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.logger import log
 
-INPUT = "data/training/samples/hard_negatives_v290.csv"
-OUTPUT = "data/training/features/hard_negative_feature_data_34d_v290.csv"
+INPUT = "data/training/samples/hard_negatives_v291.csv"
+OUTPUT = "data/training/features/hard_negative_feature_data_34d_v291.csv"
 MARKET_FEATURES = "data/training/features/market_features.csv"
 DB_PATH = "data/cache/quant_data.db"
 BATCH_SIZE = 500  # 每批处理500个样本
@@ -257,7 +257,7 @@ def align_to_existing_format(df_new: pd.DataFrame, existing_cols: list) -> pd.Da
 
 def main():
     print("=" * 80)
-    print("硬负样本特征提取 v290")
+    print("硬负样本特征提取 v291")
     print("=" * 80)
 
     # 读取新硬负样本

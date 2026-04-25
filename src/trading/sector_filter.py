@@ -38,25 +38,25 @@ POLICY_THEME_MAP = {
 # 市场环境 → 加成参数映射
 MARKET_BOOST_CONFIG = {
     "strong_bull": {
-        "industry_max": 0.30,
-        "concept_max": 0.40,
-        "policy_max": 0.25,
+        "industry_max": 0.28,
+        "concept_max": 0.35,      # 恢复激进，强牛追概念有效
+        "policy_max": 0.22,
         "non_hot_multiplier": 1.0,
-        "overall_cap": 2.5,
+        "overall_cap": 2.3,       # 接近原值2.5
     },
     "weak_bull": {
         "industry_max": 0.20,
-        "concept_max": 0.30,
-        "policy_max": 0.15,
+        "concept_max": 0.15,      # ↓ 从0.30降半，弱牛追概念风险高
+        "policy_max": 0.10,       # ↓ 从0.15降低
         "non_hot_multiplier": 0.85,
-        "overall_cap": 2.0,
+        "overall_cap": 1.8,       # ↓ 从2.0降低
     },
     "oscillating": {
         "industry_max": 0.08,
-        "concept_max": 0.08,
-        "policy_max": 0.05,
+        "concept_max": 0.05,      # ↓ 从0.08降低
+        "policy_max": 0.03,       # ↓ 从0.05降低
         "non_hot_multiplier": 0.60,
-        "overall_cap": 1.3,
+        "overall_cap": 1.2,       # ↓ 从1.3降低
     },
     "bear": {
         "industry_max": 0.05,
@@ -76,12 +76,13 @@ class SectorFilter:
         tushare_fetcher: Optional[TushareFetcher] = None,
         cache_dir: str = "data/cache/sector",
         hot_industry_top_n: int = 10,
-        hot_concept_top_n: int = 20,
+        hot_concept_top_n: int = 15,  # 适度扩大覆盖（原20→现15）
         hot_moneyflow_top_n: int = 15,
         enable_policy: bool = True,
         lookback_days: int = 2,
         rotation_threshold: float = 0.30,
         rotation_penalty: float = 0.70,
+        strong_bull_only: bool = False,  # 仅strong_bull启用（默认False，全市场禁用）
     ):
         self.fetcher = tushare_fetcher or TushareFetcher()
         self.cache_dir = Path(cache_dir)
@@ -94,12 +95,41 @@ class SectorFilter:
         self.lookback_days = lookback_days
         self.rotation_threshold = rotation_threshold
         self.rotation_penalty = rotation_penalty
+        self.strong_bull_only = strong_bull_only
 
         # 内存缓存
         self._hot_sectors_cache: Dict[str, dict] = {}
         self._stock_industry_cache: Dict[str, str] = {}
         self._stock_concepts_cache: Dict[str, List[str]] = {}
         self._top_list_cache: Dict[str, dict] = {}
+
+        # 加载行业/概念预缓存（消除API调用瓶颈）
+        self._load_precache()
+
+    # ------------------------------------------------------------------
+    # 预缓存（行业/概念映射）
+    # ------------------------------------------------------------------
+    def _load_precache(self):
+        """加载行业/概念预缓存到内存"""
+        precache_dir = Path("data/cache/sector")
+        # 行业预缓存
+        ind_path = precache_dir / "stock_industry_cache.json"
+        if ind_path.exists():
+            try:
+                with open(ind_path, "r", encoding="utf-8") as f:
+                    self._stock_industry_cache = json.load(f)
+                log.info(f"行业预缓存加载: {len(self._stock_industry_cache)} 只股票")
+            except Exception as e:
+                log.debug(f"行业预缓存加载失败: {e}")
+        # 概念预缓存
+        con_path = precache_dir / "stock_concepts_cache.json"
+        if con_path.exists():
+            try:
+                with open(con_path, "r", encoding="utf-8") as f:
+                    self._stock_concepts_cache = json.load(f)
+                log.info(f"概念预缓存加载: {len(self._stock_concepts_cache)} 只股票")
+            except Exception as e:
+                log.debug(f"概念预缓存加载失败: {e}")
 
     # ------------------------------------------------------------------
     # 缓存读写
@@ -293,11 +323,12 @@ class SectorFilter:
     # 股票板块信息获取
     # ------------------------------------------------------------------
     def get_stock_industry(self, ts_code: str) -> str:
-        """获取股票所属申万行业（带缓存）"""
+        """获取股票所属申万行业（优先预缓存，否则API兜底）"""
         if ts_code in self._stock_industry_cache:
             return self._stock_industry_cache[ts_code]
+        # 预缓存未命中时，批量获取并更新（回测场景不应发生）
+        log.warning(f"行业预缓存未命中: {ts_code}，尝试API获取")
         try:
-            time.sleep(0.2)  # 限流保护
             mapping = self.fetcher.get_stock_industry_map([ts_code])
             industry = mapping.get(ts_code, "")
         except Exception:
@@ -306,11 +337,11 @@ class SectorFilter:
         return industry
 
     def get_stock_concepts(self, ts_code: str) -> List[str]:
-        """获取股票所属概念列表（带缓存）"""
+        """获取股票所属概念列表（优先预缓存，否则API兜底）"""
         if ts_code in self._stock_concepts_cache:
             return self._stock_concepts_cache[ts_code]
+        log.warning(f"概念预缓存未命中: {ts_code}，尝试API获取")
         try:
-            time.sleep(0.2)  # 限流保护
             df = self.fetcher.concept_detail(ts_code=ts_code)
             if df is not None and not df.empty and "concept_name" in df.columns:
                 concepts = df["concept_name"].astype(str).tolist()
@@ -400,27 +431,16 @@ class SectorFilter:
                             boost *= (1.0 + cfg["policy_max"] * rotation_penalty)
                             break
 
-        # 4. 龙虎榜加成
-        top_list = hot_sectors.get("top_list", {})
+        # 4. 龙虎榜加成（仅保留机构净买入>1亿，弱市过滤由板块轮动惩罚覆盖）
         top_inst = hot_sectors.get("top_inst", {})
-
         if ts_code in top_inst:
             inst_net = top_inst[ts_code]
             if inst_net > 100_000_000:  # 机构净买入>1亿
-                boost *= 1.15
-                log.info(f"  龙虎榜加成 {ts_code}: 机构净买入{inst_net/1e8:.2f}亿 +15%")
-            elif inst_net > 50_000_000:  # 机构净买入>5000万
-                boost *= 1.10
-                log.info(f"  龙虎榜加成 {ts_code}: 机构净买入{inst_net/1e8:.2f}亿 +10%")
-
-        if ts_code in top_list:
-            net_amount = top_list[ts_code]
-            if net_amount > 50_000_000:  # 龙虎榜净买入>5000万
-                boost *= 1.05
-                log.info(f"  龙虎榜加成 {ts_code}: 净买入{net_amount/1e8:.2f}亿 +5%")
+                boost *= 1.12
+                log.info(f"  龙虎榜加成 {ts_code}: 机构净买入{inst_net/1e8:.2f}亿 +12%")
 
         # 5. 反向过滤：非热点股票打折
-        if not is_hot and ts_code not in top_list and ts_code not in top_inst:
+        if not is_hot:
             boost = cfg["non_hot_multiplier"]
 
         return min(boost, cfg["overall_cap"])
@@ -440,6 +460,10 @@ class SectorFilter:
         hot_sectors: Optional[dict] = None,
     ) -> pd.DataFrame:
         """对预测结果叠加板块热度筛选/排序"""
+        # strong_bull_only 模式下，非强牛市场直接返回原预测（不做板块干预）
+        if self.strong_bull_only and market_state != "strong_bull":
+            return df_preds.copy()
+
         if hot_sectors is None:
             hot_sectors = self.get_hot_sectors(trade_date)
 

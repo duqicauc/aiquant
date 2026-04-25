@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.prediction.predictor import EnsemblePredictor
 from src.utils.logger import log
 
-OUTPUT_DIR = PROJECT_ROOT / "data" / "prediction" / "v290_stk_factor"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "prediction" / "v291_stk_factor"
 
 
 def main():
