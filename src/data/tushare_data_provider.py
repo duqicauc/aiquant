@@ -30,8 +30,10 @@ if TUSHARE_TOKEN:
     ts.set_token(TUSHARE_TOKEN)
 PRO = ts.pro_api(TUSHARE_TOKEN) if TUSHARE_TOKEN else None
 
-# stk_factor_pro -> 统一列名映射
+# stk_factor_pro -> 统一列名映射 (Batch 1: 核心前复权因子)
+# 只保留 *_qfq 列，排除与 daily/daily_basic 重复的基础行情/估值列
 STK_FACTOR_RENAME = {
+    # === 现有核心因子（保持兼容）===
     "macd_dif_qfq": "macd_dif",
     "macd_dea_qfq": "macd_dea",
     "macd_qfq": "macd",
@@ -53,6 +55,67 @@ STK_FACTOR_RENAME = {
     "ma_qfq_10": "ma10",
     "ma_qfq_20": "ma_20d",
     "atr_qfq": "atr",
+    # === Batch 1 新增核心因子 ===
+    # EMA 扩展
+    "ema_qfq_30": "ema_30",
+    "ema_qfq_90": "ema_90",
+    "ema_qfq_250": "ema_250",
+    # MA 扩展
+    "ma_qfq_30": "ma30",
+    "ma_qfq_60": "ma60",
+    "ma_qfq_90": "ma90",
+    "ma_qfq_250": "ma250",
+    # 通道/波段
+    "boll_upper_qfq": "boll_upper",
+    "boll_mid_qfq": "boll_mid",
+    "boll_lower_qfq": "boll_lower",
+    "ktn_upper_qfq": "ktn_upper",
+    "ktn_mid_qfq": "ktn_mid",
+    "ktn_down_qfq": "ktn_down",
+    "taq_up_qfq": "taq_up",
+    "taq_mid_qfq": "taq_mid",
+    "taq_down_qfq": "taq_down",
+    # 动量/趋势
+    "cci_qfq": "cci",
+    "dmi_pdi_qfq": "dmi_pdi",
+    "dmi_mdi_qfq": "dmi_mdi",
+    "dmi_adx_qfq": "dmi_adx",
+    "dmi_adxr_qfq": "dmi_adxr",
+    "wr_qfq": "wr",
+    "wr1_qfq": "wr1",
+    "mfi_qfq": "mfi",
+    "mtm_qfq": "mtm",
+    "mtmma_qfq": "mtmma",
+    "roc_qfq": "roc",
+    "maroc_qfq": "maroc",
+    "trix_qfq": "trix",
+    "trma_qfq": "trma",
+    # 情绪/能量
+    "psy_qfq": "psy",
+    "psyma_qfq": "psyma",
+    "vr_qfq": "vr",
+    "cr_qfq": "cr",
+    "brar_br_qfq": "brar_br",
+    "brar_ar_qfq": "brar_ar",
+    "emv_qfq": "emv",
+    "maemv_qfq": "maemv",
+    "obv_qfq": "obv",
+    # 其他
+    "bbi_qfq": "bbi",
+    "dpo_qfq": "dpo",
+    "madpo_qfq": "madpo",
+    "dfma_dif_qfq": "dfma_dif",
+    "dfma_difma_qfq": "dfma_difma",
+    "mass_qfq": "mass",
+    "ma_mass_qfq": "ma_mass",
+    "expma_12_qfq": "expma_12",
+    "expma_50_qfq": "expma_50",
+    "asi_qfq": "asi",
+    "asit_qfq": "asit",
+    "xsii_td1_qfq": "xsii_td1",
+    "xsii_td2_qfq": "xsii_td2",
+    "xsii_td3_qfq": "xsii_td3",
+    "xsii_td4_qfq": "xsii_td4",
 }
 
 # 必须保留的合并键

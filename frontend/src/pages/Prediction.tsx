@@ -1,4 +1,4 @@
-import { Card, Table, Tag, Row, Col, Select, Button, Space, Tooltip } from 'antd'
+import { Card, Table, Tag, Row, Col, Select, Button, Space, Tooltip, InputNumber } from 'antd'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { predictionApi } from '../api/client'
@@ -127,6 +127,9 @@ export default function Prediction() {
   const [stats, setStats] = useState<any>({})
   const [loading, setLoading] = useState(true)
   const [topN, setTopN] = useState(50)
+  const [minMv, setMinMv] = useState<number | undefined>(undefined)
+  const [maxMv, setMaxMv] = useState<number | undefined>(undefined)
+  const [minTurnover, setMinTurnover] = useState<number | undefined>(undefined)
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null)
   const [pipelineLoading, setPipelineLoading] = useState(false)
   const [fullDist, setFullDist] = useState<FullDistribution | null>(null)
@@ -135,8 +138,12 @@ export default function Prediction() {
     setLoading(true)
     setPipelineLoading(true)
     try {
+      const filters: { min_mv?: number; max_mv?: number; min_turnover?: number } = {}
+      if (minMv !== undefined && !isNaN(minMv)) filters.min_mv = minMv
+      if (maxMv !== undefined && !isNaN(maxMv)) filters.max_mv = maxMv
+      if (minTurnover !== undefined && !isNaN(minTurnover)) filters.min_turnover = minTurnover
       const [predRes, pipeRes, distRes] = await Promise.all([
-        predictionApi.latest(topN),
+        predictionApi.latest(topN, filters),
         predictionApi.pipelineStatus().catch(() => ({ data: null })),
         predictionApi.distribution().catch(() => ({ data: null })),
       ])
@@ -160,7 +167,7 @@ export default function Prediction() {
   useEffect(() => {
     fetchAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topN])
+  }, [topN, minMv, maxMv, minTurnover])
 
   const columns = [
     { title: '排名', dataIndex: 'rank', key: 'rank', width: 70 },
@@ -291,6 +298,24 @@ export default function Prediction() {
       key: 'industry',
       width: 120,
       render: (industry: any) => industry || '-',
+    },
+    {
+      title: '总市值',
+      dataIndex: 'total_mv',
+      key: 'total_mv',
+      width: 100,
+      render: (v: any) =>
+        typeof v === 'number' ? <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>{(v / 10000).toFixed(1)}亿</span> : '-',
+      sorter: (a: any, b: any) => (a.total_mv ?? 0) - (b.total_mv ?? 0),
+    },
+    {
+      title: '换手',
+      dataIndex: 'turnover_rate',
+      key: 'turnover_rate',
+      width: 80,
+      render: (v: any) =>
+        typeof v === 'number' ? <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>{v.toFixed(2)}%</span> : '-',
+      sorter: (a: any, b: any) => (a.turnover_rate ?? 0) - (b.turnover_rate ?? 0),
     },
   ]
 
@@ -442,14 +467,14 @@ export default function Prediction() {
 
       <Card
         title={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span>最新预测结果 — {periodDisplay}</span>
-            <Space>
+            <Space size="small" wrap>
               <span style={{ color: '#8b949e', fontSize: '0.875rem' }}>展示数量</span>
               <Select
                 value={topN}
                 onChange={(v) => setTopN(v)}
-                style={{ width: 100 }}
+                style={{ width: 90 }}
                 dropdownStyle={{ background: '#21262d' }}
                 size="small"
               >
@@ -458,6 +483,31 @@ export default function Prediction() {
                 <Option value={50}>Top 50</Option>
                 <Option value={100}>Top 100</Option>
               </Select>
+              <InputNumber
+                placeholder="最小市值(亿)"
+                value={minMv}
+                onChange={(v) => setMinMv(v ?? undefined)}
+                style={{ width: 110 }}
+                size="small"
+                min={0}
+              />
+              <InputNumber
+                placeholder="最大市值(亿)"
+                value={maxMv}
+                onChange={(v) => setMaxMv(v ?? undefined)}
+                style={{ width: 110 }}
+                size="small"
+                min={0}
+              />
+              <InputNumber
+                placeholder="最小换手(%)"
+                value={minTurnover}
+                onChange={(v) => setMinTurnover(v ?? undefined)}
+                style={{ width: 110 }}
+                size="small"
+                min={0}
+                step={0.5}
+              />
             </Space>
           </div>
         }

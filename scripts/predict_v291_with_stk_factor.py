@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-v2.9.1 批量预测脚本
+v2.9.3 批量预测脚本（校准版）
 
-与 v2.8.1 预测流程一致，使用 v2.9.1 模型。
+使用 v2.9.3-ensemble 模型，含 Platt Scaling 校准 + Stacking 元学习器。
 """
 
 import argparse
@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default=str(OUTPUT_DIR), help="输出目录")
     args = parser.parse_args()
 
-    predictor = EnsemblePredictor(model_version="v2.9.1-ensemble")
+    predictor = EnsemblePredictor(model_version="v2.9.3-ensemble")
     results = predictor.predict_range(args.start_date, args.end_date, args.lookback)
 
     output_dir = Path(args.output_dir)
@@ -35,7 +35,7 @@ def main():
         predictor.save_results(df, date, output_dir)
 
     log.success("=" * 80)
-    log.success(f"v2.9.1 预测完成: {len(results)} 天")
+    log.success(f"v2.9.3 预测完成: {len(results)} 天")
     log.success("=" * 80)
 
 

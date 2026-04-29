@@ -69,7 +69,8 @@ export const stockApi = {
 
 // Prediction API
 export const predictionApi = {
-  latest: (topN = 50) => client.get('/api/prediction/latest', { params: { top_n: topN } }),
+  latest: (topN = 50, filters?: { min_mv?: number; max_mv?: number; min_turnover?: number }) =>
+    client.get('/api/prediction/latest', { params: { top_n: topN, ...filters } }),
   history: (tsCode: string, days = 30) =>
     client.get('/api/prediction/history', { params: { ts_code: tsCode, days } }),
   models: () => client.get('/api/prediction/models'),

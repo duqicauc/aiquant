@@ -1,6 +1,9 @@
 """
-AIQuant 可视化面板 v4.0
+[DEPRECATED] AIQuant 可视化面板 v4.0 (Streamlit)
 交互式Web界面，用于市场概况、股票诊断、批量分析
+
+⚠️ 废弃说明：可视化已迁移至 React + FastAPI 前端 (frontend/ + src/api/)。
+   本文件不再维护，仅作历史参考。请使用 http://localhost:5173 访问新版界面。
 """
 
 import streamlit as st

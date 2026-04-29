@@ -473,7 +473,8 @@ class SectorFilter:
         )
 
         score_col = None
-        for col in ["score", "prob", "prediction", "predicted_score"]:
+        # 优先使用 prob_raw（避免 Platt Scaling 压缩概率导致 sector filter 失效）
+        for col in ["prob_raw", "score", "prob", "prediction", "predicted_score"]:
             if col in df.columns:
                 score_col = col
                 break

@@ -726,6 +726,56 @@ class TushareFetcher(BaseFetcher):
             log.debug(f"获取龙虎榜机构明细失败: {e}")
             return pd.DataFrame()
 
+    def get_moneyflow(
+        self,
+        ts_code: str = None,
+        trade_date: str = None,
+        start_date: str = None,
+        end_date: str = None,
+    ) -> pd.DataFrame:
+        """
+        获取个股资金流向数据（主力净流入等）
+
+        接口说明：https://tushare.pro/document/2?doc_id=170
+        用户积分≥2000可调取
+
+        Args:
+            ts_code: 股票代码，若为None则拉取当日全市场
+            trade_date: 交易日期 (YYYYMMDD)，与 start_date/end_date 互斥
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (YYYYMMDD)
+
+        Returns:
+            DataFrame 含 ts_code, trade_date,
+            buy_elg_amount(特大单买入), sell_elg_amount(特大单卖出),
+            buy_lg_amount(大单买入), sell_lg_amount(大单卖出),
+            buy_md_amount(中单买入), sell_md_amount(中单卖出),
+            buy_sm_amount(小单买入), sell_sm_amount(小单卖出),
+            net_mf_amount(净流入额万元) 等
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {}
+            if trade_date:
+                params["trade_date"] = self.format_date(trade_date)
+            else:
+                if start_date:
+                    params["start_date"] = self.format_date(start_date)
+                if end_date:
+                    params["end_date"] = self.format_date(end_date)
+            if ts_code:
+                params["ts_code"] = self.format_stock_code(ts_code)
+
+            df = self.pro.moneyflow(**params)
+            if df is not None and not df.empty:
+                if "trade_date" in df.columns:
+                    df["trade_date"] = pd.to_datetime(df["trade_date"])
+                    df = df.sort_values("trade_date").reset_index(drop=True)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取资金流向失败: {e}")
+            return pd.DataFrame()
+
     def get_north_moneyflow(self, trade_date: str) -> pd.DataFrame:
         """
         获取沪深港通资金流向 (moneyflow_hsgt)

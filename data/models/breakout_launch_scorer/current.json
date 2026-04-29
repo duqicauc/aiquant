@@ -1,7 +1,8 @@
 {
   "production": "v2.7.0",
   "staging": "v2.7.0",
-  "testing": "v2.7.0",
-  "development": "v2.7.0-ensemble",
-  "updated_at": "2026-04-22T09:00:00.000000"
+  "testing": "v2.9.1-ensemble",
+  "development": "v2.9.2-catboost-conservative",
+  "updated_at": "2026-04-26T08:25:00+08:00",
+  "notes": "主力策略: v2.9.1-ensemble + integrated (sector-filter)。2024Q4 +18.10%, 2025Q1 +1.44%, 2026Q1 -0.14%。v2.9.2-conservative 作为研究分支: realistic +12.11% 是v292系列最佳，但与integrated不兼容(+1.90%)。优势来源分析见 docs/analysis/v291_vs_v292_deep_dive.md"
 }

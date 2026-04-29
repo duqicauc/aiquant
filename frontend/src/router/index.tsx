@@ -1,0 +1,26 @@
+import { Routes, Route } from 'react-router-dom'
+import Overview from '../pages/Overview'
+import Market from '../pages/Market'
+import Research from '../pages/Research'
+import Prediction from '../pages/Prediction'
+import Backtest from '../pages/Backtest'
+import Trading from '../pages/Trading'
+import Watchlist from '../pages/Watchlist'
+import System from '../pages/System'
+import NotFound from '../pages/NotFound'
+
+export default function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Overview />} />
+      <Route path="/market" element={<Market />} />
+      <Route path="/research" element={<Research />} />
+      <Route path="/prediction" element={<Prediction />} />
+      <Route path="/backtest" element={<Backtest />} />
+      <Route path="/trading" element={<Trading />} />
+      <Route path="/watchlist" element={<Watchlist />} />
+      <Route path="/system" element={<System />} />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  )
+}

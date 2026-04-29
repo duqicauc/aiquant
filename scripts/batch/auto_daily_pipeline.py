@@ -142,6 +142,18 @@ def main():
         result = run_command(cmd, f"数据补全 ({fill_start} ~ {fill_end})")
         report["steps"]["data_fill"] = result
 
+    # ========== Step 1.5: 股票基本信息缓存 ==========
+    # 每周一更新 stock_basic（基本信息变化不频繁）
+    if datetime.now().weekday() == 0:
+        cache_cmd = [
+            sys.executable,
+            "scripts/cache_stock_basic.py",
+        ]
+        cache_result = run_command(cache_cmd, "股票基本信息缓存更新")
+        report["steps"]["cache_stock_basic"] = cache_result
+    else:
+        report["steps"]["cache_stock_basic"] = {"skipped": True, "reason": "not_monday"}
+
     # ========== Step 2: 预测生成 ==========
     last_pred = get_last_prediction_date()
     if last_pred:
@@ -177,7 +189,18 @@ def main():
     else:
         log.warning(f"预测文件未生成: {pred_file}")
 
-    # ========== Step 3: 模型漂移检测 ==========
+    # ========== Step 3: 归档到 v291_daily ==========
+    daily_dir = PROJECT_ROOT / "data" / "prediction" / "v291_daily"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    for suffix in ["all.csv", "top100.csv", "top50.csv"]:
+        src = PREDICTION_DIR / f"predictions_{next_date}_{suffix}"
+        dst = daily_dir / f"predictions_{next_date}_{suffix}"
+        if src.exists():
+            import shutil
+            shutil.copy2(str(src), str(dst))
+    log.info(f"预测结果已归档到: {daily_dir}")
+
+    # ========== Step 4: 模型漂移检测 ==========
     monitor = ModelMonitor(
         prediction_dir=PREDICTION_DIR,
         results_dir=PROJECT_ROOT / "data" / "results",
@@ -185,6 +208,75 @@ def main():
     )
     monitor_result = monitor.run_daily_check(next_date)
     report["monitor"] = monitor_result
+
+    # ========== Step 5: 数据飞轮 (Model Data Flywheel) ==========
+    # 飞轮步骤非阻塞：即使失败也不影响主流程
+    flywheel_result = {"skipped": False, "steps": {}}
+    try:
+        from src.models.label_generator import LabelGenerator
+        from src.models.sample_pool import SamplePool
+
+        # 5a. 标签生成：用最近 60 天数据生成标签
+        lg = LabelGenerator(lookforward_days=34, threshold=0.30)
+        # 生成最近 60 天的标签（留出 lookforward_days 的未来数据窗口）
+        label_start = (datetime.strptime(next_date, "%Y%m%d") - timedelta(days=60)).strftime("%Y%m%d")
+        label_end = next_date
+        df_labels = lg.generate_labels(label_start, label_end)
+        flywheel_result["steps"]["label_gen"] = {
+            "samples": len(df_labels),
+            "positive": int(df_labels["label"].sum()) if not df_labels.empty else 0,
+        }
+
+        # 5b. 样本池更新
+        pool = SamplePool()
+        if not df_labels.empty:
+            pool.append(df_labels)
+        flywheel_result["steps"]["sample_pool"] = {
+            "total": len(pool.load()),
+            "meta": pool.meta,
+        }
+
+        # 5c. 质量检查
+        quality = pool.quality_report()
+        flywheel_result["steps"]["quality"] = quality
+
+        # 5d. 触发条件检查（每月1日或样本池新增超过10000条时触发重训练评估）
+        should_eval = False
+        if datetime.now().day == 1:
+            should_eval = True
+            flywheel_result["steps"]["trigger"] = {"reason": "monthly_check", "should_eval": True}
+        else:
+            flywheel_result["steps"]["trigger"] = {"reason": "daily_append", "should_eval": False}
+
+        flywheel_result["success"] = True
+
+        # 5e. 自动重训练评估（条件触发时）
+        if should_eval:
+            log.info("触发自动重训练评估...")
+            from src.models.auto_retrain import AutoRetrainEvaluator
+
+            evaluator = AutoRetrainEvaluator(min_improvement=0.005)
+            # 从样本池切分测试集
+            _, _, test_df = pool.split(val_days=60, test_days=30)
+            if len(test_df) >= evaluator.min_test_samples:
+                eval_result = evaluator.evaluate(test_df)
+                flywheel_result["steps"]["retrain_eval"] = eval_result
+                if eval_result.get("comparison", {}).get("should_replace"):
+                    log.info("新模型优于旧模型，准备部署...")
+                    # 注意：实际部署需要训练脚本生成新模型，这里仅记录建议
+                    flywheel_result["steps"]["retrain_eval"]["deploy_recommended"] = True
+            else:
+                flywheel_result["steps"]["retrain_eval"] = {
+                    "status": "skipped",
+                    "reason": f"测试集样本不足: {len(test_df)}",
+                }
+
+    except Exception as e:
+        log.warning(f"数据飞轮步骤异常: {e}")
+        flywheel_result["success"] = False
+        flywheel_result["error"] = str(e)
+
+    report["flywheel"] = flywheel_result
 
     # ========== 保存报告 ==========
     report["end_time"] = datetime.now().isoformat()

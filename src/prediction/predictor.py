@@ -18,8 +18,9 @@ Usage:
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -42,7 +43,7 @@ class EnsemblePredictor:
         / "models"
         / "breakout_launch_scorer"
         / "versions"
-        / "v2.8.0-ensemble"
+        / "v2.9.3-ensemble"
         / "model"
     )
 
@@ -66,10 +67,10 @@ class EnsemblePredictor:
 
         self.data_provider = TushareDataProvider()
         self.feature_engineer = FeatureEngineer()
-        self.models, self.weights, self.feature_names = self._load_models()
+        self.models, self.weights, self.feature_names, self.calibrators, self.meta_learner = self._load_models()
 
-    def _load_models(self) -> Tuple[Dict, dict, List[str]]:
-        """加载集成模型"""
+    def _load_models(self) -> Tuple[Dict, dict, List[str], Dict, Optional[Any]]:
+        """加载集成模型、校准器和元学习器"""
         models = {}
 
         xgb_model = xgb.Booster()
@@ -80,6 +81,16 @@ class EnsemblePredictor:
         lgb_model = lgb.Booster(model_file=str(self.MODEL_DIR / "lightgbm.txt"))
         models["lightgbm"] = lgb_model
         log.info("  加载 LightGBM 模型")
+        # 加载 LGB best_iteration
+        lgb_meta_path = self.MODEL_DIR / "lightgbm_meta.json"
+        if lgb_meta_path.exists():
+            with open(lgb_meta_path, "r") as f:
+                lgb_meta = json.load(f)
+            lgb_model.best_iteration = lgb_meta.get("best_iteration", lgb_model.num_trees())
+            log.info(f"  LGB best_iteration: {lgb_model.best_iteration}")
+        else:
+            lgb_model.best_iteration = int(lgb_model.num_trees() * 0.8)
+            log.warning(f"  LGB meta 缺失，回退到 {lgb_model.best_iteration} 棵树")
 
         cat_model = CatBoostClassifier()
         cat_model.load_model(str(self.MODEL_DIR / "catboost.cbm"))
@@ -96,10 +107,29 @@ class EnsemblePredictor:
             f"  权重: XGB={weights['xgboost']:.4f}, LGB={weights['lightgbm']:.4f}, CAT={weights['catboost']:.4f}"
         )
 
-        return models, weights, feature_names
+        # 加载校准器
+        calibrators = {}
+        for name in ["xgboost", "lightgbm", "catboost"]:
+            cal_path = self.MODEL_DIR / f"calibrator_{name}.pkl"
+            if cal_path.exists():
+                calibrators[name] = joblib.load(cal_path)
+                log.info(f"  加载 {name} Platt 校准器")
+            else:
+                log.warning(f"  {name} 校准器缺失")
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """对特征矩阵进行预测"""
+        # 加载元学习器
+        meta_path = self.MODEL_DIR / "meta_learner.pkl"
+        meta_learner = None
+        if meta_path.exists():
+            meta_learner = joblib.load(meta_path)
+            log.info("  加载 Stacking 元学习器")
+        else:
+            log.warning("  元学习器缺失，将回退到加权平均")
+
+        return models, weights, feature_names, calibrators, meta_learner
+
+    def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        """对特征矩阵进行预测，返回最终概率、原始概率、校准后概率"""
         # 对齐特征
         X_aligned = pd.DataFrame(index=X.index)
         missing_cols = []
@@ -117,22 +147,46 @@ class EnsemblePredictor:
 
         # XGBoost
         dmatrix = xgb.DMatrix(X_aligned, feature_names=self.feature_names)
-        pred_xgb = self.models["xgboost"].predict(dmatrix)
+        pred_xgb_raw = self.models["xgboost"].predict(dmatrix)
 
-        # LightGBM
-        pred_lgb = self.models["lightgbm"].predict(X_aligned)
-
-        # CatBoost
-        pred_cat = self.models["catboost"].predict_proba(X_aligned)[:, 1]
-
-        # 加权集成
-        ensemble = (
-            pred_xgb * self.weights["xgboost"]
-            + pred_lgb * self.weights["lightgbm"]
-            + pred_cat * self.weights["catboost"]
+        # LightGBM（使用 best_iteration）
+        pred_lgb_raw = self.models["lightgbm"].predict(
+            X_aligned, num_iteration=self.models["lightgbm"].best_iteration
         )
 
-        return ensemble
+        # CatBoost
+        pred_cat_raw = self.models["catboost"].predict_proba(X_aligned)[:, 1]
+
+        raw_probs = {
+            "xgboost": pred_xgb_raw,
+            "lightgbm": pred_lgb_raw,
+            "catboost": pred_cat_raw,
+        }
+
+        # 应用 Platt 校准器
+        calibrated_probs = {}
+        for name in ["xgboost", "lightgbm", "catboost"]:
+            if name in self.calibrators:
+                calibrated_probs[name] = self.calibrators[name].predict(raw_probs[name])
+            else:
+                calibrated_probs[name] = raw_probs[name]
+
+        # Stacking 元学习器 或 加权平均
+        if self.meta_learner is not None:
+            X_meta = np.column_stack([
+                calibrated_probs["xgboost"],
+                calibrated_probs["lightgbm"],
+                calibrated_probs["catboost"],
+            ])
+            ensemble = self.meta_learner.predict_proba(X_meta)[:, 1]
+        else:
+            ensemble = (
+                calibrated_probs["xgboost"] * self.weights["xgboost"]
+                + calibrated_probs["lightgbm"] * self.weights["lightgbm"]
+                + calibrated_probs["catboost"] * self.weights["catboost"]
+            )
+
+        return ensemble, raw_probs, calibrated_probs
 
     def predict_date(self, prediction_date: str, lookback_days: int = 70) -> pd.DataFrame:
         """预测单个日期
@@ -183,19 +237,14 @@ class EnsemblePredictor:
         log.info(f"预测样本: {len(df_pred)} 只股票")
 
         # 6. 模型预测
-        df_pred["prob"] = self.predict(df_pred)
-        df_pred["prob_xgb"] = self.models["xgboost"].predict(
-            xgb.DMatrix(
-                df_pred[[c for c in self.feature_names if c in df_pred.columns]].fillna(0).astype(float),
-                feature_names=self.feature_names,
-            )
-        )
-        df_pred["prob_lgb"] = self.models["lightgbm"].predict(
-            df_pred[[c for c in self.feature_names if c in df_pred.columns]].fillna(0).astype(float)
-        )
-        df_pred["prob_cat"] = self.models["catboost"].predict_proba(
-            df_pred[[c for c in self.feature_names if c in df_pred.columns]].fillna(0).astype(float)
-        )[:, 1]
+        ensemble, raw_probs, cal_probs = self.predict(df_pred)
+        df_pred["prob"] = ensemble
+        df_pred["prob_xgb"] = raw_probs["xgboost"]
+        df_pred["prob_lgb"] = raw_probs["lightgbm"]
+        df_pred["prob_cat"] = raw_probs["catboost"]
+        df_pred["prob_xgb_cal"] = cal_probs["xgboost"]
+        df_pred["prob_lgb_cal"] = cal_probs["lightgbm"]
+        df_pred["prob_cat_cal"] = cal_probs["catboost"]
 
         # 7. 排序
         df_pred = df_pred.sort_values("prob", ascending=False).reset_index(drop=True)
@@ -264,13 +313,14 @@ class EnsemblePredictor:
                     continue
 
                 # 模型预测
-                df_pred["prob"] = self.predict(df_pred)
-
-                # 获取各模型概率
-                X = df_pred[[c for c in self.feature_names if c in df_pred.columns]].fillna(0).astype(float)
-                df_pred["prob_xgb"] = self.models["xgboost"].predict(xgb.DMatrix(X, feature_names=self.feature_names))
-                df_pred["prob_lgb"] = self.models["lightgbm"].predict(X)
-                df_pred["prob_cat"] = self.models["catboost"].predict_proba(X)[:, 1]
+                ensemble, raw_probs, cal_probs = self.predict(df_pred)
+                df_pred["prob"] = ensemble
+                df_pred["prob_xgb"] = raw_probs["xgboost"]
+                df_pred["prob_lgb"] = raw_probs["lightgbm"]
+                df_pred["prob_cat"] = raw_probs["catboost"]
+                df_pred["prob_xgb_cal"] = cal_probs["xgboost"]
+                df_pred["prob_lgb_cal"] = cal_probs["lightgbm"]
+                df_pred["prob_cat_cal"] = cal_probs["catboost"]
 
                 # 排序
                 df_pred = df_pred.sort_values("prob", ascending=False).reset_index(drop=True)
@@ -292,6 +342,7 @@ class EnsemblePredictor:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         cols = ["rank", "ts_code", "name", "prob", "prob_xgb", "prob_lgb", "prob_cat",
+                "prob_xgb_cal", "prob_lgb_cal", "prob_cat_cal",
                 "close", "pct_chg", "turnover_rate", "total_mv"]
         cols = [c for c in cols if c in df.columns]
 

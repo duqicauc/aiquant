@@ -28,16 +28,68 @@ warnings.filterwarnings("ignore")
 class FeatureEngineer:
     """统一特征工程器"""
 
-    # Tushare 已提供、不应被覆盖的指标
+    # Tushare 已提供、不应被覆盖的指标 (stk_factor_pro Batch 1)
     TUSHARE_INDICATORS = {
-        "ma5", "ma10", "ma_20d",
-        "ema_5", "ema_10", "ema_20", "ema_60",
+        # MA
+        "ma5", "ma10", "ma_20d", "ma30", "ma60", "ma90", "ma250",
+        # EMA
+        "ema_5", "ema_10", "ema_20", "ema_30", "ema_60", "ema_90", "ema_250",
+        # MACD
         "macd", "macd_dea", "macd_dif",
+        # RSI
         "rsi_6", "rsi_12", "rsi_24",
+        # KDJ
         "kdj_k", "kdj_d", "kdj_j",
+        # OBV
         "obv",
+        # BIAS
         "bias_short", "bias_mid", "bias_long",
+        # ATR
         "atr",
+        # BOLL
+        "boll_upper", "boll_mid", "boll_lower",
+        # CCI
+        "cci",
+        # DMI
+        "dmi_pdi", "dmi_mdi", "dmi_adx", "dmi_adxr",
+        # WR
+        "wr", "wr1",
+        # MFI
+        "mfi",
+        # MTM
+        "mtm", "mtmma",
+        # ROC
+        "roc", "maroc",
+        # PSY
+        "psy", "psyma",
+        # VR
+        "vr",
+        # CR
+        "cr",
+        # BRAR
+        "brar_br", "brar_ar",
+        # EMV
+        "emv", "maemv",
+        # BBI
+        "bbi",
+        # DPO
+        "dpo", "madpo",
+        # DFMA
+        "dfma_dif", "dfma_difma",
+        # KTN
+        "ktn_upper", "ktn_mid", "ktn_down",
+        # TAQ (海龟)
+        "taq_up", "taq_mid", "taq_down",
+        # TRI
+        "trix", "trma",
+        # MASS
+        "mass", "ma_mass",
+        # EXPMA
+        "expma_12", "expma_50",
+        # ASI
+        "asi", "asit",
+        # XSII
+        "xsii_td1", "xsii_td2", "xsii_td3", "xsii_td4",
     }
 
     def __init__(self):

@@ -18,7 +18,53 @@ line-length = 120
 target-version = ['py311']
 
 [tool.pytest.ini_options]
+# 测试发现规则
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+# 测试路径
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
+
+# 输出选项
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--durations=10",
+    "--maxfail=5",
+    "-ra",
+]
+
+# 标记定义
+markers = [
+    "unit: 单元测试（快速，使用mock）",
+    "integration: 集成测试（测试完整流程）",
+    "slow: 慢速测试（需要网络或数据库）",
+    "api: 需要API调用的测试",
+    "mock: 使用mock的测试",
+    "data: 需要数据文件的测试",
+    "model: 需要模型文件的测试",
+    "real: 真实数据测试（需要真实API或数据）",
+    "smoke: 冒烟测试（快速验证基本功能）",
+    "regression: 回归测试（防止功能回退）",
+]
+
+# 日志配置
+log_cli = false
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# 测试超时配置（需要pytest-timeout插件）
+timeout = 300
+timeout_method = "thread"
+
+# 忽略警告
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning:pandas",
+]

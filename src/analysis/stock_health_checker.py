@@ -41,8 +41,19 @@ class StockHealthChecker:
         self.feature_names = None
         self.model_info = {}
 
+        # v2.9.1-ensemble 集成模型
+        self.ensemble_predictor = None
+        self.feature_engineer = None
+        self.data_provider = None
+
         # 加载高级模型（优先v2.3.0，包含校准器）
         self._load_advanced_model()
+
+        # 加载 v2.9.1-ensemble 集成模型（失败不阻断）
+        self._load_ensemble_model()
+
+        # 读取 current.json 获取生产版本信息
+        self._load_current_json()
 
     def _load_advanced_model(self):
         """加载高级技术因子版模型（优先v2.3.0）"""
@@ -197,6 +208,41 @@ class StockHealthChecker:
         except Exception as e:
             log.warning(f"加载高级模型失败: {e}", exc_info=True)
 
+    def _load_ensemble_model(self):
+        """加载 v2.9.1-ensemble 集成模型"""
+        try:
+            from src.prediction.predictor import EnsemblePredictor
+            from src.features.feature_engineer import FeatureEngineer
+            from src.data.tushare_data_provider import TushareDataProvider
+
+            self.ensemble_predictor = EnsemblePredictor(model_version="v2.9.1-ensemble")
+            self.feature_engineer = FeatureEngineer()
+            self.data_provider = TushareDataProvider()
+            log.info("✓ v2.9.1-ensemble 集成模型加载成功")
+        except Exception as e:
+            log.warning(f"v2.9.1-ensemble 模型加载失败，将回退到 v2.3.0: {e}")
+            self.ensemble_predictor = None
+            self.feature_engineer = None
+            self.data_provider = None
+
+    def _load_current_json(self):
+        """读取 current.json 获取生产模型版本信息"""
+        try:
+            current_path = project_root / "data" / "models" / "breakout_launch_scorer" / "current.json"
+            if current_path.exists():
+                with open(current_path, "r", encoding="utf-8") as f:
+                    current = json.load(f)
+                self.model_info["production_version"] = current.get("production", "unknown")
+                self.model_info["testing_version"] = current.get("testing", "unknown")
+                log.info(f"生产模型版本: {current.get('production')}, 测试版本: {current.get('testing')}")
+            else:
+                self.model_info["production_version"] = "unknown"
+                self.model_info["testing_version"] = "unknown"
+        except Exception as e:
+            log.warning(f"读取 current.json 失败: {e}")
+            self.model_info["production_version"] = "unknown"
+            self.model_info["testing_version"] = "unknown"
+
     def check_stock(self, stock_code: str, days: int = 252) -> dict:
         """
         全方位体检单支股票
@@ -260,10 +306,15 @@ class StockHealthChecker:
             # 10. 交易信号
             report["trading_signals"] = self._generate_trading_signals(report)
 
-            # 11. 交易计划（新增）
-            report["trading_plan"] = self._generate_trading_plan(report)
+            # 11. 顺势波段交易计划（顺大势逆小势）
+            report["swing_plan"] = self._generate_swing_plan(report)
 
-            # 12. 综合评分
+            # [DEPRECATED] 波段版和200日+长持版已废弃，统一为顺势波段版
+            report["trading_plan"] = {}
+            report["long_term_score"] = {}
+            report["long_term_plan"] = {}
+
+            # 13. 综合评分
             report["overall_score"] = self._calculate_overall_score(report)
             report["recommendation"] = self._generate_recommendation(report)
 
@@ -373,7 +424,7 @@ class StockHealthChecker:
             analysis["trend"] = self._analyze_trend_enhanced(df)
 
             # 2. 技术指标（增强版）
-            analysis["indicators"] = self._calculate_indicators_enhanced(df)
+            analysis["indicators"] = self._calculate_indicators_enhanced(df, stock_code)
 
             # 3. 支撑位和压力位（增强版）
             analysis["support_resistance"] = self._find_support_resistance_enhanced(df)
@@ -476,72 +527,140 @@ class StockHealthChecker:
 
         return trend
 
-    def _calculate_indicators_enhanced(self, df: pd.DataFrame) -> dict:
-        """增强版技术指标计算"""
+    def _calculate_indicators_enhanced(self, df: pd.DataFrame, ts_code: str = None) -> dict:
+        """增强版技术指标计算（Tushare stk_factor 优先，自计算降级）"""
         indicators = {}
 
-        try:
-            close = df["close"].values
-            high = df["high"].values
-            low = df["low"].values
-            volume = df["vol"].values
+        # Try Tushare stk_factor first
+        tushare_ok = False
+        if ts_code:
+            try:
+                import tushare as ts
+                import os
+                token = os.getenv("TUSHARE_TOKEN")
+                if token and token != "YOUR_TUSHARE_TOKEN":
+                    ts.set_token(token)
+                    pro = ts.pro_api()
+                    start = df["trade_date"].min().strftime("%Y%m%d") if hasattr(df["trade_date"].min(), "strftime") else str(df["trade_date"].min())[:10].replace("-", "")
+                    end = df["trade_date"].max().strftime("%Y%m%d") if hasattr(df["trade_date"].max(), "strftime") else str(df["trade_date"].max())[:10].replace("-", "")
+                    df_factor = pro.stk_factor(
+                        ts_code=ts_code,
+                        start_date=start,
+                        end_date=end,
+                        fields="ts_code,trade_date,close,macd_dif,macd_dea,macd,kdj_k,kdj_d,kdj_j,rsi_6,rsi_12,rsi_24,boll_upper,boll_mid,boll_lower,cci",
+                    )
+                    if df_factor is not None and not df_factor.empty:
+                        df_factor = df_factor.sort_values("trade_date").reset_index(drop=True)
+                        latest = df_factor.iloc[-1]
+                        prev = df_factor.iloc[-2] if len(df_factor) > 1 else latest
 
-            # 1. RSI（多周期）
-            rsi_6 = self._calculate_rsi(close, 6)
-            rsi_14 = self._calculate_rsi(close, 14)
-            rsi_24 = self._calculate_rsi(close, 24)
+                        # RSI
+                        rsi_6 = float(latest.get("rsi_6", 0))
+                        rsi_12 = float(latest.get("rsi_12", 0))
+                        rsi_24 = float(latest.get("rsi_24", 0))
+                        indicators["rsi_6"] = round(rsi_6, 2)
+                        indicators["rsi_14"] = round(rsi_12, 2)  # use rsi_12 as proxy for rsi_14
+                        indicators["rsi_24"] = round(rsi_24, 2)
+                        indicators["rsi"] = round(rsi_12, 2)
+                        if rsi_12 > 80:
+                            indicators["rsi_signal"] = "严重超买"
+                        elif rsi_12 > 70:
+                            indicators["rsi_signal"] = "超买"
+                        elif rsi_12 < 20:
+                            indicators["rsi_signal"] = "严重超卖"
+                        elif rsi_12 < 30:
+                            indicators["rsi_signal"] = "超卖"
+                        else:
+                            indicators["rsi_signal"] = "正常"
 
-            indicators["rsi_6"] = rsi_6
-            indicators["rsi_14"] = rsi_14
-            indicators["rsi_24"] = rsi_24
-            indicators["rsi"] = rsi_14  # 主要RSI
+                        # MACD
+                        macd_dif = float(latest.get("macd_dif", 0))
+                        macd_dea = float(latest.get("macd_dea", 0))
+                        macd_val = float(latest.get("macd", 0))
+                        prev_dif = float(prev.get("macd_dif", macd_dif))
+                        prev_dea = float(prev.get("macd_dea", macd_dea))
+                        if prev_dif <= prev_dea and macd_dif > macd_dea:
+                            macd_signal = "金叉（买入信号）"
+                        elif prev_dif >= prev_dea and macd_dif < macd_dea:
+                            macd_signal = "死叉（卖出信号）"
+                        elif macd_dif > macd_dea:
+                            macd_signal = "多头"
+                        else:
+                            macd_signal = "空头"
+                        indicators["macd"] = {
+                            "dif": round(macd_dif, 4),
+                            "dea": round(macd_dea, 4),
+                            "macd": round(macd_val, 4),
+                            "signal": macd_signal,
+                            "histogram_trend": "上升" if len(df_factor) >= 3 and float(latest.get("macd", 0)) > float(prev.get("macd", 0)) else "下降",
+                        }
 
-            if rsi_14 > 80:
-                indicators["rsi_signal"] = "严重超买"
-            elif rsi_14 > 70:
-                indicators["rsi_signal"] = "超买"
-            elif rsi_14 < 20:
-                indicators["rsi_signal"] = "严重超卖"
-            elif rsi_14 < 30:
-                indicators["rsi_signal"] = "超卖"
-            else:
-                indicators["rsi_signal"] = "正常"
+                        # KDJ
+                        k = float(latest.get("kdj_k", 50))
+                        d = float(latest.get("kdj_d", 50))
+                        j = float(latest.get("kdj_j", 50))
+                        if k > 80 and d > 80:
+                            kdj_signal = "超买区"
+                        elif k < 20 and d < 20:
+                            kdj_signal = "超卖区"
+                        elif k > d:
+                            kdj_signal = "金叉（多头）"
+                        else:
+                            kdj_signal = "死叉（空头）"
+                        indicators["kdj"] = {"k": round(k, 2), "d": round(d, 2), "j": round(j, 2), "signal": kdj_signal}
 
-            # 2. MACD（标准计算）
-            macd_result = self._calculate_macd_standard(close)
-            indicators["macd"] = macd_result
+                        # BOLL
+                        indicators["bollinger"] = {
+                            "upper": round(float(latest.get("boll_upper", 0)), 2),
+                            "middle": round(float(latest.get("boll_mid", 0)), 2),
+                            "lower": round(float(latest.get("boll_lower", 0)), 2),
+                        }
 
-            # 3. KDJ（标准计算）
-            kdj = self._calculate_kdj_standard(high, low, close)
-            indicators["kdj"] = kdj
+                        # CCI
+                        indicators["cci"] = round(float(latest.get("cci", 0)), 2)
 
-            # 4. 布林带
-            bollinger = self._calculate_bollinger(close)
-            indicators["bollinger"] = bollinger
+                        tushare_ok = True
+            except Exception as e:
+                log.debug(f"Tushare stk_factor 获取失败，回退自计算: {e}")
 
-            # 5. CCI（商品路径指数）
-            cci = self._calculate_cci(high, low, close)
-            indicators["cci"] = cci
+        if not tushare_ok:
+            # Fallback to self-calculation
+            try:
+                close = df["close"].values
+                high = df["high"].values
+                low = df["low"].values
+                volume = df["vol"].values
 
-            # 6. 威廉指标（WR）
-            wr = self._calculate_williams_r(high, low, close)
-            indicators["williams_r"] = wr
+                rsi_6 = self._calculate_rsi(close, 6)
+                rsi_14 = self._calculate_rsi(close, 14)
+                rsi_24 = self._calculate_rsi(close, 24)
+                indicators["rsi_6"] = rsi_6
+                indicators["rsi_14"] = rsi_14
+                indicators["rsi_24"] = rsi_24
+                indicators["rsi"] = rsi_14
+                if rsi_14 > 80:
+                    indicators["rsi_signal"] = "严重超买"
+                elif rsi_14 > 70:
+                    indicators["rsi_signal"] = "超买"
+                elif rsi_14 < 20:
+                    indicators["rsi_signal"] = "严重超卖"
+                elif rsi_14 < 30:
+                    indicators["rsi_signal"] = "超卖"
+                else:
+                    indicators["rsi_signal"] = "正常"
 
-            # 7. OBV（能量潮）
-            obv = self._calculate_obv(close, volume)
-            indicators["obv"] = obv
-
-            # 8. BIAS（乖离率）
-            bias = self._calculate_bias(close)
-            indicators["bias"] = bias
-
-            # 9. 成交量指标
-            indicators["volume_ma5"] = np.mean(volume[-5:])
-            indicators["volume_ma20"] = np.mean(volume[-20:])
-            indicators["volume_ratio"] = volume[-1] / np.mean(volume[-20:]) if np.mean(volume[-20:]) > 0 else 1
-
-        except Exception as e:
-            log.warning(f"指标计算失败: {e}")
+                indicators["macd"] = self._calculate_macd_standard(close)
+                indicators["kdj"] = self._calculate_kdj_standard(high, low, close)
+                indicators["bollinger"] = self._calculate_bollinger(close)
+                indicators["cci"] = self._calculate_cci(high, low, close)
+                indicators["williams_r"] = self._calculate_williams_r(high, low, close)
+                indicators["obv"] = self._calculate_obv(close, volume)
+                indicators["bias"] = self._calculate_bias(close)
+                indicators["volume_ma5"] = np.mean(volume[-5:])
+                indicators["volume_ma20"] = np.mean(volume[-20:])
+                indicators["volume_ratio"] = volume[-1] / np.mean(volume[-20:]) if np.mean(volume[-20:]) > 0 else 1
+            except Exception as e:
+                log.warning(f"指标自计算失败: {e}")
 
         return indicators
 
@@ -1266,7 +1385,148 @@ class StockHealthChecker:
         return fundamental
 
     def _model_prediction(self, stock_code: str) -> dict:
-        """使用高级技术因子模型进行预测"""
+        """模型预测入口：优先 v2.9.1-ensemble，失败回退 v2.3.0"""
+        if self.ensemble_predictor is not None and self.feature_engineer is not None:
+            try:
+                pred = self._model_prediction_v291(stock_code)
+                if "error" not in pred:
+                    return pred
+            except Exception as e:
+                log.warning(f"v2.9.1 预测失败，回退到 v2.3.0: {e}")
+        return self._model_prediction_legacy(stock_code)
+
+    def _model_prediction_v291(self, stock_code: str) -> dict:
+        """使用 v2.9.1-ensemble 集成模型进行预测"""
+        prediction = {}
+
+        try:
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=120)).strftime("%Y%m%d")
+
+            # 1. 获取完整数据
+            df_daily = self.dm.get_daily_data(stock_code, start_date, end_date)
+            if df_daily is None or df_daily.empty:
+                prediction["error"] = "日线数据不足"
+                prediction["score"] = 5
+                return prediction
+
+            df_raw = df_daily.copy()
+            df_raw["trade_date"] = pd.to_datetime(df_raw["trade_date"])
+            df_raw = df_raw.sort_values("trade_date").reset_index(drop=True)
+
+            # 2. 合并每日指标
+            try:
+                df_basic = self.dm.get_daily_basic(stock_code=stock_code, start_date=start_date, end_date=end_date)
+                if not df_basic.empty:
+                    df_basic["trade_date"] = pd.to_datetime(df_basic["trade_date"])
+                    merge_cols = [c for c in df_basic.columns if c not in df_raw.columns or c == "trade_date"]
+                    df_raw = pd.merge(df_raw, df_basic[merge_cols], on="trade_date", how="left")
+            except Exception as e:
+                log.debug(f"合并 daily_basic 失败: {e}")
+
+            # 3. 合并技术因子（stk_factor）
+            try:
+                df_factor = self.dm.get_stk_factor(stock_code, start_date, end_date)
+                if not df_factor.empty:
+                    # 重命名 qfq 列以匹配 FeatureEngineer 期望
+                    rename_map = {
+                        "macd_dif_qfq": "macd_dif",
+                        "macd_dea_qfq": "macd_dea",
+                        "macd_qfq": "macd",
+                        "rsi_qfq_6": "rsi_6",
+                        "rsi_qfq_12": "rsi_12",
+                        "rsi_qfq_24": "rsi_24",
+                        "kdj_k_qfq": "kdj_k",
+                        "kdj_d_qfq": "kdj_d",
+                        "kdj_qfq": "kdj_j",
+                        "obv_qfq": "obv",
+                        "ema_qfq_5": "ema_5",
+                        "ema_qfq_10": "ema_10",
+                        "ema_qfq_20": "ema_20",
+                        "ema_qfq_60": "ema_60",
+                        "bias1_qfq": "bias_short",
+                        "bias2_qfq": "bias_mid",
+                        "bias3_qfq": "bias_long",
+                        "ma_qfq_5": "ma5",
+                        "ma_qfq_10": "ma10",
+                        "ma_qfq_20": "ma_20d",
+                        "atr_qfq": "atr",
+                    }
+                    df_factor = df_factor.rename(columns={k: v for k, v in rename_map.items() if k in df_factor.columns})
+                    df_factor["trade_date"] = pd.to_datetime(df_factor["trade_date"])
+                    factor_cols = [c for c in df_factor.columns if c not in df_raw.columns or c == "trade_date"]
+                    df_raw = pd.merge(df_raw, df_factor[factor_cols], on="trade_date", how="left")
+            except Exception as e:
+                log.debug(f"合并 stk_factor 失败: {e}")
+
+            # 4. 获取市场指数数据
+            df_market = self.data_provider.fetch_market_index(start_date, end_date)
+
+            # 5. 计算特征
+            df_features = self.feature_engineer.compute_all_features(df_raw, df_market)
+
+            if df_features.empty:
+                prediction["error"] = "特征计算失败"
+                prediction["score"] = 5
+                return prediction
+
+            # 6. 取最近一行作为预测样本
+            df_sample = df_features.tail(1).copy()
+
+            # 7. 预测
+            prob = float(self.ensemble_predictor.predict(df_sample)[0])
+
+            # 8. 各子模型概率（用于展示）
+            feat_cols = [c for c in self.ensemble_predictor.feature_names if c in df_sample.columns]
+            X_pred = df_sample[feat_cols].fillna(0).astype(float)
+
+            prob_xgb = float(self.ensemble_predictor.models["xgboost"].predict(
+                xgb.DMatrix(X_pred, feature_names=self.ensemble_predictor.feature_names)
+            )[0])
+            prob_lgb = float(self.ensemble_predictor.models["lightgbm"].predict(X_pred)[0])
+            prob_cat = float(self.ensemble_predictor.models["catboost"].predict_proba(X_pred)[0][1])
+
+            # 9. 映射结果（保持与旧接口兼容）
+            prediction["probability"] = prob
+            prediction["prob_xgb"] = prob_xgb
+            prediction["prob_lgb"] = prob_lgb
+            prediction["prob_cat"] = prob_cat
+            prediction["model_version"] = "v2.9.1-ensemble"
+            prediction["feature_count"] = len(self.ensemble_predictor.feature_names)
+            prediction["production_version"] = self.model_info.get("production_version", "unknown")
+            prediction["confidence"] = "高" if prob > 0.7 or prob < 0.3 else "中" if prob > 0.6 or prob < 0.4 else "低"
+
+            if prob > 0.8:
+                prediction["signal"] = "强烈看多"
+                prediction["score"] = 10
+            elif prob > 0.7:
+                prediction["signal"] = "看多"
+                prediction["score"] = 8
+            elif prob > 0.6:
+                prediction["signal"] = "偏多"
+                prediction["score"] = 7
+            elif prob > 0.4:
+                prediction["signal"] = "中性"
+                prediction["score"] = 5
+            elif prob > 0.3:
+                prediction["signal"] = "偏空"
+                prediction["score"] = 3
+            elif prob > 0.2:
+                prediction["signal"] = "看空"
+                prediction["score"] = 2
+            else:
+                prediction["signal"] = "强烈看空"
+                prediction["score"] = 1
+
+        except Exception as e:
+            log.warning(f"v2.9.1 模型预测失败: {e}", exc_info=True)
+            prediction["error"] = str(e)
+            prediction["score"] = 5
+
+        return prediction
+
+    def _model_prediction_legacy(self, stock_code: str) -> dict:
+        """[DEPRECATED] 使用 v2.3.0 单模型进行预测"""
         prediction = {}
 
         if self.model is None or self.feature_names is None:
@@ -2232,6 +2492,7 @@ class StockHealthChecker:
 
     def _generate_trading_plan(self, report: dict) -> dict:
         """
+        [DEPRECATED] 波段版交易计划（~20个交易日）已废弃，由 _generate_swing_plan 替代。
         生成交易计划（基于v2.3.0模型，盈亏比>2的交易体系）
 
         核心原则：
@@ -2541,6 +2802,773 @@ class StockHealthChecker:
 
         return plan
 
+    def _calculate_long_term_score(self, report: dict) -> dict:
+        """
+        [DEPRECATED] 长持评分模型已废弃，由 _generate_swing_plan 替代。
+        长持评分模型（200日+持仓体系）
+        六维评分：赛道确定性(20%) + 护城河深度(20%) + HALO硬资产(15%) + 业绩能见度(20%) + 价格极端度(15%) + 机构认同度(10%)
+        数据源：Tushare stk_factor / moneyflow / top_inst 优先，自计算降级
+        """
+        score = {"total": 0, "details": {}, "suggestion": "不符合", "data_source": "mixed"}
+        try:
+            basic = report.get("basic_info", {})
+            tech = report.get("technical_analysis", {})
+            fund = report.get("fundamental_analysis", {})
+            money = report.get("money_flow", {})
+            ts_code = basic.get("ts_code", report.get("stock_code", ""))
+
+            # ── 辅助：获取 Tushare 深度数据（机构+资金流向） ──
+            tushare_deep = {"inst_net": 0, "main_net_5d": 0, "has_data": False}
+            try:
+                import tushare as ts
+                import os
+                token = os.getenv("TUSHARE_TOKEN")
+                if token and token != "YOUR_TUSHARE_TOKEN":
+                    ts.set_token(token)
+                    pro = ts.pro_api()
+                    end = datetime.now().strftime("%Y%m%d")
+                    start = (datetime.now() - timedelta(days=45)).strftime("%Y%m%d")
+
+                    # moneyflow: 主力净流入（特大单+大单）
+                    df_mf = pro.moneyflow(ts_code=ts_code, start_date=start, end_date=end)
+                    if df_mf is not None and not df_mf.empty:
+                        df_mf = df_mf.sort_values("trade_date").tail(5)
+                        tushare_deep["main_net_5d"] = float(df_mf["net_mf_amount"].astype(float).sum())
+                        tushare_deep["has_data"] = True
+
+                    # top_inst: 近5个交易日机构席位净买入
+                    cal = pro.trade_cal(exchange="SSE", start_date=start, end_date=end, is_open="1")
+                    trade_dates = cal["cal_date"].tolist() if cal is not None and not cal.empty else []
+                    inst_net = 0.0
+                    for td in trade_dates[-5:]:
+                        try:
+                            df_inst = pro.top_inst(ts_code=ts_code, trade_date=td)
+                            if df_inst is not None and not df_inst.empty:
+                                buy = df_inst["buy"].astype(float).sum()
+                                sell = df_inst["sell"].astype(float).sum()
+                                inst_net += (buy - sell)
+                        except Exception:
+                            pass
+                    tushare_deep["inst_net"] = inst_net
+            except Exception as e:
+                log.debug(f"长持评分Tushare深度数据获取失败: {e}")
+
+            # 1. 赛道确定性 (20分)
+            industry = str(basic.get("industry", ""))
+            policy_keywords = ["电力", "新能源", "储能", "芯片", "半导体", "航天", "航空", "机器人", "自动驾驶", "人工智能", "军工", "新材料", "碳纤维", "通信", "高端装备", "医疗设备", "创新药"]
+            track_score = 18 if any(k in industry for k in policy_keywords) else 12
+            if "银行" in industry or "保险" in industry or "地产" in industry:
+                track_score = 6  # 传统周期行业长持需谨慎
+            score["details"]["track"] = {"score": track_score, "max": 20, "label": "赛道确定性", "note": industry}
+
+            # 2. 护城河深度 (20分) — ROE + 毛利率 + 净利率
+            roe = fund.get("roe", 0) or 0
+            gross_margin = fund.get("gross_margin", 0) or 0
+            net_margin = fund.get("net_margin", 0) or 0
+            moat_score = 0
+            if roe > 15 and gross_margin > 30:
+                moat_score = 20
+            elif roe > 12 and gross_margin > 20:
+                moat_score = 16
+            elif roe > 8:
+                moat_score = 12
+            elif roe > 5:
+                moat_score = 8
+            else:
+                moat_score = 4
+            # 净利率修正
+            if net_margin > 15:
+                moat_score = min(20, moat_score + 2)
+            score["details"]["moat"] = {"score": moat_score, "max": 20, "label": "护城河深度", "note": f"ROE:{roe:.1f}% 毛利率:{gross_margin:.1f}%"}
+
+            # 3. HALO 硬资产属性 (15分) — 低估值 + 低负债 + 重资产特征
+            pe = fund.get("pe", 0) or 0
+            pb = fund.get("pb", 0) or 0
+            debt_ratio = fund.get("debt_ratio", 0) or 0
+            halo_score = 0
+            if pe > 0 and pe < 20 and pb > 0 and pb < 3:
+                halo_score = 12
+                if debt_ratio > 0 and debt_ratio < 50:
+                    halo_score = 15
+                elif debt_ratio > 0 and debt_ratio < 70:
+                    halo_score = 13
+            elif pe > 0 and pe < 30 and pb > 0 and pb < 4:
+                halo_score = 9
+            else:
+                halo_score = 4
+            score["details"]["halo"] = {"score": halo_score, "max": 15, "label": "HALO硬资产属性", "note": f"PE:{pe:.1f} PB:{pb:.2f} 负债率:{debt_ratio:.1f}%"}
+
+            # 4. 业绩能见度 (20分) — 营收增长 + 利润稳定性
+            revenue_growth = fund.get("revenue_growth", 0) or 0
+            profit_growth = fund.get("profit_growth", 0) or 0
+            visibility_score = 0
+            if revenue_growth > 30 and profit_growth > 20:
+                visibility_score = 20
+            elif revenue_growth > 15 and profit_growth > 10:
+                visibility_score = 16
+            elif revenue_growth > 5:
+                visibility_score = 12
+            elif revenue_growth > 0:
+                visibility_score = 8
+            else:
+                visibility_score = 4
+            score["details"]["visibility"] = {"score": visibility_score, "max": 20, "label": "业绩能见度", "note": f"营收:{revenue_growth:.1f}% 利润:{profit_growth:.1f}%"}
+
+            # 5. 价格极端度 (15分) — 60日高点回撤 + RSI超卖 + BOLL下轨偏离
+            latest_price = basic.get("latest_price", 0)
+            high_60 = tech.get("support_resistance", {}).get("recent_high_60", latest_price)
+            drawdown = (high_60 - latest_price) / high_60 * 100 if high_60 > 0 else 0
+            rsi = tech.get("indicators", {}).get("rsi", 50)
+            boll = tech.get("indicators", {}).get("bollinger", {})
+            boll_lower = boll.get("lower", latest_price)
+            boll_deviation = (boll_lower - latest_price) / latest_price * 100 if latest_price > 0 and boll_lower > 0 else 0
+
+            price_score = 0
+            if drawdown > 40 and rsi < 30:
+                price_score = 15
+            elif drawdown > 30 and (rsi < 40 or boll_deviation > 5):
+                price_score = 12
+            elif drawdown > 20:
+                price_score = 8
+            elif drawdown > 10:
+                price_score = 5
+            else:
+                price_score = 2
+            score["details"]["price"] = {"score": price_score, "max": 15, "label": "价格极端度", "note": f"回撤:{drawdown:.1f}% RSI:{rsi:.0f}"}
+
+            # 6. 机构认同度 (10分) — Tushare moneyflow + top_inst
+            inst_score = 0
+            main_net = tushare_deep["main_net_5d"]
+            inst_net = tushare_deep["inst_net"]
+            if tushare_deep["has_data"]:
+                if inst_net > 1000:  # 万元级别
+                    inst_score = 10
+                elif main_net > 0:
+                    inst_score = 8
+                elif main_net > -5000:
+                    inst_score = 5
+                else:
+                    inst_score = 3
+            else:
+                # 降级到 money_flow 估算
+                net_mf = money.get("net_flow", 0)
+                if net_mf > 0:
+                    inst_score = 7
+                else:
+                    inst_score = 4
+            score["details"]["institution"] = {"score": inst_score, "max": 10, "label": "机构认同度", "note": f"主力5日净:{main_net/1e4:.0f}万 机构净:{inst_net/1e4:.0f}万"}
+
+            total = track_score + moat_score + halo_score + visibility_score + price_score + inst_score
+            score["total"] = total
+            score["max"] = 100
+
+            if total >= 85:
+                score["suggestion"] = "核心长持"
+            elif total >= 70:
+                score["suggestion"] = "观察池"
+            elif total >= 55:
+                score["suggestion"] = "跟踪观察"
+            else:
+                score["suggestion"] = "不符合"
+
+            if tushare_deep["has_data"]:
+                score["data_source"] = "tushare_deep"
+
+        except Exception as e:
+            log.warning(f"长持评分计算失败: {e}")
+
+        return score
+
+    def _generate_long_term_plan(self, report: dict) -> dict:
+        """
+        [DEPRECATED] 200日+长持交易计划已废弃。
+        生成200日+长持交易计划（双版本）
+        适配用户交易体系：低频出手（年≤4次）/ 左侧埋伏+右侧刚起爆 / 只挂条件单 / HALO硬资产优先 / 简放极简纪律
+        """
+        plan = {
+            "style": "200日+长持",
+            "versions": {},
+            "position": {},
+            "holding": {},
+            "exit": {},
+            "discipline": [],
+        }
+
+        try:
+            basic = report.get("basic_info", {})
+            tech = report.get("technical_analysis", {})
+            sr = tech.get("support_resistance", {})
+            indicators = tech.get("indicators", {})
+            current_price = basic.get("latest_price", 0)
+            industry = str(basic.get("industry", ""))
+            ts_code = basic.get("ts_code", report.get("stock_code", ""))
+
+            # 赛道类型判断
+            tech_sectors = ["芯片", "半导体", "人工智能", "机器人", "自动驾驶", "航天", "软件", "互联网", "通信"]
+            is_tech = any(s in industry for s in tech_sectors)
+
+            # 仓位上限
+            position_limit = 20 if is_tech else 30
+            plan["position"] = {
+                "max_position_pct": position_limit,
+                "total_tech_limit": 40,
+                "cash_reserve": "常年保留2-3层现金",
+                "single_entry_limit": "单次出手不超过计划仓位的50%",
+            }
+
+            # ── 通用持仓纪律 ──
+            plan["holding"] = {
+                "target_days": 200,
+                "target_months": "约10个月",
+                "principles": [
+                    "不盯盘 —— 买完删软件，每周只看一次条件单",
+                    "不手痒 —— 浮盈100%不卖，浮亏30%不补（除非触发预设加仓条件单）",
+                    "不比较 —— 其他板块暴涨与我无关，坚守能力圈",
+                ],
+                "trend_definition": "长持的'趋势'是月线级别产业趋势，日线波动无视。月线不破，持有不动。",
+            }
+
+            # ── 三种卖出条件 ──
+            plan["exit"] = {
+                "conditions": [
+                    {
+                        "priority": 1,
+                        "name": "逻辑证伪（立即清仓）",
+                        "triggers": [
+                            "行业政策转向（如新能源补贴断崖式退出且技术未成熟）",
+                            "公司核心竞争力丧失（大客户流失、技术被颠覆、管理层重大诚信问题）",
+                            "业绩能见度被打破（连续两季度订单/产能释放严重低于预期且无合理解释）",
+                        ],
+                    },
+                    {
+                        "priority": 2,
+                        "name": "估值极端泡沫（分批止盈）",
+                        "triggers": [
+                            "动态PE达到历史90%分位以上，且PEG>2",
+                            "板块情绪过热（媒体铺天盖地、散户大量涌入、加速上涨不回头）",
+                        ],
+                        "action": "先减50%，剩余设月线跌破20周期线清仓",
+                    },
+                    {
+                        "priority": 3,
+                        "name": "技术破位（反思机制）",
+                        "triggers": [
+                            "个股较买入价下跌-15%且基本面未变",
+                        ],
+                        "action": "触发反思机制：重审逻辑，逻辑在则持有，动摇则减仓。不清仓。",
+                    },
+                ]
+            }
+
+            # ── 简放极简纪律 ──
+            plan["discipline"] = [
+                "一年只出三四次手，重仓只做极端低点的确定性",
+                "所有条件单提前一晚挂好，交易时间不看盘",
+                "9:30-10:00不操作，14:00后不新开仓",
+                "错了就认，单到必行，不人工干预",
+            ]
+
+            if current_price <= 0:
+                plan["versions"]["note"] = "无法获取当前价格"
+                return plan
+
+            high_60 = sr.get("recent_high_60", current_price * 1.4)
+            drawdown = (high_60 - current_price) / high_60 * 100 if high_60 > 0 else 0
+            ma60 = tech.get("trend", {}).get("ma60")
+            ma120 = tech.get("trend", {}).get("ma120")
+            macd_signal = indicators.get("macd", {}).get("signal", "")
+            kdj_signal = indicators.get("kdj", {}).get("signal", "")
+            boll = indicators.get("bollinger", {})
+            boll_lower = boll.get("lower", current_price * 0.9)
+
+            # ========== 版本A：左侧埋伏版 ==========
+            left = {
+                "name": "左侧埋伏版",
+                "suitable": "深度回调、RSI<40、机构开始吸筹、基本面未变",
+                "entry": {
+                    "current_price": round(current_price, 2),
+                    "recent_high_60": round(high_60, 2),
+                    "current_drawdown_pct": round(drawdown, 1),
+                    "extreme_low_note": "回撤>40%（科技）/ >30%（传统）视为极端低价区",
+                },
+                "condition_orders": {},
+            }
+
+            # 左侧条件单四档（倒金字塔）
+            base_price = current_price
+            left["condition_orders"]["first"] = {
+                "pct": f"{position_limit * 0.40:.0f}%总仓位",
+                "price": round(base_price * 0.92, 2) if drawdown < 30 else round(base_price * 0.95, 2),
+                "trigger": "挂年线/前低/平台下沿",
+                "type": "限价条件单",
+            }
+            left["condition_orders"]["second"] = {
+                "pct": f"{position_limit * 0.30:.0f}%总仓位",
+                "price": round(base_price * 0.83, 2) if drawdown < 30 else round(base_price * 0.90, 2),
+                "trigger": "第一笔下方-10%或缩量横盘3个月未创新低",
+                "type": "限价条件单",
+            }
+            left["condition_orders"]["third"] = {
+                "pct": f"{position_limit * 0.20:.0f}%总仓位",
+                "price": round(base_price * 0.75, 2) if drawdown < 30 else round(base_price * 0.85, 2),
+                "trigger": "第二笔下方-10%或极端恐慌日（VIX飙升）",
+                "type": "限价条件单",
+            }
+            left["condition_orders"]["fourth"] = {
+                "pct": f"{position_limit * 0.10:.0f}%总仓位",
+                "price": "大盘极端恐慌时（沪深300跌>15%）",
+                "trigger": "一次性打出，越跌越买最后一击",
+                "type": "市价/限价应急单",
+            }
+
+            plan["versions"]["left"] = left
+
+            # ========== 版本B：右侧刚起爆版 ==========
+            right = {
+                "name": "右侧刚起爆版",
+                "suitable": "基本面确认+技术突破+成交量放大，追第一波主升浪",
+                "entry": {
+                    "current_price": round(current_price, 2),
+                    "ma60": round(ma60, 2) if ma60 else None,
+                    "ma120": round(ma120, 2) if ma120 else None,
+                    "macd_signal": macd_signal,
+                    "kdj_signal": kdj_signal,
+                },
+                "condition_orders": {},
+            }
+
+            # 右侧条件单三档（趋势确认后上车）
+            breakout_price = max(ma60 * 1.03, current_price * 1.02) if ma60 else current_price * 1.05
+            right["condition_orders"]["first"] = {
+                "pct": f"{position_limit * 0.50:.0f}%总仓位",
+                "price": round(breakout_price, 2),
+                "trigger": "股价突破MA60+3%且MACD金叉确认，成交量>20日均量1.5倍",
+                "type": "突破条件单（止损设突破阳线低点）",
+            }
+            right["condition_orders"]["second"] = {
+                "pct": f"{position_limit * 0.30:.0f}%总仓位",
+                "price": round(breakout_price * 1.08, 2),
+                "trigger": "首笔盈利+8%后回踩不破MA5，确认趋势延续",
+                "type": "回踩加仓条件单",
+            }
+            right["condition_orders"]["third"] = {
+                "pct": f"{position_limit * 0.20:.0f}%总仓位",
+                "price": round(breakout_price * 1.15, 2),
+                "trigger": "第二笔盈利+15%后，月K线确认多头排列",
+                "type": "趋势确认追加单",
+            }
+
+            # 右侧止损（更紧，因为是追涨）
+            right_stop = round(min(current_price * 0.93, boll_lower * 1.02), 2) if boll_lower else round(current_price * 0.92, 2)
+            right["stop_loss"] = {
+                "price": right_stop,
+                "pct": round((right_stop / current_price - 1) * 100, 1),
+                "note": "右侧止损更严格，单笔亏损控制在-8%以内",
+            }
+
+            plan["versions"]["right"] = right
+
+            # ── 版本推荐 ──
+            if drawdown > 30 and ("超卖" in str(indicators.get("rsi", {}).get("signal", "")) or indicators.get("rsi", 50) < 40):
+                plan["recommended_version"] = "left"
+                plan["recommended_reason"] = f"当前回撤{drawdown:.1f}%且指标超卖，适合左侧埋伏"
+            elif macd_signal in ["金叉（买入信号）", "金叉（多头）"] and current_price > (ma60 or 0):
+                plan["recommended_version"] = "right"
+                plan["recommended_reason"] = "技术突破+趋势确认，适合右侧刚起爆"
+            else:
+                plan["recommended_version"] = "left"
+                plan["recommended_reason"] = "信号不明确，默认左侧等待极端低价"
+
+        except Exception as e:
+            log.warning(f"长持交易计划生成失败: {e}")
+
+        return plan
+
+    def _generate_swing_plan(self, report: dict) -> dict:
+        """生成顺势波段交易计划（顺大势逆小势）
+
+        交易哲学：
+        - 顺大势：周线/月线定方向，只做与大势同向的交易
+        - 逆小势：日线回调到波段低点（波谷）时介入
+        - 波谷定义：上升趋势中的健康回调低点，而非绝对低价
+        - 灵活持仓：不设固定持有天数，持有至趋势反转或目标达成
+        """
+        plan = {
+            "style": "顺势波段版",
+            "philosophy": "顺大势逆小势 — 周线定方向，日线找买点，波谷介入，趋势持有",
+            "big_trend": {},
+            "small_trend": {},
+            "entry": {},
+            "exit": {},
+            "position": {},
+            "discipline": [],
+        }
+
+        try:
+            ts_code = report.get("stock_code", "")
+            current_price = report.get("basic_info", {}).get("latest_price", 0)
+            if current_price <= 0:
+                plan["status"] = "数据不足，无法生成计划"
+                return plan
+
+            # 1. 获取日线、周线数据
+            end_date = datetime.now().strftime("%Y%m%d")
+            daily_start = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
+            weekly_start = (datetime.now() - timedelta(days=730)).strftime("%Y%m%d")
+            daily_df = self.dm.get_daily_data(ts_code, start_date=daily_start, end_date=end_date)
+            weekly_df = self.dm.get_weekly_data(ts_code, start_date=weekly_start, end_date=end_date)  # 约2年
+            if daily_df is None or daily_df.empty:
+                plan["status"] = "日线数据不足"
+                return plan
+
+            daily_df = daily_df.sort_index()
+            if weekly_df is not None and not weekly_df.empty:
+                weekly_df = weekly_df.sort_index()
+
+            # 2. 大趋势判断（周线）
+            big_trend = self._analyze_big_trend(daily_df, weekly_df, current_price)
+            plan["big_trend"] = big_trend
+
+            # 如果大趋势不明朗，给出保守建议
+            if big_trend.get("direction") == "unknown":
+                plan["status"] = "大趋势不明朗，建议观望"
+                plan["discipline"].append("当前市场大趋势不清晰，不适合顺势波段操作")
+                return plan
+
+            # 3. 小势判断（日线回调）
+            small_trend = self._analyze_small_trend(daily_df, current_price, big_trend)
+            plan["small_trend"] = small_trend
+
+            # 4. 生成交易计划
+            self._build_swing_entry(plan, current_price, big_trend, small_trend)
+            self._build_swing_exit(plan, current_price, big_trend, small_trend)
+            self._build_swing_position(plan, report, big_trend)
+            self._build_swing_discipline(plan, big_trend, small_trend)
+
+            plan["status"] = "计划已生成"
+
+        except Exception as e:
+            log.warning(f"顺势波段计划生成失败: {e}")
+            plan["status"] = f"计划生成异常: {str(e)}"
+
+        return plan
+
+    def _analyze_big_trend(self, daily_df: pd.DataFrame, weekly_df: pd.DataFrame, current_price: float) -> dict:
+        """分析大趋势：周线定方向"""
+        result = {"direction": "unknown", "strength": 0, "indicators": []}
+
+        try:
+            # 优先使用周线数据
+            if weekly_df is not None and len(weekly_df) >= 20:
+                w = weekly_df.copy()
+                w["ma20"] = w["close"].rolling(20).mean()
+                w["ma10"] = w["close"].rolling(10).mean()
+                w["ma5"] = w["close"].rolling(5).mean()
+                last_w = w.iloc[-1]
+
+                # 周线均线多头排列
+                bull_ma = last_w["close"] > last_w["ma5"] > last_w["ma10"] > last_w["ma20"]
+                bear_ma = last_w["close"] < last_w["ma5"] < last_w["ma10"] < last_w["ma20"]
+
+                # 周线 MACD
+                ema12 = w["close"].ewm(span=12, adjust=False).mean()
+                ema26 = w["close"].ewm(span=26, adjust=False).mean()
+                w["macd"] = ema12 - ema26
+                w["signal"] = w["macd"].ewm(span=9, adjust=False).mean()
+                macd_bull = w["macd"].iloc[-1] > w["signal"].iloc[-1] > 0
+                macd_bear = w["macd"].iloc[-1] < w["signal"].iloc[-1] < 0
+
+                if bull_ma and macd_bull:
+                    result["direction"] = "bull"
+                    result["strength"] = 3
+                    result["indicators"].append("周线均线多头排列 + MACD金叉在零轴上方")
+                elif bull_ma:
+                    result["direction"] = "bull"
+                    result["strength"] = 2
+                    result["indicators"].append("周线均线多头排列")
+                elif macd_bull:
+                    result["direction"] = "bull"
+                    result["strength"] = 2
+                    result["indicators"].append("周线MACD金叉在零轴上方")
+                elif bear_ma and macd_bear:
+                    result["direction"] = "bear"
+                    result["strength"] = 3
+                    result["indicators"].append("周线均线空头排列 + MACD死叉在零轴下方")
+                elif bear_ma:
+                    result["direction"] = "bear"
+                    result["strength"] = 2
+                    result["indicators"].append("周线均线空头排列")
+                elif macd_bear:
+                    result["direction"] = "bear"
+                    result["strength"] = 2
+                    result["indicators"].append("周线MACD死叉在零轴下方")
+                else:
+                    # 震荡
+                    result["direction"] = "sideways"
+                    result["strength"] = 1
+                    result["indicators"].append("周线趋势不明，处于震荡整理")
+            else:
+                # 回退到日线
+                d = daily_df.copy()
+                d["ma60"] = d["close"].rolling(60).mean()
+                d["ma20"] = d["close"].rolling(20).mean()
+                last_d = d.iloc[-1]
+
+                if last_d["close"] > last_d["ma20"] > last_d["ma60"]:
+                    result["direction"] = "bull"
+                    result["strength"] = 2
+                    result["indicators"].append("日线均线多头排列（周线数据不足，以日线代替）")
+                elif last_d["close"] < last_d["ma20"] < last_d["ma60"]:
+                    result["direction"] = "bear"
+                    result["strength"] = 2
+                    result["indicators"].append("日线均线空头排列（周线数据不足，以日线代替）")
+                else:
+                    result["direction"] = "sideways"
+                    result["strength"] = 1
+                    result["indicators"].append("日线趋势不明（周线数据不足）")
+
+        except Exception as e:
+            log.warning(f"大趋势分析失败: {e}")
+            result["indicators"].append("趋势分析异常，请谨慎判断")
+
+        return result
+
+    def _analyze_small_trend(self, daily_df: pd.DataFrame, current_price: float, big_trend: dict) -> dict:
+        """分析小势：日线回调找买点"""
+        result = {"phase": "unknown", "pullback_pct": 0, "support_zones": [], "indicators": []}
+
+        try:
+            d = daily_df.copy()
+            d["ma5"] = d["close"].rolling(5).mean()
+            d["ma10"] = d["close"].rolling(10).mean()
+            d["ma20"] = d["close"].rolling(20).mean()
+            d["ma60"] = d["close"].rolling(60).mean()
+            d["bb_lower"] = d["close"].rolling(20).mean() - 2 * d["close"].rolling(20).std()
+            d["bb_upper"] = d["close"].rolling(20).mean() + 2 * d["close"].rolling(20).std()
+
+            # 找近期高点（最近20日）
+            recent_high = d["high"].tail(20).max()
+            pullback_pct = (recent_high - current_price) / recent_high * 100 if recent_high > 0 else 0
+            result["pullback_pct"] = round(pullback_pct, 2)
+
+            last = d.iloc[-1]
+
+            # 支撑位识别
+            supports = []
+            ma20_val = last["ma20"]
+            ma60_val = last["ma60"]
+            bb_lower = last["bb_lower"]
+            recent_low = d["low"].tail(10).min()
+
+            if ma20_val > 0:
+                supports.append({"price": round(ma20_val, 2), "label": "MA20"})
+            if ma60_val > 0:
+                supports.append({"price": round(ma60_val, 2), "label": "MA60"})
+            if bb_lower > 0:
+                supports.append({"price": round(bb_lower, 2), "label": "布林带下轨"})
+            if recent_low > 0:
+                supports.append({"price": round(recent_low, 2), "label": "近10日低点"})
+
+            supports = [s for s in supports if s["price"] < current_price * 1.05]
+            supports.sort(key=lambda x: x["price"], reverse=True)
+            result["support_zones"] = supports[:3]
+
+            # 判断回调阶段
+            if big_trend.get("direction") == "bull":
+                if pullback_pct <= 3:
+                    result["phase"] = "high_point"
+                    result["indicators"].append("接近近期高点，追高风险大，等待回调")
+                elif pullback_pct <= 8:
+                    result["phase"] = "shallow_pullback"
+                    result["indicators"].append("小幅回调，可轻仓试多或等待更深回调")
+                elif pullback_pct <= 15:
+                    result["phase"] = "deep_pullback"
+                    result["indicators"].append("较深回调，若在大趋势支撑位企稳，是较好买点")
+                else:
+                    result["phase"] = "strong_pullback"
+                    result["indicators"].append("深度回调，需确认大趋势是否仍然有效")
+            elif big_trend.get("direction") == "bear":
+                result["phase"] = "downtrend_bounce"
+                result["indicators"].append("大趋势向下，任何反弹都是减仓机会，不建议买入")
+            else:
+                result["phase"] = "sideways"
+                result["indicators"].append("震荡区间，可在下沿买入、上沿卖出")
+
+            # RSI 判断超卖
+            delta = d["close"].diff()
+            gain = delta.where(delta > 0, 0).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            last_rsi = rsi.iloc[-1]
+            if not pd.isna(last_rsi):
+                if last_rsi < 30:
+                    result["indicators"].append(f"RSI={last_rsi:.1f}，超卖区域")
+                elif last_rsi > 70:
+                    result["indicators"].append(f"RSI={last_rsi:.1f}，超买区域")
+                else:
+                    result["indicators"].append(f"RSI={last_rsi:.1f}，中性区域")
+
+        except Exception as e:
+            log.warning(f"小势分析失败: {e}")
+            result["indicators"].append("小势分析异常")
+
+        return result
+
+    def _build_swing_entry(self, plan: dict, current_price: float, big_trend: dict, small_trend: dict):
+        """构建顺势波段入场计划"""
+        entry = {}
+
+        direction = big_trend.get("direction", "unknown")
+        phase = small_trend.get("phase", "unknown")
+        supports = small_trend.get("support_zones", [])
+
+        if direction == "bear":
+            entry["action"] = "观望/减仓"
+            entry["reason"] = "大趋势向下，不参与做多"
+            entry["suggested_price"] = None
+            plan["entry"] = entry
+            return
+
+        if direction == "sideways":
+            entry["action"] = "区间操作"
+            entry["reason"] = "震荡行情，在下沿低吸、上沿高抛"
+            if supports:
+                entry["suggested_price"] = supports[0]["price"]
+                entry["support_label"] = supports[0]["label"]
+            else:
+                entry["suggested_price"] = round(current_price * 0.95, 2)
+            plan["entry"] = entry
+            return
+
+        # 多头大趋势
+        if phase in ("deep_pullback", "strong_pullback") and supports:
+            entry["action"] = "建仓/加仓"
+            entry["reason"] = "大趋势向上，回调至支撑位，波谷买点"
+            entry["suggested_price"] = supports[0]["price"]
+            entry["support_label"] = supports[0]["label"]
+            # 分级建仓
+            if len(supports) >= 2:
+                entry["tiered_buy"] = [
+                    {"price": supports[0]["price"], "ratio": 0.4, "label": f"第一支撑 {supports[0]['label']}"},
+                    {"price": supports[1]["price"], "ratio": 0.35, "label": f"第二支撑 {supports[1]['label']}"},
+                ]
+                if len(supports) >= 3:
+                    entry["tiered_buy"].append(
+                        {"price": supports[2]["price"], "ratio": 0.25, "label": f"第三支撑 {supports[2]['label']}"}
+                    )
+            entry["entry_condition"] = ["价格触及支撑位且出现止跌K线（锤子线、启明星等）", "成交量萎缩后重新放大"]
+        elif phase == "shallow_pullback":
+            entry["action"] = "轻仓试多"
+            entry["reason"] = "大趋势向上，小幅回调，可小仓位试探"
+            entry["suggested_price"] = round(current_price * 0.98, 2)
+            entry["entry_condition"] = ["等待更明确企稳信号", "或分小仓在支撑位附近介入"]
+        elif phase == "high_point":
+            entry["action"] = "等待"
+            entry["reason"] = "接近高点，不宜追高，等待8-15%回调"
+            entry["suggested_price"] = None
+            if supports:
+                entry["watch_price"] = supports[0]["price"]
+        else:
+            entry["action"] = "观察"
+            entry["reason"] = "当前位置不明确，等待信号"
+            entry["suggested_price"] = None
+
+        plan["entry"] = entry
+
+    def _build_swing_exit(self, plan: dict, current_price: float, big_trend: dict, small_trend: dict):
+        """构建顺势波段出场计划"""
+        exit_plan = {}
+
+        direction = big_trend.get("direction", "unknown")
+
+        if direction == "bear":
+            exit_plan["action"] = "持有现金或做空工具"
+            exit_plan["stop_loss"] = None
+            exit_plan["take_profit"] = None
+            plan["exit"] = exit_plan
+            return
+
+        # 止损：日线跌破 MA60 或最大回撤 10%
+        supports = small_trend.get("support_zones", [])
+        if supports:
+            # 取 MA60 或最后一个支撑作为止损
+            ma60_support = next((s for s in supports if s["label"] == "MA60"), None)
+            if ma60_support:
+                exit_plan["stop_loss"] = round(ma60_support["price"] * 0.97, 2)
+                exit_plan["stop_reason"] = "日线有效跌破MA60，大趋势可能逆转"
+            else:
+                exit_plan["stop_loss"] = round(supports[-1]["price"] * 0.95, 2)
+                exit_plan["stop_reason"] = "跌破关键支撑位，趋势破坏"
+        else:
+            exit_plan["stop_loss"] = round(current_price * 0.90, 2)
+            exit_plan["stop_reason"] = "最大亏损控制在10%以内"
+
+        # 止盈：灵活，不设固定目标
+        exit_plan["take_profit_strategy"] = "趋势跟踪止盈"
+        exit_plan["take_profit_rules"] = [
+            "日线收盘价跌破MA20，减仓1/3",
+            "日线收盘价跌破MA60，清仓",
+            "周线MACD死叉或均线空头排列，清仓",
+            "单笔盈利超30%且出现滞涨信号，可部分止盈",
+        ]
+        exit_plan["trailing_stop"] = "以MA20或近期低点作为动态止盈线"
+
+        plan["exit"] = exit_plan
+
+    def _build_swing_position(self, plan: dict, report: dict, big_trend: dict):
+        """构建顺势波段仓位管理"""
+        position = {}
+        strength = big_trend.get("strength", 1)
+
+        # 基础仓位由大趋势强度决定
+        base_ratio = {3: 0.5, 2: 0.3, 1: 0.15}.get(strength, 0.2)
+
+        # 根据模型概率调整
+        model_prob = report.get("model_prediction", {}).get("probability", 0.5)
+        if model_prob >= 0.8:
+            prob_adj = 1.2
+        elif model_prob >= 0.6:
+            prob_adj = 1.0
+        elif model_prob >= 0.4:
+            prob_adj = 0.7
+        else:
+            prob_adj = 0.4
+
+        final_ratio = min(base_ratio * prob_adj, 0.6)  # 最高不超过60%
+        position["max_position"] = f"{final_ratio*100:.0f}%"
+        position["initial_position"] = f"{final_ratio*0.5*100:.0f}%"
+
+        # 加仓规则
+        position["add_rules"] = [
+            "第一笔建仓后，若价格上涨5%且趋势确认，加仓至计划的70%",
+            "第二笔加仓后，若继续向上，加满至最大仓位",
+            "任何加仓都必须伴随止损位同步上移",
+        ]
+
+        # 减仓规则
+        position["reduce_rules"] = [
+            "跌破MA20减仓1/3",
+            "跌破MA60减仓至半仓以下",
+            "周线趋势转空清仓",
+        ]
+
+        plan["position"] = position
+
+    def _build_swing_discipline(self, plan: dict, big_trend: dict, small_trend: dict):
+        """构建交易纪律"""
+        discipline = [
+            "1. 只做与周线大趋势同向的交易，逆势单一律放弃",
+            "2. 买点必须是回调后的波谷，绝不追高",
+            "3. 入场前确认支撑位有效（止跌K线+缩量后放量）",
+            "4. 每笔交易必须设止损，止损位入场时即确定",
+            "5. 盈利后让利润奔跑，用MA20/MA60作为动态止盈",
+            "6. 单票仓位不超过账户的30%，组合持仓分散风险",
+            "7. 大趋势不明朗时（震荡）仓位减半或空仓观望",
+            "8. 每周复盘持仓股票的周线状态，趋势破坏立即离场",
+        ]
+        plan["discipline"] = discipline
+
     def _calculate_overall_score(self, report: dict) -> float:
         """计算综合评分（0-100）"""
         score = 0
@@ -2691,6 +3719,21 @@ def main():
 
     print(f"\n【综合评分】: {report['overall_score']}")
     print(f"【投资建议】: {report['recommendation']}")
+
+    print("\n【长持评分】")
+    lt_score = report.get("long_term_score", {})
+    print(f"  总分: {lt_score.get('total')}/{lt_score.get('max', 100)} ({lt_score.get('suggestion')})")
+    for k, v in lt_score.get("details", {}).items():
+        print(f"  {v.get('label')}: {v.get('score')}/{v.get('max')} — {v.get('note', '')}")
+
+    print("\n【长持计划】")
+    lt_plan = report.get("long_term_plan", {})
+    print(f"  推荐版本: {lt_plan.get('recommended_version')} ({lt_plan.get('recommended_reason')})")
+    for ver_key, ver in lt_plan.get("versions", {}).items():
+        print(f"  [{ver.get('name')}] {ver.get('suitable')}")
+        for order_key, order in ver.get("condition_orders", {}).items():
+            print(f"    • {order_key}: {order.get('price')} ({order.get('pct')}) — {order.get('trigger', order.get('note', ''))}")
+
     print("=" * 80)
 
 
