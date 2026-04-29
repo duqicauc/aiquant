@@ -7,6 +7,7 @@ import Backtest from '../pages/Backtest'
 import Trading from '../pages/Trading'
 import Watchlist from '../pages/Watchlist'
 import System from '../pages/System'
+import Scheduler from '../pages/Scheduler'
 import NotFound from '../pages/NotFound'
 
 export default function AppRoutes() {
@@ -20,6 +21,7 @@ export default function AppRoutes() {
       <Route path="/trading" element={<Trading />} />
       <Route path="/watchlist" element={<Watchlist />} />
       <Route path="/system" element={<System />} />
+      <Route path="/scheduler" element={<Scheduler />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   )

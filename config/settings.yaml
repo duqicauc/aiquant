@@ -87,28 +87,12 @@ review:
       weeks: 4
 
 # 自动化配置
+# 注意: 定时任务现在由 src/scheduler/service.py (APScheduler) 统一管理
+# 任务列表和调度表达式请在 src/scheduler/tasks.py 的 PREDEFINED_JOBS 中配置
 automation:
   scheduler:
     enable: true
     timezone: "Asia/Shanghai"
-
-  tasks:
-    # 原有模型任务
-    weekly_prediction:
-      schedule: "09:00 every saturday"
-      enabled: true
-
-    weekly_review:
-      schedule: "10:00 every saturday"
-      enabled: true
-
-    monthly_review:
-      schedule: "09:00 on 1st"
-      enabled: true
-
-    model_check:
-      schedule: "09:00 on 15th"
-      enabled: true
 
 # 数据存储配置
 data_storage:

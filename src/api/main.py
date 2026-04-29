@@ -12,14 +12,19 @@ from fastapi.middleware.cors import CORSMiddleware
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.api.routers import backtest, macro, market, prediction, stock, system, watchlist
+from src.api.routers import backtest, macro, market, prediction, scheduler, stock, system, watchlist
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     print("🚀 AIQuant API starting up...")
+    from src.scheduler.service import SchedulerService
+    scheduler_service = SchedulerService()
+    scheduler_service.start()
+    print("🚀 AIQuant Scheduler started")
     yield
+    scheduler_service.shutdown(wait=True)
     print("🛑 AIQuant API shutting down...")
 
 
@@ -47,6 +52,7 @@ app.include_router(prediction.router, prefix="/api/prediction", tags=["Predictio
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["Watchlist"])
+app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Scheduler"])
 
 
 @app.get("/api/health")

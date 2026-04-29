@@ -8,6 +8,7 @@ import {
   WalletOutlined,
   SettingOutlined,
   UnorderedListOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import AppRoutes from './router'
@@ -25,6 +26,7 @@ const menuItems = [
   { key: '/backtest', icon: <BarChartOutlined />, label: '回测中心' },
   { key: '/trading', icon: <WalletOutlined />, label: '实盘交易' },
   { key: '/system', icon: <SettingOutlined />, label: '系统管理' },
+  { key: '/scheduler', icon: <ClockCircleOutlined />, label: '任务调度' },
 ]
 
 function App() {

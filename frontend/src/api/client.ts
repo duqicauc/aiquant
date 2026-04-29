@@ -102,6 +102,21 @@ export const systemApi = {
     client.get('/api/system/logs', { params: { lines, level } }),
 }
 
+// Scheduler API
+export const schedulerApi = {
+  jobs: () => client.get('/api/scheduler/jobs'),
+  runJob: (id: string) => client.post(`/api/scheduler/jobs/${id}/run`),
+  pauseJob: (id: string) => client.post(`/api/scheduler/jobs/${id}/pause`),
+  resumeJob: (id: string) => client.post(`/api/scheduler/jobs/${id}/resume`),
+  removeJob: (id: string) => client.delete(`/api/scheduler/jobs/${id}`),
+  history: (params?: { job_id?: string; status?: string; limit?: number; offset?: number }) =>
+    client.get('/api/scheduler/history', { params }),
+  historyDetail: (id: string) => client.get(`/api/scheduler/history/${id}`),
+  historyLogs: (id: string, limit?: number) =>
+    client.get(`/api/scheduler/history/${id}/logs`, { params: limit ? { limit } : {} }),
+  stats: () => client.get('/api/scheduler/stats'),
+}
+
 // Health check
 export const healthApi = {
   check: () => client.get('/api/health'),

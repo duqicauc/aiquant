@@ -43,7 +43,7 @@ class EnsemblePredictor:
         / "models"
         / "breakout_launch_scorer"
         / "versions"
-        / "v2.9.3-ensemble"
+        / "v2.8.0-ensemble"
         / "model"
     )
 
@@ -89,8 +89,9 @@ class EnsemblePredictor:
             lgb_model.best_iteration = lgb_meta.get("best_iteration", lgb_model.num_trees())
             log.info(f"  LGB best_iteration: {lgb_model.best_iteration}")
         else:
-            lgb_model.best_iteration = int(lgb_model.num_trees() * 0.8)
-            log.warning(f"  LGB meta 缺失，回退到 {lgb_model.best_iteration} 棵树")
+            # 旧版本模型（如v2.8.0）没有meta文件，使用全部树
+            lgb_model.best_iteration = lgb_model.num_trees()
+            log.info(f"  LGB meta 缺失，使用全部 {lgb_model.best_iteration} 棵树")
 
         cat_model = CatBoostClassifier()
         cat_model.load_model(str(self.MODEL_DIR / "catboost.cbm"))
