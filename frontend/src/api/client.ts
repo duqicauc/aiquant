@@ -44,6 +44,7 @@ export const marketApi = {
   fundFlowConcept: () => client.get('/api/market/fund-flow/concept'),
   ztPool: (date?: string) =>
     client.get('/api/market/zt-pool', { params: date ? { date } : {} }),
+  limitPremium: () => client.get('/api/market/limit-premium'),
   lhb: () => client.get('/api/market/lhb'),
   hotConcepts: (date?: string, topN = 20) =>
     client.get('/api/market/hot-concepts', { params: { ...(date ? { date } : {}), top_n: topN } }),
@@ -75,6 +76,7 @@ export const predictionApi = {
     client.get('/api/prediction/history', { params: { ts_code: tsCode, days } }),
   models: () => client.get('/api/prediction/models'),
   pipelineStatus: () => client.get('/api/prediction/pipeline-status'),
+  runPipeline: () => client.post('/api/prediction/run-pipeline'),
   distribution: (params?: { date?: string; exclude_bj?: boolean; exclude_st?: boolean; exclude_suspended?: boolean; min_mv?: number }) =>
     client.get('/api/prediction/distribution', { params }),
 }
@@ -90,8 +92,16 @@ export const backtestApi = {
 // Watchlist API
 export const watchlistApi = {
   dates: () => client.get('/api/watchlist/dates'),
-  performance: (date: string, topN = 50, horizons = '1,3,5,10') =>
-    client.get('/api/watchlist/performance', { params: { date, top_n: topN, horizons } }),
+  performance: (date: string, topN = 50, horizons = '1,3,5,10', filters?: Record<string, any>) =>
+    client.get('/api/watchlist/performance', { params: { date, top_n: topN, horizons, ...filters } }),
+  // User watchlist ( Phase 1 - user management )
+  myWatchlist: () => client.get('/api/watchlist/my').catch(() => ({ data: { data: [] } })),
+  addNote: (ts_code: string, note_type: 'watch' | 'exclude', note?: string) =>
+    client.post('/api/watchlist/notes', { ts_code, note_type, note }).catch(() => ({ data: { success: false } })),
+  removeNote: (ts_code: string, note_type?: 'watch' | 'exclude') =>
+    client.delete('/api/watchlist/notes', { params: { ts_code, note_type } }).catch(() => ({ data: { success: false } })),
+  explosion: (days = 7, signal_type?: string) =>
+    client.get('/api/watchlist/explosion', { params: { days, signal_type } }).catch(() => ({ data: { data: [] } })),
 }
 
 // System API
@@ -114,7 +124,46 @@ export const schedulerApi = {
   historyDetail: (id: string) => client.get(`/api/scheduler/history/${id}`),
   historyLogs: (id: string, limit?: number) =>
     client.get(`/api/scheduler/history/${id}/logs`, { params: limit ? { limit } : {} }),
+  runningLogs: (id: string, lines?: number) =>
+    client.get(`/api/scheduler/history/${id}/running-logs`, { params: lines ? { lines } : {} }),
   stats: () => client.get('/api/scheduler/stats'),
+}
+
+// Auth API
+export const authApi = {
+  login: (username: string, password: string) =>
+    client.post('/api/auth/login', { username, password }),
+  logout: () => client.post('/api/auth/logout'),
+  me: () => client.get('/api/auth/me'),
+  changePassword: (old_password: string, new_password: string) =>
+    client.put('/api/auth/password', { old_password, new_password }),
+}
+
+// Admin API
+export const adminApi = {
+  users: () => client.get('/api/admin/users'),
+  createUser: (data: any) => client.post('/api/admin/users', data),
+  updateUser: (id: number, data: any) => client.put(`/api/admin/users/${id}`, data),
+  deleteUser: (id: number) => client.delete(`/api/admin/users/${id}`),
+}
+
+// Trading API
+export const tradingApi = {
+  positions: () => client.get('/api/trading/positions'),
+  buy: (data: any) => client.post('/api/trading/positions', data),
+  updatePosition: (id: number, data: any) => client.put(`/api/trading/positions/${id}`, data),
+  sell: (id: number, data: any) => client.delete(`/api/trading/positions/${id}/sell`, { data }),
+  history: () => client.get('/api/trading/history'),
+  summary: () => client.get('/api/trading/summary'),
+}
+
+// Stock Notes API
+export const stockNoteApi = {
+  add: (tsCode: string, noteType: string, predictionDate?: string, note?: string) =>
+    client.post(`/api/stock/${tsCode}/note`, null, { params: { note_type: noteType, prediction_date: predictionDate, note } }),
+  remove: (tsCode: string, noteType: string) =>
+    client.delete(`/api/stock/${tsCode}/note`, { params: { note_type: noteType } }),
+  list: () => client.get('/api/stock/notes'),
 }
 
 // Health check

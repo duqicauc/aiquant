@@ -77,8 +77,10 @@ async def get_latest_predictions(
     try:
         import pandas as pd
 
-        # Try multiple directories for prediction data
+        # Try multiple directories for prediction data (v294优先)
         pred_dirs = [
+            project_root / "data" / "prediction" / "v294_stk_factor",
+            project_root / "data" / "prediction" / "v294_daily",
             project_root / "data" / "prediction" / "v291_integrated",
             project_root / "data" / "prediction" / "v291_stk_factor",
             project_root / "data" / "prediction",
@@ -283,6 +285,8 @@ async def get_prediction_distribution(
         import sqlite3
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v294_stk_factor",
+            project_root / "data" / "prediction" / "v294_daily",
             project_root / "data" / "prediction" / "v291_integrated",
             project_root / "data" / "prediction" / "v291_stk_factor",
             project_root / "data" / "prediction",
@@ -432,7 +436,7 @@ async def get_pipeline_status():
         is_data_fresh = db_latest_date == today_str if db_latest_date else False
 
         # ---------- Latest prediction ----------
-        pred_dir = project_root / "data" / "prediction" / "v291_stk_factor"
+        pred_dir = project_root / "data" / "prediction" / "v294_stk_factor"
         latest_prediction_date = None
         latest_prediction_count = 0
         prediction_file_exists = False
@@ -450,7 +454,7 @@ async def get_pipeline_status():
             pass
 
         # ---------- Today's pipeline report ----------
-        monitor_dir = project_root / "logs" / "auto_pipeline_v291"
+        monitor_dir = project_root / "logs" / "auto_pipeline_v294"
         today_report = None
         has_run_today = False
         monitor = {}
@@ -474,6 +478,50 @@ async def get_pipeline_status():
         except Exception:
             pass
 
+        # ---------- Scheduler tasks status ----------
+        scheduler_tasks = {}
+        try:
+            from src.scheduler.models import get_session_factory, JobHistory
+            from sqlalchemy import func
+            session_factory = get_session_factory()
+            with session_factory() as session:
+                for job_id in ["daily_fill_data", "daily_arctic_sync", "daily_validate"]:
+                    hist = (
+                        session.query(JobHistory)
+                        .filter(
+                            JobHistory.job_id == job_id,
+                            func.date(JobHistory.run_time) == func.date("now"),
+                        )
+                        .order_by(JobHistory.run_time.desc())
+                        .first()
+                    )
+                    scheduler_tasks[job_id] = {
+                        "status": hist.status if hist else "pending",
+                        "run_time": hist.run_time.isoformat() if hist and hist.run_time else None,
+                        "duration_ms": hist.duration_ms if hist else None,
+                    }
+        except Exception:
+            pass
+
+        # ---------- Pipeline alert ----------
+        pipeline_alert = None
+        try:
+            fill_status = scheduler_tasks.get("daily_fill_data", {}).get("status", "pending")
+            if fill_status == "failed":
+                pipeline_alert = {
+                    "level": "error",
+                    "message": "每日补数据任务失败，请前往任务调度页面查看原因并手动重试",
+                    "action": "goto_scheduler",
+                }
+            elif not is_data_fresh and not has_run_today:
+                pipeline_alert = {
+                    "level": "warning",
+                    "message": "今日数据尚未更新，建议执行 Pipeline",
+                    "action": "run_pipeline",
+                }
+        except Exception:
+            pass
+
         return {
             "today": today_iso,
             "db_latest_date": db_latest_date,
@@ -484,6 +532,40 @@ async def get_pipeline_status():
             "has_run_today": has_run_today,
             "today_report": today_report,
             "monitor": monitor,
+            "scheduler_tasks": scheduler_tasks,
+            "pipeline_alert": pipeline_alert,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Pipeline status fetch failed: {str(e)}")
+
+
+
+@router.post("/run-pipeline")
+async def run_pipeline():
+    """一键执行今日 Pipeline：按顺序触发 daily_fill_data → daily_arctic_sync → daily_validate"""
+    try:
+        from src.scheduler.service import SchedulerService
+
+        service = SchedulerService()
+        triggered = []
+
+        pipeline_steps = [
+            ("daily_fill_data", "每日补全数据"),
+            ("daily_arctic_sync", "每日 ArcticDB 同步"),
+            ("daily_validate", "每日数据验证与预测"),
+        ]
+
+        for job_id, job_name in pipeline_steps:
+            try:
+                run_id = service.run_job_now(job_id)
+                triggered.append({"job_id": job_id, "job_name": job_name, "run_id": run_id, "status": "triggered"})
+            except Exception as e:
+                triggered.append({"job_id": job_id, "job_name": job_name, "status": "failed", "error": str(e)})
+                # 如果某个步骤触发失败，继续尝试后续步骤（用户可以在任务调度页面单独重试失败的步骤）
+
+        return {
+            "message": "Pipeline 已触发",
+            "triggered": triggered,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"触发 Pipeline 失败: {str(e)}")

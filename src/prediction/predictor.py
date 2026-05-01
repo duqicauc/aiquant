@@ -43,7 +43,7 @@ class EnsemblePredictor:
         / "models"
         / "breakout_launch_scorer"
         / "versions"
-        / "v2.8.0-ensemble"
+        / "v2.9.4-ensemble"
         / "model"
     )
 
@@ -67,10 +67,10 @@ class EnsemblePredictor:
 
         self.data_provider = TushareDataProvider()
         self.feature_engineer = FeatureEngineer()
-        self.models, self.weights, self.feature_names, self.calibrators, self.meta_learner = self._load_models()
+        self.models, self.weights, self.feature_names, self.temperatures = self._load_models()
 
-    def _load_models(self) -> Tuple[Dict, dict, List[str], Dict, Optional[Any]]:
-        """加载集成模型、校准器和元学习器"""
+    def _load_models(self) -> Tuple[Dict, dict, List[str], dict]:
+        """加载集成模型、温度参数和权重"""
         models = {}
 
         xgb_model = xgb.Booster()
@@ -81,7 +81,6 @@ class EnsemblePredictor:
         lgb_model = lgb.Booster(model_file=str(self.MODEL_DIR / "lightgbm.txt"))
         models["lightgbm"] = lgb_model
         log.info("  加载 LightGBM 模型")
-        # 加载 LGB best_iteration
         lgb_meta_path = self.MODEL_DIR / "lightgbm_meta.json"
         if lgb_meta_path.exists():
             with open(lgb_meta_path, "r") as f:
@@ -89,7 +88,6 @@ class EnsemblePredictor:
             lgb_model.best_iteration = lgb_meta.get("best_iteration", lgb_model.num_trees())
             log.info(f"  LGB best_iteration: {lgb_model.best_iteration}")
         else:
-            # 旧版本模型（如v2.8.0）没有meta文件，使用全部树
             lgb_model.best_iteration = lgb_model.num_trees()
             log.info(f"  LGB meta 缺失，使用全部 {lgb_model.best_iteration} 棵树")
 
@@ -108,29 +106,23 @@ class EnsemblePredictor:
             f"  权重: XGB={weights['xgboost']:.4f}, LGB={weights['lightgbm']:.4f}, CAT={weights['catboost']:.4f}"
         )
 
-        # 加载校准器
-        calibrators = {}
-        for name in ["xgboost", "lightgbm", "catboost"]:
-            cal_path = self.MODEL_DIR / f"calibrator_{name}.pkl"
-            if cal_path.exists():
-                calibrators[name] = joblib.load(cal_path)
-                log.info(f"  加载 {name} Platt 校准器")
-            else:
-                log.warning(f"  {name} 校准器缺失")
-
-        # 加载元学习器
-        meta_path = self.MODEL_DIR / "meta_learner.pkl"
-        meta_learner = None
-        if meta_path.exists():
-            meta_learner = joblib.load(meta_path)
-            log.info("  加载 Stacking 元学习器")
+        # 加载温度参数（v2.9.4+）
+        temps = {}
+        temp_path = self.MODEL_DIR / "temperatures.json"
+        if temp_path.exists():
+            with open(temp_path, "r") as f:
+                temps = json.load(f)
+            log.info(f"  温度参数: XGB={temps.get('xgboost', 1.0):.4f}, LGB={temps.get('lightgbm', 1.0):.4f}, CAT={temps.get('catboost', 1.0):.4f}")
         else:
-            log.warning("  元学习器缺失，将回退到加权平均")
+            log.warning("  温度参数缺失（旧版本模型），将跳过温度缩放")
 
-        return models, weights, feature_names, calibrators, meta_learner
+        return models, weights, feature_names, temps
 
     def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-        """对特征矩阵进行预测，返回最终概率、原始概率、校准后概率"""
+        """对特征矩阵进行预测，返回最终概率、原始概率、温度缩放后概率"""
+        import numpy as np
+        from scipy.special import expit, logit
+
         # 对齐特征
         X_aligned = pd.DataFrame(index=X.index)
         missing_cols = []
@@ -146,9 +138,11 @@ class EnsemblePredictor:
 
         X_aligned = X_aligned.astype(float).fillna(0)
 
-        # XGBoost
+        # XGBoost（使用best_iteration）
         dmatrix = xgb.DMatrix(X_aligned, feature_names=self.feature_names)
-        pred_xgb_raw = self.models["xgboost"].predict(dmatrix)
+        pred_xgb_raw = self.models["xgboost"].predict(
+            dmatrix, iteration_range=(0, self.models["xgboost"].best_iteration + 1)
+        )
 
         # LightGBM（使用 best_iteration）
         pred_lgb_raw = self.models["lightgbm"].predict(
@@ -164,28 +158,26 @@ class EnsemblePredictor:
             "catboost": pred_cat_raw,
         }
 
-        # 应用 Platt 校准器
+        # 温度缩放校准（v2.9.4+），限制T>=0.5防止概率过于极端
         calibrated_probs = {}
         for name in ["xgboost", "lightgbm", "catboost"]:
-            if name in self.calibrators:
-                calibrated_probs[name] = self.calibrators[name].predict(raw_probs[name])
+            if name in self.temperatures:
+                T = max(self.temperatures[name], 0.5)  # 限制最小温度
+                if T != 1.0:
+                    probs_clipped = np.clip(raw_probs[name], 1e-10, 1 - 1e-10)
+                    logits = logit(probs_clipped)
+                    calibrated_probs[name] = expit(logits / T)
+                else:
+                    calibrated_probs[name] = raw_probs[name]
             else:
                 calibrated_probs[name] = raw_probs[name]
 
-        # Stacking 元学习器 或 加权平均
-        if self.meta_learner is not None:
-            X_meta = np.column_stack([
-                calibrated_probs["xgboost"],
-                calibrated_probs["lightgbm"],
-                calibrated_probs["catboost"],
-            ])
-            ensemble = self.meta_learner.predict_proba(X_meta)[:, 1]
-        else:
-            ensemble = (
-                calibrated_probs["xgboost"] * self.weights["xgboost"]
-                + calibrated_probs["lightgbm"] * self.weights["lightgbm"]
-                + calibrated_probs["catboost"] * self.weights["catboost"]
-            )
+        # Diversity-aware 加权平均
+        ensemble = (
+            calibrated_probs["xgboost"] * self.weights["xgboost"]
+            + calibrated_probs["lightgbm"] * self.weights["lightgbm"]
+            + calibrated_probs["catboost"] * self.weights["catboost"]
+        )
 
         return ensemble, raw_probs, calibrated_probs
 

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.api.routers import backtest, macro, market, prediction, scheduler, stock, system, watchlist
+from src.api.routers import auth, admin, backtest, macro, market, prediction, scheduler, stock, system, watchlist
 
 
 @asynccontextmanager
@@ -45,6 +45,8 @@ app.add_middleware(
 )
 
 # Register routers
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(macro.router, prefix="/api/macro", tags=["Macro"])
 app.include_router(market.router, prefix="/api/market", tags=["Market"])
 app.include_router(stock.router, prefix="/api/stock", tags=["Stock"])

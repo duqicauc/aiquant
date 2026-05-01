@@ -6,10 +6,12 @@ APScheduler 执行器封装
 """
 
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime
 from io import StringIO
+from pathlib import Path
 
 from apscheduler.events import (
     EVENT_JOB_EXECUTED,
@@ -27,21 +29,55 @@ from src.utils.logger import log
 
 
 class CapturingLogHandler:
-    """用于捕获任务执行期间的日志输出"""
+    """用于捕获任务执行期间的日志输出，支持实时写入文件供前端轮询查看"""
+
+    _local = threading.local()
+
+    @classmethod
+    def set_log_file(cls, path: Path):
+        """为当前线程设置实时日志文件路径"""
+        cls._local.log_file = path
+        if path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def get_log_file(cls) -> Path:
+        """获取当前线程的实时日志文件路径"""
+        return getattr(cls._local, "log_file", None)
+
+    @classmethod
+    def clear_log_file(cls):
+        """清除当前线程的实时日志文件路径"""
+        cls._local.log_file = None
 
     def __init__(self):
         self.stdout_capture = StringIO()
         self.stderr_capture = StringIO()
         self.log_lines = []
+        self.log_file = self.get_log_file()
+
+    def _append_to_file(self, text: str):
+        if self.log_file:
+            try:
+                with open(self.log_file, "a", encoding="utf-8") as f:
+                    f.write(text)
+                    if not text.endswith("\n"):
+                        f.write("\n")
+            except Exception:
+                pass
 
     def write_stdout(self, text: str):
         self.stdout_capture.write(text)
+        self._append_to_file(text)
 
     def write_stderr(self, text: str):
         self.stderr_capture.write(text)
+        self._append_to_file(f"[STDERR] {text}")
 
     def add_log(self, level: str, message: str):
-        self.log_lines.append({"level": level, "message": message, "timestamp": datetime.utcnow()})
+        ts = datetime.utcnow()
+        self.log_lines.append({"level": level, "message": message, "timestamp": ts})
+        self._append_to_file(f"[{ts.isoformat()}] {level}: {message}")
 
     def get_stdout(self) -> str:
         return self.stdout_capture.getvalue()

@@ -21,7 +21,7 @@ router = APIRouter()
 async def get_system_monitor():
     """Get system monitoring status (PSI, trade quality, etc.)."""
     try:
-        monitor_dir = project_root / "logs" / "auto_pipeline_v291"
+        monitor_dir = project_root / "logs" / "auto_pipeline_v294"
         report_files = sorted(monitor_dir.glob("report_*.json"), reverse=True)
 
         if not report_files:

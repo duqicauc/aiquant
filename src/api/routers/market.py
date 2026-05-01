@@ -171,6 +171,41 @@ async def get_market_overview():
             except Exception:
                 total_amount = sum(d.get("amount", 0) for d in index_data.values())
 
+        # Volume comparison: today's amount vs 5-day / 20-day moving average
+        amount_ma5 = None
+        amount_ma20 = None
+        volume_ratio_5d = None
+        volume_ratio_20d = None
+        try:
+            # Collect historical daily amounts (up to 20 trading days)
+            historical_amounts = []
+            current_td = today
+            # First, ensure we have today's amount (already computed as total_amount)
+            if total_amount > 0:
+                historical_amounts.append(total_amount)
+
+            # Walk backwards to get previous trade dates
+            for _ in range(25):  # safety cap
+                if len(historical_amounts) >= 21:
+                    break
+                prev_td = _prev_trade_date(pro, current_td)
+                if not prev_td or prev_td == current_td:
+                    break
+                df_hist = pro.daily(trade_date=prev_td)
+                if df_hist is not None and not df_hist.empty:
+                    hist_amount = float(df_hist["amount"].sum()) / 1e5
+                    historical_amounts.append(hist_amount)
+                current_td = prev_td
+
+            if len(historical_amounts) >= 5:
+                amount_ma5 = round(sum(historical_amounts[:5]) / 5, 2)
+                volume_ratio_5d = round(total_amount / amount_ma5, 2) if amount_ma5 > 0 else None
+            if len(historical_amounts) >= 20:
+                amount_ma20 = round(sum(historical_amounts[:20]) / 20, 2)
+                volume_ratio_20d = round(total_amount / amount_ma20, 2) if amount_ma20 > 0 else None
+        except Exception:
+            pass
+
         # Market regime
         if index_data:
             avg_change = sum(d["pct_chg"] for d in index_data.values()) / len(index_data)
@@ -209,6 +244,10 @@ async def get_market_overview():
             "regime_score": regime_score,
             "avg_change": round(avg_change, 2),
             "total_amount": round(total_amount, 2),
+            "amount_ma5": amount_ma5,
+            "amount_ma20": amount_ma20,
+            "volume_ratio_5d": volume_ratio_5d,
+            "volume_ratio_20d": volume_ratio_20d,
             "north_money": north_money,
             "update_time": datetime.now().isoformat(),
         }
@@ -242,6 +281,9 @@ async def get_market_breadth():
             # Total market turnover
             total_amount = round(float(df_daily["amount"].sum()) / 1e5, 2)
 
+            # Median pct_chg
+            median_pct_chg = round(float(pct.median()), 2)
+
             # Histogram distribution (keys use range format for clarity)
             distribution = {
                 "≤-7%": int((pct <= -7).sum()),
@@ -261,21 +303,23 @@ async def get_market_breadth():
             total_amount = 0.0
             distribution = None
 
-        # Limit up/down via limit_list_d
-        up_limit, down_limit = 0, 0
+        # Limit up/down/broken via limit_list_d
+        up_limit, down_limit, broken_limit = 0, 0, 0
         try:
             df_limit = pro.limit_list_d(trade_date=today)
+            if df_limit is None or df_limit.empty:
+                yesterday = _prev_trade_date(pro, today)
+                df_limit = pro.limit_list_d(trade_date=yesterday)
             if df_limit is not None and not df_limit.empty:
                 up_limit = int((df_limit["limit"] == "U").sum())
                 down_limit = int((df_limit["limit"] == "D").sum())
-            else:
-                yesterday = _prev_trade_date(pro, today)
-                df_limit = pro.limit_list_d(trade_date=yesterday)
-                if df_limit is not None and not df_limit.empty:
-                    up_limit = int((df_limit["limit"] == "U").sum())
-                    down_limit = int((df_limit["limit"] == "D").sum())
+                broken_limit = int((df_limit["limit"] == "Z").sum())
         except Exception:
             pass
+
+        limit_total = up_limit + broken_limit
+        seal_rate = round(up_limit / limit_total * 100, 2) if limit_total > 0 else 0
+        broken_rate = round(broken_limit / limit_total * 100, 2) if limit_total > 0 else 0
 
         return MarketBreadth(
             up_count=up_count,
@@ -287,13 +331,18 @@ async def get_market_breadth():
             up_ratio=round(up_count / total * 100, 2) if total > 0 else 50,
             total_amount=total_amount,
             distribution=distribution,
+            median_pct_chg=median_pct_chg,
+            broken_limit=broken_limit,
+            seal_rate=seal_rate,
+            broken_rate=broken_rate,
         )
     except Exception as e:
         # Fallback
         return MarketBreadth(
             up_count=0, down_count=0, flat_count=0, total=0,
             up_limit=0, down_limit=0, up_ratio=50.0, total_amount=0.0,
-            distribution=None,
+            distribution=None, median_pct_chg=None,
+            broken_limit=0, seal_rate=0, broken_rate=0,
         )
 
 
@@ -771,6 +820,72 @@ async def get_zt_pool(date: Optional[str] = Query(None, description="Trade date 
             data = []
 
     return {"data": data, "count": len(data), "source": source, "date": trade_date, "update_time": datetime.now().isoformat()}
+
+
+# ─── Limit Premium (Yesterday's limit-up stocks today's performance) ───
+
+@router.get("/limit-premium")
+async def get_limit_premium():
+    """Calculate average yield of yesterday's limit-up stocks today.
+    Reflects short-term sentiment and willingness to follow-up buying.
+    """
+    try:
+        import tushare as ts
+
+        pro = ts.pro_api()
+        today = _trade_date_str()
+        yesterday = _prev_trade_date(pro, today)
+
+        # 1. Get yesterday's limit-up stocks
+        df_yesterday = pro.limit_list_d(trade_date=yesterday)
+        if df_yesterday is None or df_yesterday.empty:
+            return {"data": None, "date": today, "prev_date": yesterday, "update_time": datetime.now().isoformat()}
+
+        df_zt = df_yesterday[df_yesterday["limit"] == "U"].copy()
+        codes = df_zt["ts_code"].astype(str).tolist()
+        if not codes:
+            return {"data": None, "date": today, "prev_date": yesterday, "update_time": datetime.now().isoformat()}
+
+        # 2. Query today's performance (batch by 50)
+        all_today = []
+        batch_size = 50
+        for i in range(0, len(codes), batch_size):
+            batch = ",".join(codes[i:i + batch_size])
+            try:
+                df_today = pro.daily(ts_code=batch, trade_date=today)
+                if df_today is not None and not df_today.empty:
+                    all_today.append(df_today)
+            except Exception:
+                continue
+
+        if not all_today:
+            return {"data": None, "date": today, "prev_date": yesterday, "update_time": datetime.now().isoformat()}
+
+        df_today_all = pd.concat(all_today, ignore_index=True)
+        pct_series = pd.to_numeric(df_today_all["pct_chg"], errors="coerce").dropna()
+
+        if pct_series.empty:
+            return {"data": None, "date": today, "prev_date": yesterday, "update_time": datetime.now().isoformat()}
+
+        avg_yield = round(float(pct_series.mean()), 2)
+        median_yield = round(float(pct_series.median()), 2)
+        positive_count = int((pct_series > 0).sum())
+        negative_count = int((pct_series < 0).sum())
+
+        return {
+            "data": {
+                "avg_yield": avg_yield,
+                "median_yield": median_yield,
+                "sample_count": len(pct_series),
+                "positive_count": positive_count,
+                "negative_count": negative_count,
+            },
+            "date": today,
+            "prev_date": yesterday,
+            "update_time": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        return {"data": None, "error": str(e), "date": _trade_date_str(), "update_time": datetime.now().isoformat()}
 
 
 # ─── Hot Concepts / Limit CPT List (requires ≥8000 points) ───

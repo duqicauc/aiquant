@@ -63,11 +63,17 @@ class SchedulerService:
     # -----------------------------------------------------------------------
 
     def _wrap_task(self, func, job_id: str, job_name: str, trigger_type: str):
-        """包装任务函数，自动记录执行历史"""
+        """包装任务函数，自动记录执行历史，并支持实时日志文件写入"""
         def wrapper():
             history_id = self._record_job_start(job_id, job_name, trigger_type)
             from src.scheduler.executor import CapturingLogHandler
             from src.scheduler.tasks import ScriptTaskError
+            from pathlib import Path
+
+            # 设置实时日志文件，供前端轮询查看进度
+            log_file = Path(__file__).parent.parent.parent / "logs" / "scheduler_runs" / f"{history_id}.log"
+            CapturingLogHandler.set_log_file(log_file)
+
             capturer = None
             try:
                 result = func()
@@ -93,6 +99,8 @@ class SchedulerService:
                     capturer=capturer,
                 )
                 raise
+            finally:
+                CapturingLogHandler.clear_log_file()
         wrapper.__wrapped__ = func
         return wrapper
 

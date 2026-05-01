@@ -503,3 +503,106 @@ async def get_stock_lhb_detail(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LHB detail failed: {str(e)}")
+
+
+
+# ---------------------------------------------------------------------------
+# 用户股票标记 API
+# ---------------------------------------------------------------------------
+
+from fastapi import Depends
+from src.api.routers.auth import get_current_user
+from src.scheduler.models import get_session_factory, UserStockNote, User
+
+
+@router.post("/{ts_code}/note")
+async def add_stock_note(
+    ts_code: str,
+    note_type: str = Query(..., description="标记类型: watched / researched / excluded"),
+    prediction_date: Optional[str] = Query(None, description="关联预测日期 YYYYMMDD"),
+    note: Optional[str] = Query(None, description="备注"),
+    user: User = Depends(get_current_user),
+):
+    """为股票添加标记（关注/已研究/已排除）"""
+    if note_type not in ("watched", "researched", "excluded"):
+        raise HTTPException(status_code=400, detail="标记类型必须是 watched / researched / excluded")
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        existing = (
+            session.query(UserStockNote)
+            .filter(
+                UserStockNote.user_id == user.id,
+                UserStockNote.ts_code == ts_code,
+                UserStockNote.note_type == note_type,
+            )
+            .first()
+        )
+        if existing:
+            existing.prediction_date = prediction_date
+            existing.note = note
+            existing.updated_at = datetime.utcnow()
+            session.commit()
+            return {"message": "标记已更新"}
+
+        new_note = UserStockNote(
+            user_id=user.id,
+            ts_code=ts_code,
+            note_type=note_type,
+            prediction_date=prediction_date,
+            note=note,
+        )
+        session.add(new_note)
+        session.commit()
+        return {"message": "标记已添加"}
+
+
+@router.delete("/{ts_code}/note")
+async def remove_stock_note(
+    ts_code: str,
+    note_type: str = Query(..., description="标记类型: watched / researched / excluded"),
+    user: User = Depends(get_current_user),
+):
+    """删除股票标记"""
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        note = (
+            session.query(UserStockNote)
+            .filter(
+                UserStockNote.user_id == user.id,
+                UserStockNote.ts_code == ts_code,
+                UserStockNote.note_type == note_type,
+            )
+            .first()
+        )
+        if note:
+            session.delete(note)
+            session.commit()
+            return {"message": "标记已删除"}
+        return {"message": "标记不存在"}
+
+
+@router.get("/notes")
+async def list_stock_notes(user: User = Depends(get_current_user)):
+    """获取当前用户所有股票标记"""
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        notes = (
+            session.query(UserStockNote)
+            .filter(UserStockNote.user_id == user.id)
+            .order_by(UserStockNote.created_at.desc())
+            .all()
+        )
+        return {
+            "items": [
+                {
+                    "id": n.id,
+                    "ts_code": n.ts_code,
+                    "note_type": n.note_type,
+                    "prediction_date": n.prediction_date,
+                    "note": n.note,
+                    "created_at": n.created_at.isoformat() if n.created_at else None,
+                }
+                for n in notes
+            ]
+        }

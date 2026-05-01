@@ -1,4 +1,4 @@
-import { Card, Row, Col, Statistic, Table, Tag, Tabs, Alert, Space } from 'antd'
+import { Card, Row, Col, Statistic, Table, Tag, Tabs, Alert, Space, Button } from 'antd'
 import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
@@ -87,6 +87,7 @@ export default function Market() {
   const [lhbInstitution, setLhbInstitution] = useState<any>(null)
   const [hotConcepts, setHotConcepts] = useState<HotConceptItem[]>([])
   const [conceptHeat, setConceptHeat] = useState<ConceptHeatItem[]>([])
+  const [limitPremium, setLimitPremium] = useState<any>(null)
   const [heatLoading, setHeatLoading] = useState(false)
   const [fundFlowSubTab, setFundFlowSubTab] = useState('industry')
 
@@ -116,18 +117,20 @@ export default function Market() {
       marketApi.fundFlowMarket().then(r => r.data?.data || null).catch(() => null),
       marketApi.fundFlowNorth().then(r => r.data?.data || null).catch(() => null),
       marketApi.ztPool().then(r => r.data?.data || []).catch(() => []),
+      marketApi.limitPremium().then(r => r.data?.data || null).catch(() => null),
       marketApi.lhb().then(r => {
         setLhbInstitution(r.data?.institution || null)
         return r.data?.data || []
       }).catch(() => []),
       marketApi.hotConcepts().then(r => r.data?.data || []).catch(() => []),
       marketApi.conceptHeat().then(r => r.data?.data || []).catch(() => []),
-    ]).then(([ff, fc, fm, fn, zt, lhb, hc, ch]) => {
+    ]).then(([ff, fc, fm, fn, zt, lp, lhb, hc, ch]) => {
       setFundFlow(ff)
       setFundFlowConcept(fc)
       setFundFlowMarket(fm)
       setFundFlowNorth(fn)
       setZtPool(zt)
+      setLimitPremium(lp)
       setLhbList(lhb)
       setHotConcepts(hc)
       setConceptHeat(ch)
@@ -473,7 +476,23 @@ export default function Market() {
 
   return (
     <div>
-      <h2 style={{ color: '#c9d1d9', marginBottom: '1rem' }}>🌏 市场分析</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h2 style={{ color: '#c9d1d9', margin: 0 }}>🌏 市场分析</h2>
+        <Space>
+          <Button
+            onClick={() => navigate('/prediction')}
+            style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9' }}
+          >
+            🤖 查看模型预测
+          </Button>
+          <Button
+            onClick={() => navigate('/watchlist')}
+            style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9' }}
+          >
+            📋 股票池跟踪
+          </Button>
+        </Space>
+      </div>
 
       <Tabs
         activeKey={activeTab}
@@ -769,6 +788,96 @@ export default function Market() {
                   type="info"
                   style={{ background: '#0d1117', borderColor: '#30363d', color: '#8b949e', marginBottom: '1rem' }}
                 />
+
+                {/* 短线情绪统计 */}
+                <Row gutter={16} style={{ marginBottom: '1rem' }}>
+                  <Col span={12}>
+                    <Card
+                      style={{ background: '#161b22', borderColor: '#30363d' }}
+                      bodyStyle={{ padding: '12px 16px' }}
+                    >
+                      {limitPremium ? (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ color: '#8b949e', fontSize: 13 }}>昨日涨停今日收益（连板溢价率）</span>
+                            <span style={{ fontSize: 20, fontWeight: 'bold', color: (limitPremium.avg_yield ?? 0) >= 0 ? '#f85149' : '#3fb950' }}>
+                              {(limitPremium.avg_yield ?? 0) >= 0 ? '+' : ''}{limitPremium.avg_yield?.toFixed(2) ?? '-'}%
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                            <div>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}>中位数 </span>
+                              <span style={{ color: '#c9d1d9', fontSize: 12, fontWeight: 500 }}>{(limitPremium.median_yield ?? 0) >= 0 ? '+' : ''}{limitPremium.median_yield?.toFixed(2) ?? '-'}%</span>
+                            </div>
+                            <div>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}>样本 </span>
+                              <span style={{ color: '#c9d1d9', fontSize: 12 }}>{limitPremium.sample_count ?? 0} 只</span>
+                            </div>
+                            <div>
+                              <span style={{ color: '#f85149', fontSize: 11 }}>上涨 {limitPremium.positive_count ?? 0}</span>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}> / </span>
+                              <span style={{ color: '#3fb950', fontSize: 11 }}>下跌 {limitPremium.negative_count ?? 0}</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.4 }}>
+                            {(limitPremium.avg_yield ?? 0) >= 3
+                              ? '溢价率极高，接力情绪火爆，积极打板'
+                              : (limitPremium.avg_yield ?? 0) >= 1
+                                ? '溢价率较好，接力意愿强，可适当参与'
+                                : (limitPremium.avg_yield ?? 0) >= 0
+                                  ? '溢价率一般，打板有赚有亏，精选个股'
+                                  : (limitPremium.avg_yield ?? 0) >= -2
+                                    ? '溢价率低，打板亏钱，降低打板仓位'
+                                    : '负溢价，昨日涨停股今天大跌，回避打板'}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ color: '#8b949e', fontSize: 12, textAlign: 'center' }}>暂无数据</div>
+                      )}
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card
+                      style={{ background: '#161b22', borderColor: '#30363d' }}
+                      bodyStyle={{ padding: '12px 16px' }}
+                    >
+                      {ztPool.length > 0 ? (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ color: '#8b949e', fontSize: 13 }}>今日封板情况</span>
+                            <span style={{ fontSize: 20, fontWeight: 'bold', color: '#c9d1d9' }}>
+                              {ztPool.filter((z: any) => z.open_count === 0).length} / {ztPool.length}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                            <div>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}>一字板 </span>
+                              <span style={{ color: '#c9d1d9', fontSize: 12, fontWeight: 500 }}>{ztPool.filter((z: any) => z.open_count === 0).length} 只</span>
+                            </div>
+                            <div>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}>炸板 </span>
+                              <span style={{ color: '#3fb950', fontSize: 12, fontWeight: 500 }}>{ztPool.filter((z: any) => z.open_count > 0).length} 只</span>
+                            </div>
+                            <div>
+                              <span style={{ color: '#8b949e', fontSize: 11 }}>最高连板 </span>
+                              <span style={{ color: '#f85149', fontSize: 12, fontWeight: 500 }}>{Math.max(...ztPool.map((z: any) => z.consecutive_boards || 1))} 板</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.4 }}>
+                            {ztPool.filter((z: any) => z.open_count === 0).length / ztPool.length >= 0.8
+                              ? '封板率高，短线情绪积极，打板环境好'
+                              : ztPool.filter((z: any) => z.open_count === 0).length / ztPool.length >= 0.6
+                                ? '封板率一般，炸板风险存在，谨慎追高'
+                                : '炸板率高，短线情绪差，避免追高打板'}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ color: '#8b949e', fontSize: 12, textAlign: 'center' }}>暂无数据</div>
+                      )}
+                    </Card>
+                  </Col>
+                </Row>
+
                 <Card
                   title={
                     <Space>

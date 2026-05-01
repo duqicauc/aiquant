@@ -175,6 +175,24 @@ async def get_history_logs(history_id: str, limit: int = Query(200, ge=1, le=100
     return service.get_history_logs(history_id, limit=limit)
 
 
+@router.get("/history/{history_id}/running-logs")
+async def get_running_logs(history_id: str, lines: int = Query(200, ge=1, le=1000)):
+    """获取运行中任务的实时日志（从临时日志文件读取）"""
+    from pathlib import Path
+
+    log_file = Path(__file__).parent.parent.parent.parent / "logs" / "scheduler_runs" / f"{history_id}.log"
+    if not log_file.exists():
+        return {"lines": [], "status": "no_log_file"}
+
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        recent = all_lines[-lines:]
+        return {"lines": recent, "status": "running" if len(recent) > 0 else "empty"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取实时日志失败: {str(e)}")
+
+
 @router.get("/stats", response_model=StatsResponse)
 async def get_stats():
     """获取统计仪表盘数据"""

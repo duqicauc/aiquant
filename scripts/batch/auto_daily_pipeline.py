@@ -5,7 +5,7 @@ AIQuant 每日自动流水线（交易日感知版）
 执行流程:
 1. 检查今日是否为交易日，非交易日直接跳过
 2. 数据补全: 补全 quant_data.db 中缺失的最新交易日数据
-3. 预测生成: 运行 v2.9.1 模型生成下一交易日预测
+3. 预测生成: 运行 v2.9.4 模型生成下一交易日预测
 4. 日志记录: 记录执行结果到 logs/auto_pipeline/
 
 用法:
@@ -26,9 +26,9 @@ from src.data.tushare_data_provider import TushareDataProvider
 from src.monitoring.model_monitor import ModelMonitor
 from src.utils.logger import log
 
-LOG_DIR = PROJECT_ROOT / "logs" / "auto_pipeline_v291"
+LOG_DIR = PROJECT_ROOT / "logs" / "auto_pipeline_v294"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-PREDICTION_DIR = PROJECT_ROOT / "data" / "prediction" / "v291_stk_factor"
+PREDICTION_DIR = PROJECT_ROOT / "data" / "prediction" / "v294_stk_factor"
 DB_PATH = PROJECT_ROOT / "data" / "cache" / "quant_data.db"
 
 
@@ -170,7 +170,7 @@ def main():
 
     pred_cmd = [
         sys.executable,
-        "scripts/predict_v291_with_stk_factor.py",
+        "scripts/predict_v294_with_stk_factor.py",
         "--start-date", next_date,
         "--end-date", next_date,
         "--lookback", "34",
@@ -189,8 +189,8 @@ def main():
     else:
         log.warning(f"预测文件未生成: {pred_file}")
 
-    # ========== Step 3: 归档到 v291_daily ==========
-    daily_dir = PROJECT_ROOT / "data" / "prediction" / "v291_daily"
+    # ========== Step 3: 归档到 v294_daily ==========
+    daily_dir = PROJECT_ROOT / "data" / "prediction" / "v294_daily"
     daily_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ["all.csv", "top100.csv", "top50.csv"]:
         src = PREDICTION_DIR / f"predictions_{next_date}_{suffix}"

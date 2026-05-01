@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Card,
   Table,
@@ -65,6 +65,9 @@ export default function Scheduler() {
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [logModalTitle, setLogModalTitle] = useState('')
   const [logContent, setLogContent] = useState<LogLine[]>([])
+  const [liveLogLines, setLiveLogLines] = useState<string[]>([])
+  const [isLiveLog, setIsLiveLog] = useState(false)
+  const logPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [detailContent, setDetailContent] = useState<any>(null)
   const [historyFilter, setHistoryFilter] = useState<string | undefined>(undefined)
@@ -138,14 +141,46 @@ export default function Scheduler() {
     }
   }
 
-  const handleViewLogs = async (historyId: string, jobName: string | null) => {
-    try {
-      const res = await schedulerApi.historyLogs(historyId, 500)
-      setLogContent(res.data)
-      setLogModalTitle(`${jobName || historyId} — 执行日志`)
-      setLogModalOpen(true)
-    } catch (e: any) {
-      setError(`加载日志失败: ${e.message}`)
+  const stopLogPolling = () => {
+    if (logPollingRef.current) {
+      clearInterval(logPollingRef.current)
+      logPollingRef.current = null
+    }
+    setIsLiveLog(false)
+  }
+
+  const handleViewLogs = async (historyId: string, jobName: string | null, status?: string) => {
+    stopLogPolling()
+    setLiveLogLines([])
+    setLogContent([])
+
+    const isRunning = status === 'running'
+    setIsLiveLog(isRunning)
+    setLogModalTitle(`${jobName || historyId} — ${isRunning ? '实时执行日志' : '执行日志'}`)
+    setLogModalOpen(true)
+
+    if (isRunning) {
+      // 实时日志模式：先读一次，然后每3秒轮询
+      const poll = async () => {
+        try {
+          const res = await schedulerApi.runningLogs(historyId, 500)
+          if (res.data?.lines) {
+            setLiveLogLines(res.data.lines)
+          }
+        } catch {
+          // ignore polling errors
+        }
+      }
+      await poll()
+      logPollingRef.current = setInterval(poll, 3000)
+    } else {
+      // 历史日志模式
+      try {
+        const res = await schedulerApi.historyLogs(historyId, 500)
+        setLogContent(res.data)
+      } catch (e: any) {
+        setError(`加载日志失败: ${e.message}`)
+      }
     }
   }
 
@@ -291,11 +326,11 @@ export default function Scheduler() {
       width: 140,
       render: (_: any, record: HistoryItem) => (
         <Space>
-          <Tooltip title="查看日志">
+          <Tooltip title={record.status === 'running' ? '查看实时日志' : '查看日志'}>
             <Button
               type="text"
-              icon={<EyeOutlined style={{ color: '#58a6ff' }} />}
-              onClick={() => handleViewLogs(record.id, record.job_name)}
+              icon={<EyeOutlined style={{ color: record.status === 'running' ? '#3fb950' : '#58a6ff' }} />}
+              onClick={() => handleViewLogs(record.id, record.job_name, record.status)}
             />
           </Tooltip>
           <Tooltip title="查看详情">
@@ -433,7 +468,10 @@ export default function Scheduler() {
       <Modal
         title={<span style={{ color: '#c9d1d9' }}>{logModalTitle}</span>}
         open={logModalOpen}
-        onCancel={() => setLogModalOpen(false)}
+        onCancel={() => {
+          stopLogPolling()
+          setLogModalOpen(false)
+        }}
         footer={null}
         width={900}
         styles={{ body: { background: '#0d1117', padding: 16 } }}
@@ -451,7 +489,17 @@ export default function Scheduler() {
             wordBreak: 'break-word',
           }}
         >
-          {logContent.length === 0 ? (
+          {isLiveLog ? (
+            liveLogLines.length === 0 ? (
+              <Text style={{ color: '#8b949e' }}>等待日志输出...</Text>
+            ) : (
+              liveLogLines.map((line, idx) => (
+                <div key={idx} style={{ marginBottom: 1, color: '#c9d1d9' }}>
+                  {line}
+                </div>
+              ))
+            )
+          ) : logContent.length === 0 ? (
             <Text style={{ color: '#8b949e' }}>暂无日志</Text>
           ) : (
             logContent.map((line, idx) => (

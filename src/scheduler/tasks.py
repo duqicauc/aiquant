@@ -104,7 +104,7 @@ def task_daily_fill_data():
 
 
 def task_daily_validate():
-    """每日数据验证与预测（v2.9.3 流水线）"""
+    """每日数据验证与预测（v2.9.4 流水线）"""
     return run_script_task("scripts/batch/auto_daily_pipeline.py")
 
 
@@ -140,6 +140,15 @@ def task_monthly_model_check():
 
 # 任务注册表：job_id -> (name, func, trigger_kwargs, executor)
 # trigger_kwargs 示例: {"trigger": "cron", "day_of_week": "mon-fri", "hour": 16, "minute": 0}
+#
+# 每日数据流水线执行顺序（串行依赖）：
+#   16:00  daily_fill_data     — 补全 SQLite 数据（daily_data / daily_basic / stk_factor）
+#   17:00  daily_arctic_sync   — 同步到 ArcticDB
+#   17:30  daily_validate      — 数据验证 + v2.9.4 预测生成 + 模型监控
+#
+# 说明：daily_validate 内部仍保留数据补全检查作为容错机制。
+#       正常情况下 daily_fill_data 会先完成，daily_validate 会跳过内部补全直接预测。
+#       如果 daily_fill_data 失败，daily_validate 会尝试自己补数据，确保预测不中断。
 PREDEFINED_JOBS = [
     {
         "id": "daily_fill_data",
@@ -150,18 +159,18 @@ PREDEFINED_JOBS = [
         "replace_existing": True,
     },
     {
-        "id": "daily_validate",
-        "name": "每日数据验证与预测",
-        "func": task_daily_validate,
-        "trigger": {"trigger": "cron", "day_of_week": "mon-fri", "hour": 16, "minute": 30},
-        "executor": "long_running",
-        "replace_existing": True,
-    },
-    {
         "id": "daily_arctic_sync",
         "name": "每日 ArcticDB 同步",
         "func": task_daily_arctic_sync,
         "trigger": {"trigger": "cron", "day_of_week": "mon-fri", "hour": 17, "minute": 0},
+        "executor": "long_running",
+        "replace_existing": True,
+    },
+    {
+        "id": "daily_validate",
+        "name": "每日数据验证与预测",
+        "func": task_daily_validate,
+        "trigger": {"trigger": "cron", "day_of_week": "mon-fri", "hour": 17, "minute": 30},
         "executor": "long_running",
         "replace_existing": True,
     },

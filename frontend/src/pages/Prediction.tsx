@@ -1,10 +1,19 @@
-import { Card, Table, Tag, Row, Col, Select, Button, Space, Tooltip, InputNumber } from 'antd'
+import {
+  Card, Table, Tag, Row, Col, Select, Button, Space, Tooltip,
+  Tabs, Empty, Statistic
+} from 'antd'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { predictionApi } from '../api/client'
-// Icons replaced with emoji to avoid extra dependency
+import { predictionApi, watchlistApi } from '../api/client'
 
 const { Option } = Select
+
+// ─── Types ───
+interface SchedulerTaskStatus {
+  status: string
+  run_time: string | null
+  duration_ms: number | null
+}
 
 interface PipelineStatus {
   today: string
@@ -16,9 +25,14 @@ interface PipelineStatus {
   has_run_today: boolean
   today_report: any
   monitor: any
+  scheduler_tasks?: Record<string, SchedulerTaskStatus>
+  pipeline_alert?: {
+    level: 'error' | 'warning'
+    message: string
+    action: 'run_pipeline' | 'goto_scheduler'
+  }
 }
 
-// ---------- 子组件：概率分布迷你条 ----------
 interface DistBin {
   label: string
   count: number
@@ -30,27 +44,41 @@ interface FullDistribution {
   bins: DistBin[]
 }
 
-const BIN_COLORS = [
-  '#30363d',
-  '#21262d',
-  '#1f4d7a',
-  '#1a6fd8',
-  '#238636',
-  '#3fb950',
-  '#7ee787',
-]
+interface WatchlistRecord {
+  ts_code: string
+  name: string
+  prob: number
+  close: number
+  pct_chg?: number
+  industry?: string
+  return_1d?: number
+  return_3d?: number
+  return_5d?: number
+  return_10d?: number
+  is_explosion: boolean
+  is_breakout: boolean
+  breakout_detail: string
+  disagreement: number
+  rec_history: {
+    count_top100: number
+    count_top50: number
+    max_consecutive: number
+    label: string
+    recent_dates: string[]
+    first_date: string | null
+  }
+  suggestion: string
+}
 
+const BIN_COLORS = ['#30363d', '#21262d', '#1f4d7a', '#1a6fd8', '#238636', '#3fb950', '#7ee787']
+
+// ─── Sub: Probability Distribution Mini Bar ───
 function ProbabilityDistribution({ dist }: { dist: FullDistribution | null }) {
   if (!dist || !dist.bins || dist.bins.length === 0) return null
-
   const total = dist.total
   const maxCount = Math.max(...dist.bins.map((b) => b.count))
-
   return (
-    <Card
-      style={{ background: '#161b22', borderColor: '#30363d', marginBottom: '1rem' }}
-      bodyStyle={{ padding: '12px 16px' }}
-    >
+    <Card style={{ background: '#161b22', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '12px 16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>📊 全市场概率分布</span>
         <span style={{ color: '#8b949e', fontSize: '0.7rem' }}>总计 {total.toLocaleString()} 只</span>
@@ -64,15 +92,7 @@ function ProbabilityDistribution({ dist }: { dist: FullDistribution | null }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#8b949e', fontSize: '0.7rem', width: 48, textAlign: 'right' }}>{b.label}</span>
                 <div style={{ flex: 1, height: 14, background: '#0d1117', borderRadius: 2, overflow: 'hidden' }}>
-                  <div
-                    style={{
-                      width: `${barWidth}%`,
-                      height: '100%',
-                      background: color,
-                      borderRadius: 2,
-                      transition: 'width 0.3s',
-                    }}
-                  />
+                  <div style={{ width: `${barWidth}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.3s' }} />
                 </div>
                 <span style={{ color: '#c9d1d9', fontSize: '0.7rem', width: 40 }}>{b.count}</span>
               </div>
@@ -84,444 +104,690 @@ function ProbabilityDistribution({ dist }: { dist: FullDistribution | null }) {
   )
 }
 
-// ---------- 子组件：用法与观点总结 ----------
-function InsightCard({ data }: { data: any[] }) {
-  if (!data || data.length === 0) return null
-
-  const highProb = data.filter((d) => (d.prob ?? 0) >= 0.5).length
-  const veryHigh = data.filter((d) => (d.prob ?? 0) >= 0.8).length
-  const consensusCount = data.filter((d) => {
-    const px = d.prob_xgb_cal ?? d.prob_xgb ?? 0
-    const pl = d.prob_lgb_cal ?? d.prob_lgb ?? 0
-    const pc = d.prob_cat_cal ?? d.prob_cat ?? 0
-    if (typeof px !== 'number' || typeof pl !== 'number' || typeof pc !== 'number') return false
-    return Math.max(px, pl, pc) - Math.min(px, pl, pc) <= 0.3
-  }).length
-
-  const consensusRate = data.length > 0 ? (consensusCount / data.length) * 100 : 0
-
+// ─── Sub: Usage Guide Collapse ───
+function UsageGuide() {
+  const [open, setOpen] = useState(false)
   return (
-    <Card
-      style={{ background: '#161b22', borderColor: '#30363d', marginBottom: '1rem' }}
-      bodyStyle={{ padding: '12px 16px' }}
-    >
-      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 8 }}>💡 模型观点与用法</div>
-      <div style={{ color: '#c9d1d9', fontSize: '0.875rem', lineHeight: 1.6 }}>
-        <div>
-          今日模型<strong style={{ color: '#7ee787' }}>极度看好 {veryHigh} 只</strong>（prob ≥ 80%），
-          <strong style={{ color: '#d29922' }}>重点关注 {highProb} 只</strong>（prob ≥ 50%）。
-          三模型<strong style={{ color: '#58a6ff' }}>共识度 {consensusRate.toFixed(0)}%</strong>。
-        </div>
-        <div style={{ marginTop: 6, color: '#8b949e', fontSize: '0.8rem' }}>
-          💡 <strong>用法</strong>：建议优先关注 prob ≥ 50% 且分歧度为 🟢 的股票；
-          2-5% 区间覆盖 80% 股票，区分度弱，仅作排除参考；分歧度 🔴 表示模型内部争议大，需谨慎。
-        </div>
+    <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '10px 16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
+        <span style={{ color: '#8b949e', fontSize: '0.85rem' }}>💡 用法说明（点击{open ? '收起' : '展开'}）</span>
+        <span style={{ color: '#8b949e' }}>{open ? '▲' : '▼'}</span>
       </div>
+      {open && (
+        <div style={{ color: '#c9d1d9', fontSize: '0.8rem', lineHeight: 1.6, marginTop: 8 }}>
+          <div><strong>今日推荐</strong>：展示模型最新交易日推荐的股票，按预测概率排序。</div>
+          <div style={{ marginTop: 4 }}><strong>跟踪验证</strong>：默认展示上一个交易日的推荐，查看实际收益表现（1天/5天）。</div>
+          <div style={{ marginTop: 4 }}><strong>起爆精选</strong>：扫描近N天内推荐后出现起爆/突破信号的股票，用于深度分析是否追入。</div>
+          <div style={{ marginTop: 4 }}><strong>分歧度</strong>：🟢 共识 🟡 谨慎 🔴 分歧大</div>
+        </div>
+      )}
     </Card>
   )
 }
 
+
+// ─── Main Component ───
 export default function Prediction() {
   const navigate = useNavigate()
-  const [data, setData] = useState<any[]>([])
-  const [stats, setStats] = useState<any>({})
-  const [loading, setLoading] = useState(true)
-  const [topN, setTopN] = useState(50)
-  const [minMv, setMinMv] = useState<number | undefined>(undefined)
-  const [maxMv, setMaxMv] = useState<number | undefined>(undefined)
-  const [minTurnover, setMinTurnover] = useState<number | undefined>(undefined)
+  const [activeTab, setActiveTab] = useState('today')
+
+  // ── Shared state ──
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null)
   const [pipelineLoading, setPipelineLoading] = useState(false)
+  const [pipelineRunning, setPipelineRunning] = useState(false)
   const [fullDist, setFullDist] = useState<FullDistribution | null>(null)
 
-  const fetchAll = async () => {
-    setLoading(true)
-    setPipelineLoading(true)
+  // ── Tab: Today ──
+  const [todayData, setTodayData] = useState<any[]>([])
+  const [todayLoading, setTodayLoading] = useState(false)
+  const [todayTopN, setTodayTopN] = useState(50)
+
+  // ── Tab: Track ──
+  const [dates, setDates] = useState<string[]>([])
+  const [selectedDate, setSelectedDate] = useState<string>('')
+  const [trackData, setTrackData] = useState<WatchlistRecord[]>([])
+  const [trackLoading, setTrackLoading] = useState(false)
+  const [trackTopN, setTrackTopN] = useState(50)
+  const [minProb, setMinProb] = useState<number | undefined>(undefined)
+  const [sortBy, setSortBy] = useState<string>('prob')
+
+  // ── Tab: Explosion ──
+  const [explosionData, setExplosionData] = useState<any[]>([])
+  const [explosionLoading, setExplosionLoading] = useState(false)
+  const [explosionDays, setExplosionDays] = useState(7)
+  const [explosionSignal, setExplosionSignal] = useState<string>('all')
+
+  // ── Tab: History ──
+  const [historyData, setHistoryData] = useState<WatchlistRecord[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // ── Tagging ──
+  const [tagging, setTagging] = useState<Record<string, boolean>>({})
+
+  // ── Init: load dates & today ──
+  useEffect(() => {
+    watchlistApi.dates().then((res) => {
+      const d = res.data?.dates || []
+      setDates(d)
+      if (d.length > 0 && !selectedDate) {
+        // 跟踪验证默认用上一个交易日（有收益数据），不是今天
+        setSelectedDate(d.length > 1 ? d[1] : d[0])
+      }
+    })
+    fetchToday()
+    fetchPipeline()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Fetch today predictions ──
+  const fetchToday = async () => {
+    setTodayLoading(true)
     try {
-      const filters: { min_mv?: number; max_mv?: number; min_turnover?: number } = {}
-      if (minMv !== undefined && !isNaN(minMv)) filters.min_mv = minMv
-      if (maxMv !== undefined && !isNaN(maxMv)) filters.max_mv = maxMv
-      if (minTurnover !== undefined && !isNaN(minTurnover)) filters.min_turnover = minTurnover
-      const [predRes, pipeRes, distRes] = await Promise.all([
-        predictionApi.latest(topN, filters),
-        predictionApi.pipelineStatus().catch(() => ({ data: null })),
-        predictionApi.distribution().catch(() => ({ data: null })),
-      ])
-      setData(predRes.data?.data || [])
-      setStats(predRes.data || {})
-      setPipelineStatus(pipeRes.data)
-      if (distRes.data?.bins) {
-        setFullDist({
-          total: distRes.data.total,
-          bins: distRes.data.bins,
-        })
+      const res = await predictionApi.latest(todayTopN)
+      setTodayData(res.data?.data || [])
+      if (res.data?.distribution) {
+        setFullDist({ total: res.data.distribution.total, bins: res.data.distribution.bins })
       }
     } catch {
       // ignore
     } finally {
-      setLoading(false)
+      setTodayLoading(false)
+    }
+  }
+
+  // ── Fetch pipeline status ──
+  const fetchPipeline = async () => {
+    setPipelineLoading(true)
+    try {
+      const res = await predictionApi.pipelineStatus().catch(() => ({ data: null }))
+      setPipelineStatus(res.data)
+      if (res.data?.distribution) {
+        setFullDist({ total: res.data.distribution.total, bins: res.data.distribution.bins })
+      }
+    } catch {
+      // ignore
+    } finally {
       setPipelineLoading(false)
     }
   }
 
+  // ── Fetch track data ──
   useEffect(() => {
-    fetchAll()
+    if (!selectedDate) return
+    setTrackLoading(true)
+    const filters: Record<string, any> = {}
+    if (minProb !== undefined) filters.min_prob = minProb / 100
+    if (sortBy) filters.sort_by = sortBy
+    watchlistApi
+      .performance(selectedDate, trackTopN, '1,3,5,10', filters)
+      .then((res) => {
+        setTrackData(res.data?.data || [])
+      })
+      .catch(() => {})
+      .finally(() => setTrackLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topN, minMv, maxMv, minTurnover])
+  }, [selectedDate, trackTopN, minProb, sortBy])
 
-  const columns = [
-    { title: '排名', dataIndex: 'rank', key: 'rank', width: 70 },
+  // ── Fetch explosion stocks ──
+  const fetchExplosion = () => {
+    setExplosionLoading(true)
+    watchlistApi
+      .explosion(explosionDays, explosionSignal === 'all' ? undefined : explosionSignal)
+      .then((res) => {
+        setExplosionData(res.data?.data || [])
+      })
+      .catch(() => {})
+      .finally(() => setExplosionLoading(false))
+  }
+
+  useEffect(() => {
+    if (activeTab === 'explosion') {
+      fetchExplosion()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, explosionDays, explosionSignal])
+
+  // ── Fetch history ──
+  const fetchHistory = () => {
+    if (!selectedDate) return
+    setHistoryLoading(true)
+    watchlistApi
+      .performance(selectedDate, 100, '1,3,5,10')
+      .then((res) => {
+        setHistoryData(res.data?.data || [])
+      })
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false))
+  }
+
+  useEffect(() => {
+    if (activeTab === 'history') {
+      fetchHistory()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedDate])
+
+  // ── Pipeline auto-refresh ──
+  useEffect(() => {
+    if (!pipelineRunning) return
+    const interval = setInterval(() => {
+      fetchPipeline()
+      fetchToday()
+    }, 5000)
+    return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineRunning])
+
+  useEffect(() => {
+    if (pipelineRunning && pipelineStatus?.scheduler_tasks?.daily_validate?.status === 'success') {
+      setPipelineRunning(false)
+      fetchToday()
+      fetchPipeline()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineStatus, pipelineRunning])
+
+  // ── Handlers ──
+  const handleRunPipeline = async () => {
+    try {
+      setPipelineRunning(true)
+      await predictionApi.runPipeline()
+      fetchPipeline()
+      fetchToday()
+    } catch (e: any) {
+      setPipelineRunning(false)
+      alert(`触发 Pipeline 失败: ${e.message || '未知错误'}`)
+    }
+  }
+
+  const handleTag = async (ts_code: string, note_type: 'watch' | 'exclude') => {
+    setTagging((prev) => ({ ...prev, [ts_code]: true }))
+    try {
+      await watchlistApi.addNote(ts_code, note_type)
+    } catch {
+      // ignore
+    } finally {
+      setTagging((prev) => ({ ...prev, [ts_code]: false }))
+    }
+  }
+
+  // ── Helpers ──
+  const formatDate = (d: string) => {
+    if (!d || d.length !== 8) return d
+    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`
+  }
+
+  const returnColor = (v?: number) => {
+    if (v === undefined || v === null) return '#8b949e'
+    return v >= 0 ? '#f85149' : '#3fb950'
+  }
+
+  const returnRender = (v?: number) => {
+    if (v === undefined || v === null) return <span style={{ color: '#8b949e' }}>-</span>
+    return <span style={{ color: returnColor(v) }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}%</span>
+  }
+
+  const healthBall = (diff: number) => {
+    const color = diff <= 0.3 ? '#3fb950' : diff <= 0.5 ? '#d29922' : '#f85149'
+    return (
+      <Tooltip title={`分歧度: ${diff.toFixed(3)}`}>
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}66` }} />
+      </Tooltip>
+    )
+  }
+
+
+
+  // ── Pipeline status bar ──
+  const pipelineBar = (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <Space size={16}>
+        <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+          🗄️ 数据: {pipelineStatus?.db_latest_date ? formatDate(pipelineStatus.db_latest_date) : '-'}
+          <Tag color={pipelineStatus?.is_data_fresh ? 'success' : 'error'} style={{ marginLeft: 4, fontSize: '0.7rem' }}>
+            {pipelineStatus?.is_data_fresh ? '已最新' : '需更新'}
+          </Tag>
+        </span>
+        <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+          🤖 预测: {pipelineStatus?.latest_prediction_date ? formatDate(pipelineStatus.latest_prediction_date) : '-'} ({pipelineStatus?.latest_prediction_count || 0}只)
+        </span>
+        <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+          ⚙️ Pipeline: {pipelineStatus?.has_run_today ? <span style={{ color: '#3fb950' }}>已执行</span> : <span style={{ color: '#d29922' }}>未执行</span>}
+        </span>
+      </Space>
+      <Space>
+        <Button size="small" loading={pipelineRunning} onClick={handleRunPipeline}
+          style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9' }}>
+          {pipelineRunning ? '⏳ 执行中...' : '⚡ 一键执行 Pipeline'}
+        </Button>
+        <Button size="small" loading={pipelineLoading} onClick={() => { fetchPipeline(); fetchToday(); }}
+          style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}>
+          🔄 刷新
+        </Button>
+      </Space>
+    </div>
+  )
+
+  // ── Pipeline alert banner ──
+  const alertBanner = pipelineStatus?.pipeline_alert ? (
+    <div style={{
+      marginBottom: 12, padding: '10px 14px', borderRadius: 6,
+      background: pipelineStatus.pipeline_alert.level === 'error' ? '#3d0e0e' : '#2d1b00',
+      border: `1px solid ${pipelineStatus.pipeline_alert.level === 'error' ? '#f85149' : '#d29922'}`,
+      color: pipelineStatus.pipeline_alert.level === 'error' ? '#f85149' : '#d29922',
+      fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    }}>
+      <span>⚠️ {pipelineStatus.pipeline_alert.message}</span>
+      {pipelineStatus.pipeline_alert.action === 'run_pipeline' && (
+        <Button size="small" loading={pipelineRunning} onClick={handleRunPipeline}
+          style={{ background: pipelineStatus.pipeline_alert.level === 'error' ? '#f85149' : '#d29922', borderColor: 'transparent', color: '#fff' }}>
+          {pipelineRunning ? '执行中...' : '一键执行 Pipeline'}
+        </Button>
+      )}
+    </div>
+  ) : null
+
+
+
+  // ── Columns: Today Tab (精简) ──
+  const todayColumns = [
+    { title: '排名', dataIndex: 'rank', key: 'rank', width: 60 },
     {
-      title: '股票代码',
-      dataIndex: 'ts_code',
-      key: 'ts_code',
-      width: 110,
-      render: (ts_code: string) => (
-        <a
-          style={{ color: '#58a6ff', cursor: 'pointer' }}
-          onClick={() => navigate(`/research?code=${ts_code}`)}
-        >
-          {ts_code}
-        </a>
+      title: '股票', key: 'stock', width: 140,
+      render: (_: any, r: any) => (
+        <div>
+          <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
+            {r.ts_code}
+          </a>
+          <div style={{ color: '#8b949e', fontSize: '0.75rem' }}>{r.name || '-'}</div>
+          <div style={{ color: '#6e7681', fontSize: '0.7rem' }}>{r.industry || '-'}</div>
+        </div>
       ),
     },
     {
-      title: '股票名称',
-      dataIndex: 'name',
-      key: 'name',
-      width: 110,
-      render: (name: any, record: any) => (
-        <a
-          style={{ color: '#58a6ff', cursor: 'pointer' }}
-          onClick={() => navigate(`/research?code=${record.ts_code}`)}
-        >
-          {name || '-'}
-        </a>
-      ),
-    },
-    {
-      title: '预测概率',
-      key: 'prob',
-      width: 110,
-      render: (_: any, record: any) => {
-        const prob = record.prob ?? record.probability ?? 0
+      title: '预测概率', key: 'prob', width: 90,
+      render: (_: any, r: any) => {
+        const prob = r.prob ?? r.probability ?? 0
         const pct = typeof prob === 'number' ? (prob > 1 ? prob : prob * 100).toFixed(1) : '0'
-        const px = typeof record.prob_xgb === 'number' ? (record.prob_xgb * 100).toFixed(1) : '-'
-        const pl = typeof record.prob_lgb === 'number' ? (record.prob_lgb * 100).toFixed(1) : '-'
-        const pc = typeof record.prob_cat === 'number' ? (record.prob_cat * 100).toFixed(1) : '-'
-        const pxc = typeof record.prob_xgb_cal === 'number' ? (record.prob_xgb_cal * 100).toFixed(1) : '-'
-        const plc = typeof record.prob_lgb_cal === 'number' ? (record.prob_lgb_cal * 100).toFixed(1) : '-'
-        const pcc = typeof record.prob_cat_cal === 'number' ? (record.prob_cat_cal * 100).toFixed(1) : '-'
-        return (
-          <Tooltip
-            title={
-              <div style={{ fontSize: '0.75rem' }}>
-                <div style={{ color: '#8b949e', marginBottom: 2 }}>原始概率 → 校准后</div>
-                <div>🌳 XGB: {px}% → {pxc}%</div>
-                <div>🍃 LGB: {pl}% → {plc}%</div>
-                <div>🐱 CAT: {pc}% → {pcc}%</div>
-              </div>
-            }
-          >
-            <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>
-              {pct}%
-            </Tag>
-          </Tooltip>
-        )
+        return <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>{pct}%</Tag>
       },
     },
     {
-      title: '分歧度',
-      key: 'disagreement',
-      width: 90,
-      render: (_: any, record: any) => {
-        // 优先使用校准后概率计算分歧度
-        const px = record.prob_xgb_cal ?? record.prob_xgb
-        const pl = record.prob_lgb_cal ?? record.prob_lgb
-        const pc = record.prob_cat_cal ?? record.prob_cat
-        if (typeof px !== 'number' || typeof pl !== 'number' || typeof pc !== 'number') {
-          return '-'
-        }
-        const max = Math.max(px, pl, pc)
-        const min = Math.min(px, pl, pc)
-        const diff = max - min
-        const isHealthy = diff <= 0.3
-        const isWarning = diff > 0.3 && diff <= 0.5
-        const ballColor = isHealthy ? '#3fb950' : isWarning ? '#d29922' : '#f85149'
-        const healthText = isHealthy ? '共识' : isWarning ? '谨慎' : '分歧大'
+      title: '分歧度', key: 'disagreement', width: 80,
+      render: (_: any, r: any) => {
+        const px = r.prob_xgb_cal ?? r.prob_xgb
+        const pl = r.prob_lgb_cal ?? r.prob_lgb
+        const pc = r.prob_cat_cal ?? r.prob_cat
+        if (typeof px !== 'number' || typeof pl !== 'number' || typeof pc !== 'number') return '-'
+        const diff = Math.max(px, pl, pc) - Math.min(px, pl, pc)
         return (
-          <Tooltip title={`分歧度: ${diff.toFixed(3)} — ${healthText}`}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'default' }}>
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  background: ballColor,
-                  display: 'inline-block',
-                  boxShadow: `0 0 6px ${ballColor}66`,
-                }}
-              />
-              <span style={{ color: ballColor, fontSize: '0.75rem', fontWeight: 500 }}>
-                {diff.toFixed(2)}
-              </span>
+          <Tooltip title={`分歧度: ${diff.toFixed(3)}`}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {healthBall(diff)}
+              <span style={{ color: diff <= 0.3 ? '#3fb950' : diff <= 0.5 ? '#d29922' : '#f85149', fontSize: '0.75rem' }}>{diff.toFixed(2)}</span>
             </span>
           </Tooltip>
         )
       },
     },
     {
-      title: '最新价',
-      dataIndex: 'close',
-      key: 'close',
-      width: 90,
+      title: '最新价', dataIndex: 'close', key: 'close', width: 80,
       render: (v: any) => (typeof v === 'number' ? v.toFixed(2) : '-'),
     },
     {
-      title: '涨跌幅',
-      dataIndex: 'pct_chg',
-      key: 'pct_chg',
-      width: 90,
-      render: (v: any) =>
-        typeof v === 'number' ? (
-          <span style={{ color: v >= 0 ? '#f85149' : '#3fb950' }}>
-            {v >= 0 ? '+' : ''}
-            {v.toFixed(2)}%
-          </span>
-        ) : (
-          '-'
-        ),
-    },
-    {
-      title: '所属行业',
-      dataIndex: 'industry',
-      key: 'industry',
-      width: 120,
-      render: (industry: any) => industry || '-',
-    },
-    {
-      title: '总市值',
-      dataIndex: 'total_mv',
-      key: 'total_mv',
-      width: 100,
-      render: (v: any) =>
-        typeof v === 'number' ? <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>{(v / 10000).toFixed(1)}亿</span> : '-',
-      sorter: (a: any, b: any) => (a.total_mv ?? 0) - (b.total_mv ?? 0),
-    },
-    {
-      title: '换手',
-      dataIndex: 'turnover_rate',
-      key: 'turnover_rate',
-      width: 80,
-      render: (v: any) =>
-        typeof v === 'number' ? <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>{v.toFixed(2)}%</span> : '-',
-      sorter: (a: any, b: any) => (a.turnover_rate ?? 0) - (b.turnover_rate ?? 0),
+      title: '操作', key: 'action', width: 100,
+      render: (_: any, r: any) => (
+        <Space size={2}>
+          <Button size="small" onClick={() => navigate(`/research?code=${r.ts_code}`)}
+            style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.7rem', padding: '0 6px' }}>研究</Button>
+          <Button size="small" loading={tagging[r.ts_code]} onClick={() => handleTag(r.ts_code, 'watch')}
+            style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.7rem', padding: '0 6px' }}>+关注</Button>
+        </Space>
+      ),
     },
   ]
 
-  const periodDisplay = stats.display_period || stats.period || 'unknown'
+  // ── Columns: Track Tab ──
+  const trackColumns = [
+    { title: '排名', dataIndex: 'rank', key: 'rank', width: 50, render: (_: any, __: any, idx: number) => idx + 1 },
+    {
+      title: '股票', key: 'stock', width: 130,
+      render: (_: any, r: WatchlistRecord) => (
+        <div>
+          <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
+            {r.ts_code}
+          </a>
+          <div style={{ color: '#8b949e', fontSize: '0.75rem' }}>{r.name || '-'}</div>
+          <div style={{ color: '#6e7681', fontSize: '0.7rem' }}>{r.industry || '-'}</div>
+        </div>
+      ),
+    },
+    {
+      title: '预测概率', key: 'prob', width: 80,
+      render: (_: any, r: WatchlistRecord) => {
+        const pct = (r.prob * 100).toFixed(1)
+        return <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>{pct}%</Tag>
+      },
+    },
+    {
+      title: '推荐历史', key: 'rec', width: 110,
+      render: (_: any, r: WatchlistRecord) => {
+        const h = r.rec_history
+        const fmt = (d: string) => d ? `${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
+        return (
+          <Tooltip title={
+            <div style={{ fontSize: '0.75rem' }}>
+              <div>首次入选: {h.first_date || '未知'}</div>
+              <div>近30天 Top100: {h.count_top100} 次</div>
+              <div>近30天 Top50: {h.count_top50} 次</div>
+              <div>最大连续: {h.max_consecutive} 天</div>
+            </div>
+          }>
+            <div>
+              <span style={{ fontSize: '0.8rem' }}>{h.label}</span>
+              {h.first_date && <div style={{ fontSize: '0.7rem', color: '#6e7681' }}>首{fmt(h.first_date)}</div>}
+            </div>
+          </Tooltip>
+        )
+      },
+    },
+    { title: '1天收益', key: 'r1', width: 80, render: (_: any, r: WatchlistRecord) => returnRender(r.return_1d) },
+    { title: '5天收益', key: 'r5', width: 80, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d) },
+    {
+      title: '信号', key: 'signal', width: 80,
+      render: (_: any, r: WatchlistRecord) => (
+        <Space size={2}>
+          {r.is_explosion && <Tag color="red" style={{ fontSize: '0.7rem', padding: '0 4px' }}>🚀</Tag>}
+          {r.is_breakout && <Tag color="blue" style={{ fontSize: '0.7rem', padding: '0 4px' }}>📈</Tag>}
+          {healthBall(r.disagreement)}
+        </Space>
+      ),
+    },
+    {
+      title: '建议', key: 'suggestion', width: 180,
+      render: (_: any, r: WatchlistRecord) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.suggestion}</span>,
+    },
+  ]
 
-  // ---------- Pipeline status helpers ----------
-  const formatDate = (d: string | null | undefined) => {
-    if (!d || d.length !== 8) return d || '-'
-    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`
-  }
+  // ── Explosion columns ──
+  const explosionColumns = [
+    {
+      title: '股票', key: 'stock', width: 140,
+      render: (_: any, r: any) => (
+        <div>
+          <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
+            {r.ts_code}
+          </a>
+          <div style={{ color: '#8b949e', fontSize: '0.75rem' }}>{r.name || '-'}</div>
+          <div style={{ color: '#6e7681', fontSize: '0.7rem' }}>{r.industry || '-'}</div>
+        </div>
+      ),
+    },
+    {
+      title: '预测日期', key: 'pred_date', width: 90,
+      render: (_: any, r: any) => <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>{formatDate(r.prediction_date)}</span>,
+    },
+    {
+      title: '预测概率', key: 'prob', width: 80,
+      render: (_: any, r: any) => {
+        const pct = (r.prob * 100).toFixed(1)
+        return <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>{pct}%</Tag>
+      },
+    },
+    {
+      title: '信号', key: 'signal', width: 90,
+      render: (_: any, r: any) => (
+        <Space size={2}>
+          {r.is_explosion && <Tag color="red" style={{ fontSize: '0.7rem', padding: '0 4px' }}>🚀 起爆</Tag>}
+          {r.is_breakout && <Tag color="blue" style={{ fontSize: '0.7rem', padding: '0 4px' }}>📈 突破</Tag>}
+        </Space>
+      ),
+    },
+    {
+      title: '起爆详情', key: 'detail', width: 150,
+      render: (_: any, r: any) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.breakout_detail || '-'}</span>,
+    },
+    {
+      title: '累计涨幅', key: 'return', width: 90,
+      render: (_: any, r: any) => {
+        const v = r.total_return
+        return <span style={{ color: (v ?? 0) >= 0 ? '#f85149' : '#3fb950', fontWeight: 500 }}>{v >= 0 ? '+' : ''}{v?.toFixed(2)}%</span>
+      },
+    },
+    {
+      title: '操作', key: 'action', width: 80,
+      render: (_: any, r: any) => (
+        <Button size="small" onClick={() => navigate(`/research?code=${r.ts_code}`)}
+          style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.7rem' }}>深度研究</Button>
+      ),
+    },
+  ]
 
-  const stepIcon = (key: string, step: any) => {
-    const style = { fontSize: 14, marginRight: 2 }
-    const skipped = step?.skipped
-    const success = step?.success
-    // trade_day_check only has is_trade_day, treat as success if true
-    const isOk = success === true || (key === 'trade_day_check' && step?.is_trade_day === true)
-    if (skipped) return <span style={{ ...style, color: '#8b949e' }}>➖</span>
-    if (isOk) return <span style={{ ...style, color: '#3fb950' }}>✅</span>
-    if (success === false) return <span style={{ ...style, color: '#f85149' }}>❌</span>
-    return <span style={{ ...style, color: '#d29922' }}>⚠️</span>
-  }
+  const explosionCount = trackData.filter((d) => d.is_explosion).length
+  const breakoutCount = trackData.filter((d) => d.is_breakout).length
 
-  const stepTooltip = (key: string, step: any) => {
-    if (step?.skipped) return `${key}: 跳过`
-    if (step?.success === true || (key === 'trade_day_check' && step?.is_trade_day === true)) return `${key}: 成功`
-    if (step?.success === false) return `${key}: 失败`
-    return `${key}: 未知`
-  }
 
-  const psiColor = (status?: string) => {
-    if (status === 'green') return '#3fb950'
-    if (status === 'yellow') return '#d29922'
-    if (status === 'red') return '#f85149'
-    return '#8b949e'
-  }
 
-  const steps = pipelineStatus?.today_report?.steps || {}
-  const psi = pipelineStatus?.monitor?.psi || {}
-  const tq = pipelineStatus?.monitor?.trade_quality || {}
-
+  // ── JSX Return ──
   return (
     <div>
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2 style={{ color: '#c9d1d9', margin: 0 }}>🤖 模型预测</h2>
-        <Space>
-          <Button
-            onClick={() => navigate('/watchlist')}
-            style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9' }}
-          >
-            📋 查看股票池跟踪
-          </Button>
-          <Button
-            icon={<span>🔄</span>}
-            loading={pipelineLoading}
-            onClick={fetchAll}
-            style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
-          >
-            刷新状态
-          </Button>
-        </Space>
+        <h2 style={{ color: '#c9d1d9', margin: 0 }}>📊 选股中心</h2>
       </div>
 
-      {/* ---------- Pipeline Status Cards ---------- */}
-      <Row gutter={16} style={{ marginBottom: '1rem' }}>
-        <Col span={6}>
-          <Card
-            loading={pipelineLoading}
-            style={{ background: '#161b22', borderColor: '#30363d' }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>
-              🗄️ 数据新鲜度
-            </div>
-            <div style={{ color: '#c9d1d9', fontSize: '1rem', fontWeight: 600 }}>
-              {formatDate(pipelineStatus?.db_latest_date)}
-            </div>
-            <Tag
-              color={pipelineStatus?.is_data_fresh ? 'success' : 'error'}
-              style={{ marginTop: 4, fontSize: '0.75rem' }}
-            >
-              {pipelineStatus?.is_data_fresh ? '已最新' : '需更新'}
-            </Tag>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card
-            loading={pipelineLoading}
-            style={{ background: '#161b22', borderColor: '#30363d' }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>
-              🤖 预测状态
-            </div>
-            <div style={{ color: '#c9d1d9', fontSize: '1rem', fontWeight: 600 }}>
-              {formatDate(pipelineStatus?.latest_prediction_date)}
-            </div>
-            <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#8b949e' }}>
-              {pipelineStatus?.latest_prediction_count || 0} 只股票
-            </div>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card
-            loading={pipelineLoading}
-            style={{ background: '#161b22', borderColor: '#30363d' }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>
-              ⚙️ Pipeline 今日执行
-            </div>
-            <div style={{ color: '#c9d1d9', fontSize: '1rem', fontWeight: 600 }}>
-              {pipelineStatus?.has_run_today ? '已执行' : '未执行'}
-            </div>
-            <Space size={4} style={{ marginTop: 4 }}>
-              {Object.entries(steps).map(([key, val]: [string, any]) => (
-                <Tooltip title={stepTooltip(key, val)} key={key}>
-                  <span>{stepIcon(key, val)}</span>
-                </Tooltip>
-              ))}
-            </Space>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card
-            loading={pipelineLoading}
-            style={{ background: '#161b22', borderColor: '#30363d' }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>
-              🔍 模型监控
-            </div>
-            <div style={{ color: '#c9d1d9', fontSize: '1rem', fontWeight: 600 }}>
-              PSI{' '}
-              <span style={{ color: psiColor(psi.status) }}>
-                {typeof psi.psi === 'number' ? psi.psi.toFixed(4) : 'N/A'}
-              </span>
-            </div>
-            <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#8b949e' }}>
-              胜率 {(tq.avg_win_rate ? (tq.avg_win_rate * 100).toFixed(1) : 'N/A')}% · Alerts {tq.alerts?.length || 0}
-            </div>
-          </Card>
-        </Col>
-      </Row>
+      {/* Pipeline alert */}
+      {alertBanner}
 
-      {/* ---------- 概率分布与观点 ---------- */}
-      <ProbabilityDistribution dist={fullDist} />
-      <InsightCard data={data} />
-
-      <Card
-        title={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <span>最新预测结果 — {periodDisplay}</span>
-            <Space size="small" wrap>
-              <span style={{ color: '#8b949e', fontSize: '0.875rem' }}>展示数量</span>
-              <Select
-                value={topN}
-                onChange={(v) => setTopN(v)}
-                style={{ width: 90 }}
-                dropdownStyle={{ background: '#21262d' }}
-                size="small"
-              >
-                <Option value={10}>Top 10</Option>
-                <Option value={20}>Top 20</Option>
-                <Option value={50}>Top 50</Option>
-                <Option value={100}>Top 100</Option>
-              </Select>
-              <InputNumber
-                placeholder="最小市值(亿)"
-                value={minMv}
-                onChange={(v) => setMinMv(v ?? undefined)}
-                style={{ width: 110 }}
-                size="small"
-                min={0}
-              />
-              <InputNumber
-                placeholder="最大市值(亿)"
-                value={maxMv}
-                onChange={(v) => setMaxMv(v ?? undefined)}
-                style={{ width: 110 }}
-                size="small"
-                min={0}
-              />
-              <InputNumber
-                placeholder="最小换手(%)"
-                value={minTurnover}
-                onChange={(v) => setMinTurnover(v ?? undefined)}
-                style={{ width: 110 }}
-                size="small"
-                min={0}
-                step={0.5}
-              />
-            </Space>
-          </div>
-        }
-        style={{ background: '#161b22', borderColor: '#30363d' }}
-      >
-        <Table
-          dataSource={data}
-          columns={columns}
-          loading={loading}
-          pagination={{ pageSize: 20 }}
-          size="small"
-          rowKey={(r: any) => r.ts_code || r.code || Math.random()}
-        />
+      {/* Pipeline status bar */}
+      <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '10px 16px' }}>
+        {pipelineBar}
       </Card>
+
+      {/* Usage guide */}
+      <UsageGuide />
+
+      {/* Date indicator for track/history tabs */}
+      {(activeTab === 'track' || activeTab === 'history') && selectedDate && (
+        <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '8px 16px' }}>
+          <Space>
+            <span style={{ color: '#8b949e', fontSize: '0.85rem' }}>📅 预测日期</span>
+            <Select value={selectedDate} onChange={(v) => setSelectedDate(v)} style={{ width: 140 }} dropdownStyle={{ background: '#21262d' }} size="small">
+              {dates.map((d) => (
+                <Option key={d} value={d}>{formatDate(d)}</Option>
+              ))}
+            </Select>
+          </Space>
+        </Card>
+      )}
+
+      {/* Tabs */}
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'today',
+            label: '📈 今日预测',
+            children: (
+              <div>
+                <ProbabilityDistribution dist={fullDist} />
+                <Card
+                  title={
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>最新预测结果</span>
+                      <Space size="small">
+                        <span style={{ color: '#8b949e', fontSize: '0.875rem' }}>展示数量</span>
+                        <Select value={todayTopN} onChange={(v) => setTodayTopN(v)} style={{ width: 90 }} dropdownStyle={{ background: '#21262d' }} size="small">
+                          <Option value={10}>Top 10</Option>
+                          <Option value={20}>Top 20</Option>
+                          <Option value={50}>Top 50</Option>
+                          <Option value={100}>Top 100</Option>
+                        </Select>
+                      </Space>
+                    </div>
+                  }
+                  style={{ background: '#161b22', borderColor: '#30363d' }}
+                >
+                  <Table
+                    dataSource={todayData}
+                    columns={todayColumns}
+                    loading={todayLoading}
+                    pagination={{ pageSize: 20 }}
+                    size="small"
+                    rowKey={(r: any) => r.ts_code || r.code || Math.random()}
+                  />
+                </Card>
+              </div>
+            ),
+          },
+          {
+            key: 'track',
+            label: '📊 跟踪验证',
+            children: (
+              <div>
+                {/* Stats */}
+                <Row gutter={16} style={{ marginBottom: '1rem' }}>
+                  <Col span={6}>
+                    <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <Statistic title="股票数量" value={trackData.length} valueStyle={{ color: '#58a6ff' }} />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <Statistic title="🚀 起爆数" value={explosionCount} valueStyle={{ color: '#f85149' }} />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <Statistic title="📈 突破数" value={breakoutCount} valueStyle={{ color: '#3fb950' }} />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <div style={{ color: '#8b949e', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Top N</div>
+                      <Select value={trackTopN} onChange={(v) => setTrackTopN(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
+                        <Option value={10}>Top 10</Option>
+                        <Option value={20}>Top 20</Option>
+                        <Option value={50}>Top 50</Option>
+                        <Option value={100}>Top 100</Option>
+                      </Select>
+                    </Card>
+                  </Col>
+                </Row>
+
+                {/* Filter panel */}
+                <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '10px 16px' }}>
+                  <Row gutter={[16, 8]}>
+                    <Col span={6}>
+                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>概率阈值</div>
+                      <Select value={minProb} onChange={(v) => setMinProb(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }} allowClear placeholder="全部">
+                        <Option value={50}>≥ 50%</Option>
+                        <Option value={60}>≥ 60%</Option>
+                        <Option value={70}>≥ 70%</Option>
+                        <Option value={80}>≥ 80%</Option>
+                      </Select>
+                    </Col>
+                    <Col span={6}>
+                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>排序方式</div>
+                      <Select value={sortBy} onChange={(v) => setSortBy(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
+                        <Option value="prob">预测概率</Option>
+                        <Option value="consecutive">连续入选天数</Option>
+                        <Option value="first_date">首次入选时间</Option>
+                        <Option value="return_1d">1天收益</Option>
+                        <Option value="return_5d">5天收益</Option>
+                      </Select>
+                    </Col>
+                  </Row>
+                </Card>
+
+                <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                  <Table
+                    dataSource={trackData}
+                    columns={trackColumns}
+                    loading={trackLoading}
+                    pagination={{ pageSize: 20 }}
+                    size="small"
+                    rowKey={(r: any) => r.ts_code}
+                  />
+                </Card>
+              </div>
+            ),
+          },
+          {
+            key: 'explosion',
+            label: '🚀 起爆精选',
+            children: (
+              <div>
+                {/* Time window filter */}
+                <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '10px 16px' }}>
+                  <Row gutter={[16, 8]}>
+                    <Col span={6}>
+                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>时间窗口</div>
+                      <Select value={explosionDays} onChange={(v) => setExplosionDays(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
+                        <Option value={3}>近3天</Option>
+                        <Option value={7}>近7天</Option>
+                        <Option value={14}>近14天</Option>
+                        <Option value={30}>近30天</Option>
+                      </Select>
+                    </Col>
+                    <Col span={6}>
+                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>信号类型</div>
+                      <Select value={explosionSignal} onChange={(v) => setExplosionSignal(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
+                        <Option value="all">全部信号</Option>
+                        <Option value="explosion">只看起爆 🚀</Option>
+                        <Option value="breakout">只看突破 📈</Option>
+                      </Select>
+                    </Col>
+                  </Row>
+                </Card>
+
+                <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                  {explosionData.length === 0 && !explosionLoading ? (
+                    <Empty description={<span style={{ color: '#8b949e' }}>近{explosionDays}天内暂无起爆/突破信号的股票</span>} />
+                  ) : (
+                    <Table
+                      dataSource={explosionData}
+                      columns={explosionColumns}
+                      loading={explosionLoading}
+                      pagination={{ pageSize: 20 }}
+                      size="small"
+                      rowKey={(r: any) => `${r.ts_code}-${r.prediction_date}`}
+                    />
+                  )}
+                </Card>
+              </div>
+            ),
+          },
+          {
+            key: 'history',
+            label: '📈 历史回顾',
+            children: (
+              <div>
+                <Card style={{ background: '#161b22', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '12px 16px' }}>
+                  <Space>
+                    <span style={{ color: '#8b949e' }}>选择历史日期查看过往预测表现</span>
+                    <Button onClick={fetchHistory} loading={historyLoading}
+                      style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}>
+                      🔄 刷新
+                    </Button>
+                  </Space>
+                </Card>
+                <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
+                  <Table
+                    dataSource={historyData}
+                    columns={trackColumns}
+                    loading={historyLoading}
+                    pagination={{ pageSize: 20 }}
+                    size="small"
+                    rowKey={(r: any) => r.ts_code}
+                  />
+                </Card>
+              </div>
+            ),
+          },
+        ]}
+      />
     </div>
   )
 }

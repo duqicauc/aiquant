@@ -1,12 +1,12 @@
 import { useEffect, useState, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Card, Input, Button, Row, Col, Statistic, Tag, Space, Spin, Alert,
   Tabs, Empty, Divider
 } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
-import { stockApi } from '../api/client'
+import { stockApi, predictionApi, watchlistApi } from '../api/client'
 import StockResearchPathway from '../components/StockResearchPathway'
 import IndicatorLayerCollapse from '../components/IndicatorLayerCollapse'
 import IndicatorHelpPopover from '../components/IndicatorHelpPopover'
@@ -75,6 +75,7 @@ interface LHBDetailData {
 }
 
 export default function Research() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const codeFromUrl = searchParams.get('code') || ''
   const [tsCode, setTsCode] = useState(codeFromUrl)
@@ -93,6 +94,9 @@ export default function Research() {
   const [error, setError] = useState('')
   const [stockName, setStockName] = useState('')
   const [stockIndustry, setStockIndustry] = useState('')
+  const [modelView, setModelView] = useState<any>(null)
+  const [modelViewLoading, setModelViewLoading] = useState(false)
+  const [tagging, setTagging] = useState(false)
 
   const fetchCoreData = async () => {
     if (!tsCode) return
@@ -112,6 +116,26 @@ export default function Research() {
       setMoneyflow(indRes.data?.moneyflow || null)
       setStockName(basicRes.data?.name || '')
       setStockIndustry(basicRes.data?.industry || '')
+      // Fetch model prediction view for this stock
+      if (tsCode) {
+        setModelViewLoading(true)
+        predictionApi.latest(100).then(r => {
+          const all = r.data?.data || []
+          const found = all.find((d: any) => d.ts_code === tsCode)
+          if (found) {
+            setModelView({
+              prob: found.prob ?? found.probability ?? 0,
+              prob_xgb: found.prob_xgb,
+              prob_lgb: found.prob_lgb,
+              prob_cat: found.prob_cat,
+              rank: found.rank,
+              disagreement: found.disagreement,
+            })
+          } else {
+            setModelView(null)
+          }
+        }).catch(() => setModelView(null)).finally(() => setModelViewLoading(false))
+      }
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || '请求失败')
     } finally {
@@ -163,6 +187,17 @@ export default function Research() {
       fetchCoreData()
     }
   }, [])
+
+  const handleTag = async (ts_code: string, note_type: 'watch' | 'exclude') => {
+    setTagging(true)
+    try {
+      await watchlistApi.addNote(ts_code, note_type)
+    } catch {
+      // ignore
+    } finally {
+      setTagging(false)
+    }
+  }
 
   const handleTabChange = (key: string) => {
     setActiveTab(key)
@@ -417,6 +452,26 @@ export default function Research() {
             {stockIndustry && <Tag style={{ marginLeft: 8, fontSize: '0.8rem' }} color="blue">{stockIndustry}</Tag>}
           </span>
         )}
+        {tsCode && (
+          <Space size={8} style={{ marginLeft: 16 }}>
+            <Button
+              size="small"
+              loading={tagging}
+              onClick={() => handleTag(tsCode, 'watch')}
+              style={{ background: '#1a4d2e', borderColor: '#3fb950', color: '#7ee787', fontSize: '0.75rem' }}
+            >
+              👁 关注
+            </Button>
+            <Button
+              size="small"
+              loading={tagging}
+              onClick={() => handleTag(tsCode, 'exclude')}
+              style={{ background: '#3d0e0e', borderColor: '#f85149', color: '#f85149', fontSize: '0.75rem' }}
+            >
+              🚫 排除
+            </Button>
+          </Space>
+        )}
       </Card>
 
       {error && (
@@ -426,6 +481,48 @@ export default function Research() {
           showIcon
           style={{ marginBottom: '1rem', background: '#3d0e0e', borderColor: '#f85149' }}
         />
+      )}
+
+      {/* ─── 模型观点卡片 ─── */}
+      {modelView && (
+        <Card
+          size="small"
+          style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }}
+          bodyStyle={{ padding: '10px 16px' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <span style={{ color: '#58a6ff', fontWeight: 500, fontSize: '0.9rem' }}>🤖 模型观点</span>
+            <span style={{ color: '#c9d1d9', fontSize: '0.85rem' }}>
+              预测概率 {' '}
+              <Tag color={(modelView.prob > 0.5 ? (modelView.prob > 0.7 ? 'green' : 'blue') : 'default')}>
+                {(modelView.prob > 1 ? modelView.prob : modelView.prob * 100).toFixed(1)}%
+              </Tag>
+            </span>
+            {modelView.rank && (
+              <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>排名 #{modelView.rank}</span>
+            )}
+            {typeof modelView.disagreement === 'number' && (
+              <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+                分歧度: {modelView.disagreement.toFixed(3)}
+              </span>
+            )}
+            <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>
+              🌳 {(modelView.prob_xgb * 100).toFixed(1)}% · 🍃 {(modelView.prob_lgb * 100).toFixed(1)}% · 🐱 {(modelView.prob_cat * 100).toFixed(1)}%
+            </span>
+            <Button
+              size="small"
+              onClick={() => navigate('/prediction')}
+              style={{ background: '#21262d', borderColor: '#30363d', color: '#8b949e', fontSize: '0.75rem', marginLeft: 'auto' }}
+            >
+              查看全部预测 →
+            </Button>
+          </div>
+        </Card>
+      )}
+      {modelViewLoading && !modelView && (
+        <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }}>
+          <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>加载模型观点...</span>
+        </Card>
       )}
 
       {!tsCode && kline.length === 0 && !loading && (
