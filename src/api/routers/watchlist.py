@@ -17,15 +17,17 @@ sys.path.insert(0, str(project_root))
 
 router = APIRouter()
 
-PREDICTION_DIR = project_root / "data" / "prediction" / "v294_stk_factor"
-DAILY_DIR = project_root / "data" / "prediction" / "v294_daily"
+PREDICTION_DIR = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
+DAILY_DIR = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
 DB_PATH = project_root / "data" / "cache" / "quant_data.db"
 
 
 def _get_prediction_dirs():
-    """获取所有预测目录，按优先级排序（v294优先），去重"""
+    """获取所有预测目录，按优先级排序（v295优先），去重"""
     dirs = []
     candidates = [
+        project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
+        project_root / "data" / "prediction" / "v295_stk_factor",
         project_root / "data" / "prediction" / "v294_stk_factor",
         project_root / "data" / "prediction" / "v294_daily",
     ]

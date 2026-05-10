@@ -48,9 +48,13 @@ export const marketApi = {
   lhb: () => client.get('/api/market/lhb'),
   hotConcepts: (date?: string, topN = 20) =>
     client.get('/api/market/hot-concepts', { params: { ...(date ? { date } : {}), top_n: topN } }),
+  conceptTrend: (days = 3, topN = 15) =>
+    client.get('/api/market/concept-trend', { params: { days, top_n: topN } }),
   summary: () => client.get('/api/market/summary'),
   conceptHeat: (date?: string, topN = 20) =>
     client.get('/api/market/concept-heat', { params: { ...(date ? { date } : {}), top_n: topN } }),
+  factorRadar: (lookbackShort = 5, lookbackLong = 20) =>
+    client.get('/api/market/factor-radar', { params: { lookback_short: lookbackShort, lookback_long: lookbackLong } }),
 }
 
 // Stock API
@@ -79,6 +83,8 @@ export const predictionApi = {
   runPipeline: () => client.post('/api/prediction/run-pipeline'),
   distribution: (params?: { date?: string; exclude_bj?: boolean; exclude_st?: boolean; exclude_suspended?: boolean; min_mv?: number }) =>
     client.get('/api/prediction/distribution', { params }),
+  strategyPool: (params?: { l1?: boolean; l2?: boolean; l3?: boolean; top_n?: number }) =>
+    client.get('/api/prediction/strategy-pool', { params }),
 }
 
 // Backtest API
@@ -110,6 +116,8 @@ export const systemApi = {
   monitor: () => client.get('/api/system/monitor'),
   logs: (lines = 100, level?: string) =>
     client.get('/api/system/logs', { params: { lines, level } }),
+  alertConfig: () => client.get('/api/system/alert-config'),
+  saveAlertConfig: (data: any) => client.post('/api/system/alert-config', data),
 }
 
 // Scheduler API

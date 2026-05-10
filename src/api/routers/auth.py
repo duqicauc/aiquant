@@ -92,6 +92,26 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> User:
         return user
 
 
+def get_current_user_optional(authorization: Optional[str] = Header(None)) -> Optional[User]:
+    """可选认证：解析当前用户，未登录返回 None"""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        return None
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            return None
+        return user
+
+
 def get_current_admin(user: User = Depends(get_current_user)) -> User:
     """要求当前用户为管理员"""
     if user.role != "admin":

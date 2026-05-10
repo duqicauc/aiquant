@@ -29,6 +29,7 @@ from catboost import CatBoostClassifier
 
 from src.data.tushare_data_provider import TushareDataProvider
 from src.features.feature_engineer import FeatureEngineer
+from src.features.time_series_aggregator import TimeSeriesAggregator
 from src.utils.logger import log
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -67,10 +68,10 @@ class EnsemblePredictor:
 
         self.data_provider = TushareDataProvider()
         self.feature_engineer = FeatureEngineer()
-        self.models, self.weights, self.feature_names, self.temperatures = self._load_models()
+        self.models, self.weights, self.feature_names, self.temperatures, self.submodel_features = self._load_models()
 
-    def _load_models(self) -> Tuple[Dict, dict, List[str], dict]:
-        """加载集成模型、温度参数和权重"""
+    def _load_models(self) -> Tuple[Dict, dict, List[str], dict, Dict[str, List[str]]]:
+        """加载集成模型、温度参数、权重和子模型特征"""
         models = {}
 
         xgb_model = xgb.Booster()
@@ -100,6 +101,17 @@ class EnsemblePredictor:
             feature_names = json.load(f)
         log.info(f"  特征数: {len(feature_names)}")
 
+        # P0: 加载子模型特征子集（如果存在）
+        submodel_features = {}
+        for name in ["xgboost", "lightgbm", "catboost"]:
+            feat_path = self.MODEL_DIR / f"feature_names_{name}.json"
+            if feat_path.exists():
+                with open(feat_path, "r") as f:
+                    submodel_features[name] = json.load(f)
+                log.info(f"  {name} 特征子集: {len(submodel_features[name])} 个")
+            else:
+                submodel_features[name] = feature_names  # 回退到全部特征
+
         with open(self.MODEL_DIR / "weights.json", "r") as f:
             weights = json.load(f)
         log.info(
@@ -116,47 +128,44 @@ class EnsemblePredictor:
         else:
             log.warning("  温度参数缺失（旧版本模型），将跳过温度缩放")
 
-        return models, weights, feature_names, temps
+        return models, weights, feature_names, temps, submodel_features
 
     def predict(self, X: pd.DataFrame) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """对特征矩阵进行预测，返回最终概率、原始概率、温度缩放后概率"""
         import numpy as np
         from scipy.special import expit, logit
 
-        # 对齐特征
-        X_aligned = pd.DataFrame(index=X.index)
-        missing_cols = []
-        for col in self.feature_names:
-            if col in X.columns:
-                X_aligned[col] = pd.to_numeric(X[col], errors="coerce")
-            else:
-                missing_cols.append(col)
-                X_aligned[col] = 0.0
+        raw_probs = {}
 
-        if missing_cols:
-            log.warning(f"缺失特征 {len(missing_cols)} 个: {missing_cols[:10]}...")
+        for name in ["xgboost", "lightgbm", "catboost"]:
+            sub_features = self.submodel_features.get(name, self.feature_names)
 
-        X_aligned = X_aligned.astype(float).fillna(0)
+            # 对齐该子模型的特征
+            X_sub = pd.DataFrame(index=X.index)
+            missing_cols = []
+            for col in sub_features:
+                if col in X.columns:
+                    X_sub[col] = pd.to_numeric(X[col], errors="coerce")
+                else:
+                    missing_cols.append(col)
+                    X_sub[col] = 0.0
 
-        # XGBoost（使用best_iteration）
-        dmatrix = xgb.DMatrix(X_aligned, feature_names=self.feature_names)
-        pred_xgb_raw = self.models["xgboost"].predict(
-            dmatrix, iteration_range=(0, self.models["xgboost"].best_iteration + 1)
-        )
+            if missing_cols:
+                log.warning(f"{name} 缺失特征 {len(missing_cols)} 个: {missing_cols[:10]}...")
 
-        # LightGBM（使用 best_iteration）
-        pred_lgb_raw = self.models["lightgbm"].predict(
-            X_aligned, num_iteration=self.models["lightgbm"].best_iteration
-        )
+            X_sub = X_sub.astype(float).fillna(0)
 
-        # CatBoost
-        pred_cat_raw = self.models["catboost"].predict_proba(X_aligned)[:, 1]
-
-        raw_probs = {
-            "xgboost": pred_xgb_raw,
-            "lightgbm": pred_lgb_raw,
-            "catboost": pred_cat_raw,
-        }
+            if name == "xgboost":
+                dmatrix = xgb.DMatrix(X_sub, feature_names=sub_features)
+                raw_probs[name] = self.models[name].predict(
+                    dmatrix, iteration_range=(0, self.models[name].best_iteration + 1)
+                )
+            elif name == "lightgbm":
+                raw_probs[name] = self.models[name].predict(
+                    X_sub, num_iteration=self.models[name].best_iteration
+                )
+            elif name == "catboost":
+                raw_probs[name] = self.models[name].predict_proba(X_sub)[:, 1]
 
         # 温度缩放校准（v2.9.4+），限制T>=0.5防止概率过于极端
         calibrated_probs = {}
@@ -218,6 +227,14 @@ class EnsemblePredictor:
 
         # 4. 计算特征
         df_features = self.feature_engineer.compute_all_features(df_raw, df_market)
+
+        # 4.5 计算时间序列聚合特征（v2.9.5/v2.9.6 兼容）
+        log.info("计算时间序列聚合特征...")
+        aggregator = TimeSeriesAggregator()
+        df_agg = aggregator.aggregate(df_features)
+        if not df_agg.empty:
+            df_features = aggregator.merge_with_t1(df_features, df_agg)
+            log.info(f"聚合特征合并完成: {len(df_features.columns)} 列")
 
         # 5. 取预测日期的数据
         pred_date_dt = pd.to_datetime(prediction_date)
@@ -294,12 +311,27 @@ class EnsemblePredictor:
         # 4. 一次性计算所有特征
         df_features = self.feature_engineer.compute_all_features(df_raw, df_market)
 
-        # 5. 对每一天进行预测
+        # 5. 对每一天进行预测（逐日计算聚合特征，避免未来数据泄露）
+        log.info("开始逐日预测（聚合特征仅使用当日及之前数据）...")
         results = {}
         for date in trade_dates:
             try:
                 pred_dt = pd.to_datetime(date)
+
+                # 5.1 取当日及之前的数据计算聚合特征（防止未来泄露）
+                # 限制每只股票只保留最近 120 天数据，对齐训练时的 lookback=120
+                df_hist = df_features[df_features["trade_date"] <= pred_dt].copy()
+                group_key = "sample_id" if "sample_id" in df_hist.columns else "ts_code"
+                if group_key in df_hist.columns:
+                    df_hist = df_hist.sort_values([group_key, "trade_date"])
+                    df_hist = df_hist.groupby(group_key, sort=False).tail(120).copy()
+                aggregator = TimeSeriesAggregator()
+                df_agg = aggregator.aggregate(df_hist)
+
+                # 5.2 取当日数据
                 df_pred = df_features[df_features["trade_date"] == pred_dt].copy()
+                if not df_agg.empty and not df_pred.empty:
+                    df_pred = aggregator.merge_with_t1(df_pred, df_agg)
 
                 if df_pred.empty:
                     log.warning(f"{date} 无预测数据")

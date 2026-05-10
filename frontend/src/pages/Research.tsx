@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Card, Input, Button, Row, Col, Statistic, Tag, Space, Spin, Alert,
-  Tabs, Empty, Divider
+  Tabs, Empty, Divider, Collapse
 } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
@@ -50,6 +50,21 @@ interface MoneyflowData {
   main_force?: any
   retail_contrarian?: any
   capital_trend?: any
+  pattern?: {
+    pattern: string
+    pattern_en: string
+    confidence: number
+    consecutive_days: number
+    main_net_cum: number
+    retail_net_cum: number
+    price_change_5d: number
+    price_change_1d: number
+    vol_ratio: number
+    description: string
+    suggestion: string
+    color: string
+    icon: string
+  }
 }
 
 interface DiagnosisData {
@@ -188,10 +203,10 @@ export default function Research() {
     }
   }, [])
 
-  const handleTag = async (ts_code: string, note_type: 'watch' | 'exclude') => {
+  const handleTag = async (ts_code: string, note_type: 'watch' | 'exclude' | 'researched', note?: string) => {
     setTagging(true)
     try {
-      await watchlistApi.addNote(ts_code, note_type)
+      await watchlistApi.addNote(ts_code, note_type as any, note)
     } catch {
       // ignore
     } finally {
@@ -655,6 +670,58 @@ export default function Research() {
                       </Card>
                     </Col>
                   </Row>
+
+                  {/* 多周期雷达图 */}
+                  <Card
+                    size="small"
+                    title="🕸️ 多周期雷达对比"
+                    style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 12 }}
+                  >
+                    <ReactECharts
+                      option={(() => {
+                        const indicators = ['综合分', 'RSI', 'MACD', '均线', 'BOLL', '价vsMA20']
+                        const keys = ['composite_score', 'rsi', 'macd', 'ma_alignment', 'bollinger', 'price_vs_ma20']
+                        const series = (['daily', 'weekly', 'monthly'] as const).map((p) => {
+                          const d = (mtfa as any)[p]
+                          const name = p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'
+                          const color = p === 'daily' ? '#f85149' : p === 'weekly' ? '#58a6ff' : '#3fb950'
+                          const data = keys.map((k) => {
+                            const sub = d?.[k]
+                            return sub?.score ?? sub ?? 0
+                          })
+                          return {
+                            name,
+                            type: 'radar',
+                            data: [{ value: data, name }],
+                            lineStyle: { color, width: 2 },
+                            itemStyle: { color },
+                            areaStyle: { color, opacity: 0.15 },
+                            symbol: 'circle',
+                            symbolSize: 6,
+                          }
+                        })
+                        return {
+                          backgroundColor: 'transparent',
+                          animation: false,
+                          legend: {
+                            data: ['日线', '周线', '月线'],
+                            textStyle: { color: '#8b949e', fontSize: 11 },
+                            top: 0,
+                          },
+                          radar: {
+                            indicator: indicators.map((name) => ({ name, max: 100 })),
+                            axisName: { color: '#8b949e', fontSize: 11 },
+                            splitArea: { areaStyle: { color: ['rgba(33,38,45,0.3)', 'rgba(13,17,23,0.3)'] } },
+                            axisLine: { lineStyle: { color: '#30363d' } },
+                            splitLine: { lineStyle: { color: '#30363d' } },
+                          },
+                          series,
+                        }
+                      })()}
+                      style={{ height: 320 }}
+                    />
+                  </Card>
+
                   {(['daily', 'weekly', 'monthly'] as const).map((p) => {
                     const d = (mtfa as any)[p]
                     if (!d) return null
@@ -707,6 +774,62 @@ export default function Research() {
               label: '主力资金',
               children: moneyflow ? (
                 <div>
+                  {/* ─── 主力行为识别置顶 ─── */}
+                  {moneyflow.pattern && (
+                    <Card
+                      style={{
+                        background: '#0d1117',
+                        borderColor: moneyflow.pattern.color || '#30363d',
+                        marginBottom: '1rem',
+                      }}
+                      bodyStyle={{ padding: '16px 20px' }}
+                    >
+                      <Row gutter={16} align="middle">
+                        <Col span={4} style={{ textAlign: 'center' }}>
+                          <div style={{
+                            width: 56, height: 56, borderRadius: '50%',
+                            background: (moneyflow.pattern.color || '#30363d') + '20',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 28,
+                          }}>
+                            <span>{moneyflow.pattern.icon || '⚖️'}</span>
+                          </div>
+                          <div style={{ marginTop: 6, fontSize: 13, fontWeight: 'bold', color: moneyflow.pattern.color || '#c9d1d9' }}>
+                            {moneyflow.pattern.pattern}
+                          </div>
+                        </Col>
+                        <Col span={20}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+                            <Tag color={moneyflow.pattern.color || '#8b949e'} style={{ fontSize: '0.85rem' }}>
+                              置信度 {(moneyflow.pattern.confidence * 100).toFixed(0)}%
+                            </Tag>
+                            <Tag style={{ fontSize: '0.8rem', background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}>
+                              连续{moneyflow.pattern.consecutive_days}日
+                              {moneyflow.pattern.main_net_cum >= 0 ? '流入' : '流出'}
+                            </Tag>
+                            <Tag style={{ fontSize: '0.8rem', background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}>
+                              累计{moneyflow.pattern.main_net_cum >= 0 ? '+' : ''}{moneyflow.pattern.main_net_cum?.toFixed(0)}万
+                            </Tag>
+                            {moneyflow.pattern.vol_ratio > 1.5 && (
+                              <Tag color="purple" style={{ fontSize: '0.8rem' }}>
+                                量比 {moneyflow.pattern.vol_ratio?.toFixed(1)}x
+                              </Tag>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 13, color: '#c9d1d9', marginBottom: 6, lineHeight: 1.5 }}>
+                            {moneyflow.pattern.description}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, color: '#8b949e' }}>建议:</span>
+                            <Tag color={moneyflow.pattern.color || '#8b949e'} style={{ fontSize: '0.8rem' }}>
+                              {moneyflow.pattern.suggestion}
+                            </Tag>
+                          </div>
+                        </Col>
+                      </Row>
+                    </Card>
+                  )}
+
                   <Row gutter={16} style={{ marginBottom: '1rem' }}>
                     <Col span={6}>
                       <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
@@ -822,7 +945,7 @@ export default function Research() {
                           />
                         </Space>
                       }
-                      style={{ background: '#161b22', borderColor: '#30363d' }}
+                      style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 12 }}
                     >
                       <Row gutter={16}>
                         <Col span={6}>
@@ -842,6 +965,159 @@ export default function Research() {
                       </Row>
                     </Card>
                   )}
+
+                  {/* 资金流向时间序列图 */}
+                  {moneyflow.daily_data && moneyflow.daily_data.length > 0 && (
+                    <Card
+                      size="small"
+                      title="📈 近10日资金流向"
+                      style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 12 }}
+                    >
+                      <ReactECharts
+                        option={(() => {
+                          const data = moneyflow.daily_data
+                          const dates = data.map((d: any) => `${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`)
+                          const netMf = data.map((d: any) => d.net_mf / 1e4) // 万元
+                          const cumsum = netMf.reduce((acc: number[], v: number) => {
+                            acc.push((acc.length ? acc[acc.length - 1] : 0) + v)
+                            return acc
+                          }, [])
+                          return {
+                            backgroundColor: 'transparent',
+                            animation: false,
+                            grid: { left: 50, right: 20, top: 30, bottom: 30 },
+                            tooltip: {
+                              trigger: 'axis',
+                              backgroundColor: '#161b22',
+                              borderColor: '#30363d',
+                              textStyle: { color: '#c9d1d9', fontSize: 11 },
+                              axisPointer: { type: 'cross', lineStyle: { color: '#8b949e' } },
+                            },
+                            legend: {
+                              data: ['日净流入', '累计净流入'],
+                              textStyle: { color: '#8b949e', fontSize: 11 },
+                              top: 0,
+                            },
+                            xAxis: {
+                              type: 'category',
+                              data: dates,
+                              axisLine: { lineStyle: { color: '#30363d' } },
+                              axisLabel: { color: '#8b949e', fontSize: 10 },
+                              axisTick: { show: false },
+                            },
+                            yAxis: {
+                              type: 'value',
+                              name: '万元',
+                              nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                              axisLine: { show: false },
+                              splitLine: { lineStyle: { color: '#21262d' } },
+                              axisLabel: { color: '#8b949e', fontSize: 10 },
+                            },
+                            series: [
+                              {
+                                name: '日净流入',
+                                type: 'bar',
+                                data: netMf.map((v: number) => ({
+                                  value: v,
+                                  itemStyle: { color: v >= 0 ? '#f85149' : '#3fb950' },
+                                })),
+                                barWidth: '50%',
+                              },
+                              {
+                                name: '累计净流入',
+                                type: 'line',
+                                data: cumsum,
+                                smooth: true,
+                                showSymbol: false,
+                                lineStyle: { color: '#58a6ff', width: 2 },
+                                areaStyle: {
+                                  color: {
+                                    type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                                    colorStops: [
+                                      { offset: 0, color: 'rgba(88,166,255,0.2)' },
+                                      { offset: 1, color: 'rgba(88,166,255,0)' },
+                                    ],
+                                  },
+                                },
+                              },
+                            ],
+                          }
+                        })()}
+                        style={{ height: 280 }}
+                      />
+                    </Card>
+                  )}
+
+                  {/* 主力 vs 散户 订单结构对比 */}
+                  {moneyflow.daily_data && moneyflow.daily_data.length > 0 && (
+                    <Card
+                      size="small"
+                      title="🔥 订单结构：主力 vs 散户（近10日合计）"
+                      style={{ background: '#161b22', borderColor: '#30363d' }}
+                    >
+                      <ReactECharts
+                        option={(() => {
+                          const data = moneyflow.daily_data
+                          const elgNet = data.reduce((s: number, d: any) => s + (d.buy_elg - d.sell_elg), 0) / 1e4
+                          const lgNet = data.reduce((s: number, d: any) => s + (d.buy_lg - d.sell_lg), 0) / 1e4
+                          const mdNet = data.reduce((s: number, d: any) => s + (d.buy_md - d.sell_md), 0) / 1e4
+                          const smNet = data.reduce((s: number, d: any) => s + (d.buy_sm - d.sell_sm), 0) / 1e4
+                          const mainForce = elgNet + lgNet
+                          const retail = mdNet + smNet
+                          return {
+                            backgroundColor: 'transparent',
+                            animation: false,
+                            grid: { left: 80, right: 80, top: 20, bottom: 20 },
+                            tooltip: {
+                              trigger: 'axis',
+                              backgroundColor: '#161b22',
+                              borderColor: '#30363d',
+                              textStyle: { color: '#c9d1d9', fontSize: 11 },
+                              formatter: (params: any[]) => {
+                                const p = params[0]
+                                return `${p.name}<br/>净流入: ${p.value > 0 ? '+' : ''}${p.value.toFixed(0)} 万元`
+                              },
+                            },
+                            xAxis: {
+                              type: 'value',
+                              axisLine: { lineStyle: { color: '#30363d' } },
+                              splitLine: { lineStyle: { color: '#21262d' } },
+                              axisLabel: { color: '#8b949e', fontSize: 10, formatter: (v: number) => `${v >= 0 ? '+' : ''}${v}` },
+                            },
+                            yAxis: {
+                              type: 'category',
+                              data: ['小单', '中单', '大单', '特大单', '散户合计', '主力合计'],
+                              axisLine: { lineStyle: { color: '#30363d' } },
+                              axisLabel: { color: '#c9d1d9', fontSize: 11 },
+                              axisTick: { show: false },
+                            },
+                            series: [
+                              {
+                                type: 'bar',
+                                data: [
+                                  { value: smNet, itemStyle: { color: smNet >= 0 ? '#f85149' : '#3fb950' } },
+                                  { value: mdNet, itemStyle: { color: mdNet >= 0 ? '#f85149' : '#3fb950' } },
+                                  { value: lgNet, itemStyle: { color: lgNet >= 0 ? '#f85149' : '#3fb950' } },
+                                  { value: elgNet, itemStyle: { color: elgNet >= 0 ? '#f85149' : '#3fb950' } },
+                                  { value: retail, itemStyle: { color: retail >= 0 ? '#f85149' : '#3fb950' } },
+                                  { value: mainForce, itemStyle: { color: mainForce >= 0 ? '#f85149' : '#3fb950' } },
+                                ],
+                                barWidth: '55%',
+                                label: {
+                                  show: true,
+                                  position: 'right',
+                                  color: '#c9d1d9',
+                                  fontSize: 11,
+                                  formatter: (p: any) => `${p.value > 0 ? '+' : ''}${p.value.toFixed(0)}`,
+                                },
+                              },
+                            ],
+                          }
+                        })()}
+                        style={{ height: 240 }}
+                      />
+                    </Card>
+                  )}
                 </div>
               ) : (
                 <Empty description="暂无主力资金数据" />
@@ -856,6 +1132,139 @@ export default function Research() {
                 </Spin>
               ) : diagnosis ? (
                 <div style={{ color: '#c9d1d9' }}>
+                  {/* ─── 核心结论置顶 ─── */}
+                  <Card
+                    style={{
+                      background: '#0d1117',
+                      borderColor: diagnosis.overall_score >= 60 ? 'rgba(63,185,80,0.35)' :
+                        diagnosis.overall_score >= 40 ? 'rgba(210,153,34,0.35)' : 'rgba(248,81,73,0.35)',
+                      marginBottom: '1rem',
+                    }}
+                    bodyStyle={{ padding: '16px 20px' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                      <div style={{
+                        width: 56, height: 56, borderRadius: '50%',
+                        background: diagnosis.overall_score >= 60 ? 'rgba(63,185,80,0.15)' :
+                          diagnosis.overall_score >= 40 ? 'rgba(210,153,34,0.15)' : 'rgba(248,81,73,0.15)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 24,
+                        color: diagnosis.overall_score >= 60 ? '#3fb950' :
+                          diagnosis.overall_score >= 40 ? '#d29922' : '#f85149',
+                      }}>
+                        {diagnosis.overall_score >= 60 ? '🚀' : diagnosis.overall_score >= 40 ? '⚖️' : '📉'}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+                          <span style={{ fontSize: 18, fontWeight: 'bold', color: '#c9d1d9' }}>
+                            {diagnosis.market_stage || '未知'}
+                          </span>
+                          <Tag color={diagnosis.overall_score >= 60 ? '#238636' : diagnosis.overall_score >= 40 ? '#d29922' : '#da3633'} style={{ fontSize: '0.85rem' }}>
+                            评分 {diagnosis.overall_score ?? 0}/100
+                          </Tag>
+                          <Tag color="#58a6ff" style={{ fontSize: '0.85rem' }}>
+                            {diagnosis.recommendation || '观望'}
+                          </Tag>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+                          {diagnosis.trading_signals?.action && (
+                            <span>操作: <span style={{ color: diagnosis.trading_signals.action === '买入' ? '#f85149' : diagnosis.trading_signals.action === '卖出' ? '#3fb950' : '#d29922' }}>{diagnosis.trading_signals.action}</span> · </span>
+                          )}
+                          {diagnosis.model_prediction?.signal && (
+                            <span>模型: {diagnosis.model_prediction.signal} · </span>
+                          )}
+                          风险: {diagnosis.risk_assessment?.overall_risk || '-'} ·
+                          均线: {diagnosis.technical?.trend?.alignment_score >= 70 ? '多头排列' : diagnosis.technical?.trend?.alignment_score <= 30 ? '空头排列' : '纠缠'}
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* ─── 阶段识别卡片 + 主观标记 ─── */}
+                  <Row gutter={16} style={{ marginBottom: '1rem' }}>
+                    <Col span={12}>
+                      <Card
+                        style={{
+                          background: '#161b22',
+                          borderColor: diagnosis.market_stage?.includes('拉升') ? 'rgba(63,185,80,0.35)' :
+                            diagnosis.market_stage?.includes('筑底') ? 'rgba(88,166,255,0.35)' :
+                            diagnosis.market_stage?.includes('顶部') ? 'rgba(210,153,34,0.35)' : 'rgba(248,81,73,0.35)',
+                        }}
+                        bodyStyle={{ padding: '16px 20px' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                          <div style={{
+                            width: 60, height: 60, borderRadius: '50%',
+                            background: diagnosis.market_stage?.includes('拉升') ? 'rgba(63,185,80,0.15)' :
+                              diagnosis.market_stage?.includes('筑底') ? 'rgba(88,166,255,0.15)' :
+                              diagnosis.market_stage?.includes('顶部') ? 'rgba(210,153,34,0.15)' : 'rgba(248,81,73,0.15)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 28,
+                            color: diagnosis.market_stage?.includes('拉升') ? '#3fb950' :
+                              diagnosis.market_stage?.includes('筑底') ? '#58a6ff' :
+                              diagnosis.market_stage?.includes('顶部') ? '#d29922' : '#f85149',
+                          }}>
+                            {diagnosis.market_stage?.includes('拉升') ? '🚀' :
+                              diagnosis.market_stage?.includes('筑底') ? '🏗️' :
+                              diagnosis.market_stage?.includes('顶部') ? '⚠️' : '📉'}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 13, color: '#8b949e', marginBottom: 4 }}>四阶段识别</div>
+                            <div style={{
+                              fontSize: 24, fontWeight: 'bold',
+                              color: diagnosis.market_stage?.includes('拉升') ? '#3fb950' :
+                                diagnosis.market_stage?.includes('筑底') ? '#58a6ff' :
+                                diagnosis.market_stage?.includes('顶部') ? '#d29922' : '#f85149',
+                            }}>
+                              {diagnosis.market_stage || '未知'}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#8b949e', marginTop: 4 }}>
+                              ADX: {diagnosis.technical?.trend?.adx?.toFixed(1) || '-'} |
+                              均线: {diagnosis.technical?.trend?.alignment_score >= 70 ? '多头排列' : diagnosis.technical?.trend?.alignment_score <= 30 ? '空头排列' : '纠缠'} |
+                              量价: {diagnosis.technical?.volume?.phase || '正常'}
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    </Col>
+                    <Col span={12}>
+                      <Card
+                        title="📝 主观标记"
+                        style={{ background: '#161b22', borderColor: '#30363d' }}
+                        bodyStyle={{ padding: '12px 16px' }}
+                      >
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <Button
+                            size="small"
+                            onClick={() => handleTag(tsCode, 'watch')}
+                            loading={tagging}
+                            style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                          >
+                            👁️ 加入观察
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() => handleTag(tsCode, 'researched')}
+                            loading={tagging}
+                            style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                          >
+                            🔍 标记已研究
+                          </Button>
+                          <Button
+                            size="small"
+                            style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                            onClick={() => {
+                              const reason = window.prompt('请输入催化理由（如：十五五规划/订单催化）：')
+                              if (reason) handleTag(tsCode, 'watch', reason)
+                            }}
+                          >
+                            ⏳ 待催化
+                          </Button>
+                        </div>
+                      </Card>
+                    </Col>
+                  </Row>
+
                   <Row gutter={16} style={{ marginBottom: '1rem' }}>
                     <Col span={6}>
                       <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
@@ -1114,6 +1523,80 @@ export default function Research() {
                           </div>
                         )
                       })()}
+
+                      {/* 机会-风险矩阵图 */}
+                      {diagnosis.model_prediction && diagnosis.risk_assessment && (
+                        <div style={{ marginBottom: 16 }}>
+                          <ReactECharts
+                            option={(() => {
+                              const prob = diagnosis.model_prediction?.probability ?? 0
+                              const risk = diagnosis.risk_assessment?.risk_score ?? 5
+                              return {
+                                backgroundColor: 'transparent',
+                                animation: false,
+                                grid: { left: 50, right: 20, top: 20, bottom: 40 },
+                                title: {
+                                  text: '机会-风险矩阵',
+                                  left: 'center',
+                                  textStyle: { color: '#8b949e', fontSize: 12 },
+                                },
+                                xAxis: {
+                                  type: 'value',
+                                  min: 0, max: 10,
+                                  name: '风险 →',
+                                  nameLocation: 'middle',
+                                  nameGap: 25,
+                                  nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                                  axisLine: { lineStyle: { color: '#30363d' } },
+                                  splitLine: { lineStyle: { color: '#21262d' } },
+                                  axisLabel: { color: '#8b949e', fontSize: 10 },
+                                },
+                                yAxis: {
+                                  type: 'value',
+                                  min: 0, max: 1,
+                                  name: '机会 →',
+                                  nameLocation: 'middle',
+                                  nameGap: 35,
+                                  nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                                  axisLine: { lineStyle: { color: '#30363d' } },
+                                  splitLine: { lineStyle: { color: '#21262d' } },
+                                  axisLabel: { color: '#8b949e', fontSize: 10, formatter: (v: number) => `${(v * 100).toFixed(0)}%` },
+                                },
+                                series: [
+                                  {
+                                    type: 'scatter',
+                                    data: [[risk, prob]],
+                                    symbolSize: 20,
+                                    itemStyle: {
+                                      color: prob >= 0.7 && risk <= 4 ? '#3fb950' :
+                                        prob >= 0.7 ? '#d29922' :
+                                        prob >= 0.4 && risk <= 4 ? '#58a6ff' :
+                                        prob >= 0.4 ? '#d29922' : '#f85149',
+                                      borderColor: '#c9d1d9',
+                                      borderWidth: 2,
+                                    },
+                                    label: {
+                                      show: true,
+                                      formatter: '当前',
+                                      position: 'top',
+                                      color: '#c9d1d9',
+                                      fontSize: 11,
+                                      fontWeight: 'bold',
+                                    },
+                                  },
+                                ],
+                                graphic: [
+                                  { type: 'text', left: '18%', top: '15%', style: { text: '低风险高机会', fill: 'rgba(63,185,80,0.5)', fontSize: 11 } },
+                                  { type: 'text', left: '65%', top: '15%', style: { text: '高风险高机会', fill: 'rgba(210,153,34,0.5)', fontSize: 11 } },
+                                  { type: 'text', left: '18%', top: '70%', style: { text: '低风险低机会', fill: 'rgba(88,166,255,0.5)', fontSize: 11 } },
+                                  { type: 'text', left: '65%', top: '70%', style: { text: '高风险低机会', fill: 'rgba(248,81,73,0.5)', fontSize: 11 } },
+                                ],
+                              }
+                            })()}
+                            style={{ height: 220 }}
+                          />
+                        </div>
+                      )}
 
                       <Row gutter={[16, 16]}>
                         {/* ── 左侧：机会面 ── */}
@@ -1531,6 +2014,30 @@ export default function Research() {
                         </Col>
                       </Row>
 
+                      {/* 一键复制条件单参数 */}
+                      <div style={{ marginTop: 12 }}>
+                        <Button
+                          type="primary"
+                          size="small"
+                          onClick={() => {
+                            const plan = diagnosis.swing_plan
+                            const text = `【条件单参数】${tsCode} ${stockName}
+理想买入价: ${plan.entry?.suggested_price || '-'}
+止损位: ${plan.exit?.stop_loss || '-'}
+止盈策略: ${plan.exit?.take_profit_strategy || '-'}
+初始仓位: ${plan.position?.initial_position || '-'}
+最大仓位: ${plan.position?.max_position || '-'}
+动态止盈: ${plan.exit?.trailing_stop || '-'}`
+                            navigator.clipboard.writeText(text).then(() => {
+                              alert('条件单参数已复制到剪贴板')
+                            })
+                          }}
+                          style={{ background: '#1f4d7a', borderColor: '#30363d' }}
+                        >
+                          📋 一键复制条件单参数
+                        </Button>
+                      </div>
+
                       {/* 交易纪律 */}
                       {diagnosis.swing_plan.discipline?.length > 0 && (
                         <div style={{ marginTop: 12 }}>
@@ -1605,11 +2112,97 @@ export default function Research() {
                     </Col>
                   </Row>
 
-                  {/* 游资标签 */}
-                  {lhbDetail.dealer_tags && lhbDetail.dealer_tags.length > 0 && (
+                  {/* 机构净流向时间序列图 */}
+                  {lhbDetail.institution_details && lhbDetail.institution_details.length > 0 && (
                     <Card
                       size="small"
-                      title="游资识别"
+                      title="📈 机构席位净流向（近30日逐日）"
+                      style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 12 }}
+                    >
+                      <ReactECharts
+                        option={(() => {
+                          const details = lhbDetail.institution_details || []
+                          // Aggregate by date
+                          const dateMap: Record<string, number> = {}
+                          details.forEach((item: any) => {
+                            const d = item.date || ''
+                            if (d) dateMap[d] = (dateMap[d] || 0) + (item.net_buy || 0)
+                          })
+                          const sortedDates = Object.keys(dateMap).sort()
+                          const dates = sortedDates.map(d => `${d.slice(4, 6)}-${d.slice(6, 8)}`)
+                          const values = sortedDates.map(d => dateMap[d])
+                          const cumsum = values.reduce((acc: number[], v: number) => {
+                            acc.push((acc.length ? acc[acc.length - 1] : 0) + v)
+                            return acc
+                          }, [])
+                          return {
+                            backgroundColor: 'transparent',
+                            animation: false,
+                            grid: { left: 50, right: 20, top: 30, bottom: 30 },
+                            tooltip: {
+                              trigger: 'axis',
+                              backgroundColor: '#161b22',
+                              borderColor: '#30363d',
+                              textStyle: { color: '#c9d1d9', fontSize: 11 },
+                            },
+                            legend: {
+                              data: ['日净买入', '累计净买入'],
+                              textStyle: { color: '#8b949e', fontSize: 11 },
+                              top: 0,
+                            },
+                            xAxis: {
+                              type: 'category',
+                              data: dates,
+                              axisLine: { lineStyle: { color: '#30363d' } },
+                              axisLabel: { color: '#8b949e', fontSize: 10 },
+                              axisTick: { show: false },
+                            },
+                            yAxis: {
+                              type: 'value',
+                              name: '万元',
+                              nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                              axisLine: { show: false },
+                              splitLine: { lineStyle: { color: '#21262d' } },
+                              axisLabel: { color: '#8b949e', fontSize: 10 },
+                            },
+                            series: [
+                              {
+                                name: '日净买入',
+                                type: 'bar',
+                                data: values.map((v: number) => ({
+                                  value: v,
+                                  itemStyle: { color: v >= 0 ? '#f85149' : '#3fb950' },
+                                })),
+                                barWidth: '50%',
+                              },
+                              {
+                                name: '累计净买入',
+                                type: 'line',
+                                data: cumsum,
+                                smooth: true,
+                                showSymbol: false,
+                                lineStyle: { color: '#58a6ff', width: 2 },
+                              },
+                            ],
+                          }
+                        })()}
+                        style={{ height: 260 }}
+                      />
+                    </Card>
+                  )}
+
+                  {/* 游资标签 + 上榜统计 */}
+                  {(lhbDetail.dealer_tags && lhbDetail.dealer_tags.length > 0) && (
+                    <Card
+                      size="small"
+                      title={
+                        <Space>
+                          <span>游资识别</span>
+                          <Tag color="blue" style={{ fontSize: '0.7rem' }}>
+                            近{lhbDetail.days}日上榜 {lhbDetail.institution_summary?.inst_count ?? 0} 次
+                          </Tag>
+                        </Space>
+                      }
                       style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 12 }}
                     >
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

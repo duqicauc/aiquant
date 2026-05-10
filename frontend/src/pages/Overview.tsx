@@ -1,44 +1,94 @@
-import { useEffect, useState } from 'react'
-import { Card, Row, Col, Tag, Spin } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Card, Row, Col, Tag, Spin, Badge, Tooltip } from 'antd'
 import { useNavigate } from 'react-router-dom'
+import ReactECharts from 'echarts-for-react'
 import { marketApi, predictionApi, tradingApi, stockNoteApi } from '../api/client'
+
+// Mock data types for new features (will be replaced by real API later)
+interface StrikeZoneItem {
+  ts_code: string
+  name: string
+  prob_short: number
+  prob_mid: number
+  prob_long: number
+  market_stage: string
+  trigger_reason: string
+  left_side_signal?: string
+}
+
+interface WatchlistAlert {
+  ts_code: string
+  name: string
+  alert_type: 'left_side_window' | 'breakout_ma20' | 'volume_surge' | 'stop_loss_near'
+  message: string
+  severity: 'info' | 'warning' | 'danger'
+}
+
+interface SystemAlert {
+  id: string
+  level: 'error' | 'warning' | 'info'
+  message: string
+  time: string
+}
 
 export default function Overview() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
+  const [loadingSecondary, setLoadingSecondary] = useState(false)
   const [marketData, setMarketData] = useState<any>(null)
   const [breadthData, setBreadthData] = useState<any>(null)
   const [pipelineStatus, setPipelineStatus] = useState<any>(null)
-  // const [top3, setTop3] = useState<any[]>([])
   const [noteStats, setNoteStats] = useState({ researched: 0, watched: 0, excluded: 0 })
   const [tradingSummary, setTradingSummary] = useState<any>(null)
+  const [sectorData, setSectorData] = useState<any[]>([])
+  const [hotConcepts, setHotConcepts] = useState<any[]>([])
+  const [conceptTrend, setConceptTrend] = useState<any[]>([])
+
+  // New states for subjective-quant integration
+  const [strikeZone, setStrikeZone] = useState<StrikeZoneItem[]>([])
+  const [watchlistAlerts, setWatchlistAlerts] = useState<WatchlistAlert[]>([])
+  const [systemAlerts, setSystemAlerts] = useState<SystemAlert[]>([])
+
   useEffect(() => {
-    fetchAll()
+    fetchCore()
+    fetchSecondary()
   }, [])
 
-  const fetchAll = async () => {
+  // 核心数据：先加载，不阻塞主界面展示
+  const fetchCore = async () => {
     setLoading(true)
     try {
-      const [mRes, bRes, pRes, nRes, tRes] = await Promise.all([
+      const [mRes, bRes] = await Promise.all([
         marketApi.overview().catch(() => ({ data: null })),
         marketApi.breadth().catch(() => ({ data: null })),
+      ])
+      setMarketData(mRes.data)
+      setBreadthData(bRes.data)
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 次要数据：后台加载，避免阻塞首屏
+  const fetchSecondary = async () => {
+    setLoadingSecondary(true)
+    try {
+      const [pRes, nRes, tRes, sRes, hRes, cRes] = await Promise.all([
         predictionApi.pipelineStatus().catch(() => ({ data: null })),
         stockNoteApi.list().catch(() => ({ data: { items: [] } })),
         tradingApi.summary().catch(() => ({ data: null })),
+        marketApi.sectors().catch(() => ({ data: [] })),
+        marketApi.hotConcepts().catch(() => ({ data: [] })),
+        marketApi.conceptTrend().catch(() => ({ data: [] })),
       ])
 
-      setMarketData(mRes.data)
-      setBreadthData(bRes.data)
       setPipelineStatus(pRes.data)
       setTradingSummary(tRes.data)
-
-      // Top3 predictions disabled
-      // try {
-      //   const predRes = await predictionApi.latest(3)
-      //   setTop3(predRes.data?.data?.slice(0, 3) || [])
-      // } catch {
-      //   setTop3([])
-      // }
+      setSectorData(sRes.data || [])
+      setHotConcepts(hRes.data?.data || [])
+      setConceptTrend(cRes.data || [])
 
       const notes = nRes.data?.items || []
       setNoteStats({
@@ -46,10 +96,56 @@ export default function Overview() {
         watched: notes.filter((n: any) => n.note_type === 'watched').length,
         excluded: notes.filter((n: any) => n.note_type === 'excluded').length,
       })
+
+      // 击球区：3L全符合的 top 标的
+      try {
+        const szRes = await predictionApi.strategyPool({ l1: true, l2: true, l3: true, top_n: 5 })
+        const szData = szRes.data?.data || []
+        setStrikeZone(szData.map((r: any) => ({
+          ts_code: r.ts_code,
+          name: r.name,
+          prob_short: r.prob_short,
+          prob_mid: r.prob_mid,
+          prob_long: r.prob_long,
+          market_stage: r.market_stage,
+          trigger_reason: r.l1_momentum && r.l2_quality && r.l3_timing ? '三周期共振 + 3L全符合' : '多因子共振',
+          left_side_signal: r.left_side_signals?.[0] || '',
+        })))
+      } catch {
+        setStrikeZone([])
+      }
+
+      // 观察池异动：基于 watched 笔记生成简化提示
+      try {
+        const watched = notes.filter((n: any) => n.note_type === 'watched')
+        setWatchlistAlerts(watched.slice(0, 5).map((n: any) => ({
+          ts_code: n.ts_code,
+          name: n.name || n.ts_code,
+          alert_type: 'left_side_window',
+          message: `在观察池中: ${n.note || '无备注'}`,
+          severity: 'info',
+        })))
+      } catch {
+        setWatchlistAlerts([])
+      }
+
+      // 系统预警：基于 pipeline 状态生成
+      try {
+        const alerts: SystemAlert[] = []
+        if (pRes.data?.last_run_status === 'failed') {
+          alerts.push({ id: 'pipeline', level: 'warning', message: 'Pipeline 最近一次运行失败', time: pRes.data?.last_run_time || '' })
+        }
+        if (tRes.data?.total_pnl_pct !== undefined && tRes.data.total_pnl_pct < -5) {
+          alerts.push({ id: 'pnl', level: 'error', message: `组合浮亏 ${tRes.data.total_pnl_pct.toFixed(1)}%`, time: '最新' })
+        }
+        setSystemAlerts(alerts)
+      } catch {
+        setSystemAlerts([])
+      }
     } catch {
       // ignore
     } finally {
-      setLoading(false)
+      setLoadingSecondary(false)
     }
   }
 
@@ -65,7 +161,159 @@ export default function Overview() {
   const amountMa5 = marketData?.amount_ma5
   const amountMa20 = marketData?.amount_ma20
   const volumeRatio5d = marketData?.volume_ratio_5d
-  // const volumeRatio20d = marketData?.volume_ratio_20d
+
+  // Helper: prob color
+  const probColor = (p: number) => p >= 0.7 ? '#3fb950' : p >= 0.5 ? '#d29922' : '#8b949e'
+  const stageColor = (stage: string) => {
+    if (stage.includes('拉升')) return '#3fb950'
+    if (stage.includes('筑底')) return '#58a6ff'
+    if (stage.includes('顶部')) return '#d29922'
+    return '#f85149'
+  }
+  const alertSeverityColor = (s: string) => {
+    if (s === 'danger') return '#f85149'
+    if (s === 'warning') return '#d29922'
+    return '#58a6ff'
+  }
+  const systemAlertColor = (level: string) => {
+    if (level === 'error') return '#f85149'
+    if (level === 'warning') return '#d29922'
+    return '#58a6ff'
+  }
+
+  // ── 涨跌分布 ECharts 配置（useMemo 缓存，避免每次渲染重新计算） ──
+  const distributionOption = useMemo(() => {
+    const data = breadthData
+    if (!data) return {}
+    const dist = data.distribution || {}
+    const total = data.total || 1
+    const flatCount = dist['0'] || 0
+
+    const chartData = [
+      { range: '≥7%', value: dist['≥7%'] || 0, color: '#c21e1e' },
+      { range: '5%~7%', value: dist['5%~7%'] || 0, color: '#e63e3e' },
+      { range: '3%~5%', value: dist['3%~5%'] || 0, color: '#f85149' },
+      { range: '1%~3%', value: dist['1%~3%'] || 0, color: '#ff7b72' },
+      { range: '0~1%', value: dist['0~1%'] || 0, color: '#ffa198' },
+      { range: '0', value: 0, color: '#8b949e' },
+      { range: '-1%~0', value: -(dist['-1%~0'] || 0), color: '#7ee787' },
+      { range: '-3%~-1%', value: -(dist['-3%~-1%'] || 0), color: '#56d364' },
+      { range: '-5%~-3%', value: -(dist['-5%~-3%'] || 0), color: '#3fb950' },
+      { range: '-7%~-5%', value: -(dist['-7%~-5%'] || 0), color: '#2da042' },
+      { range: '≤-7%', value: -(dist['≤-7%'] || 0), color: '#1a7f37' },
+    ]
+
+    const flatIndex = 5
+
+    return {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any[]) => {
+          const p = params[0]
+          if (p.name === '0') {
+            const pct = ((flatCount / total) * 100).toFixed(1)
+            return `<div style="font-weight:bold;margin-bottom:4px">平盘</div><div>共 ${flatCount} 只 (${pct}%)</div>`
+          }
+          const val = Math.abs(p.value)
+          const pct = ((val / total) * 100).toFixed(1)
+          const color = p.data.color
+          const label = p.name
+          const type = p.value >= 0 ? '上涨' : '下跌'
+          return `<div style="font-weight:bold;margin-bottom:4px">${label}</div><div style="display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color}"></span><span>${type} ${val} 只 (${pct}%)</span></div>`
+        },
+        backgroundColor: '#161b22',
+        borderColor: '#30363d',
+        textStyle: { color: '#c9d1d9' }
+      },
+      grid: { left: '4%', right: '14%', top: '5%', bottom: '2%', containLabel: true },
+      xAxis: {
+        type: 'value',
+        axisLabel: { formatter: (v: number) => Math.abs(v), color: '#8b949e', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#21262d', type: 'dashed' } },
+        axisLine: { lineStyle: { color: '#30363d' } },
+        axisTick: { show: false }
+      },
+      yAxis: {
+        type: 'category',
+        data: chartData.map((d: any) => d.range),
+        axisLabel: {
+          color: (v: string) => v === '0' ? '#c9d1d9' : '#8b949e',
+          fontSize: 11,
+          fontWeight: (v: string) => v === '0' ? 'bold' : 'normal'
+        },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false }
+      },
+      series: [{
+        type: 'bar',
+        data: chartData.map((d: any) => ({
+          value: d.value,
+          itemStyle: {
+            color: d.color,
+            borderRadius: d.value >= 0 ? [0, 3, 3, 0] : [3, 0, 0, 3]
+          }
+        })),
+        barWidth: '50%',
+        label: {
+          show: true,
+          position: (p: any) => p.value >= 0 ? 'right' : 'left',
+          formatter: (p: any) => {
+            if (p.name === '0') return ''
+            const val = Math.abs(p.value)
+            const pct = ((val / total) * 100).toFixed(1)
+            return `${val} (${pct}%)`
+          },
+          color: '#e6edf3',
+          fontSize: 12,
+          fontWeight: 'bold',
+          distance: 12
+        },
+        markLine: {
+          symbol: 'none',
+          data: [{ xAxis: 0, lineStyle: { color: '#c9d1d9', type: 'solid', width: 1.5 } }],
+          label: { show: false },
+          animation: false
+        },
+        markPoint: {
+          symbol: 'roundRect',
+          symbolSize: [70, 20],
+          data: [
+            {
+              coord: [0, flatIndex],
+              value: flatCount,
+              itemStyle: { color: '#6e7681', borderRadius: 4 },
+              label: { show: true, formatter: '{c}只', color: '#fff', fontSize: 10 }
+            }
+          ],
+          animation: false,
+          silent: true
+        },
+        animationDuration: 800,
+        animationEasing: 'cubicOut'
+      }]
+    }
+  }, [breadthData])
+
+  const distributionInsight = useMemo(() => {
+    const data = breadthData
+    if (!data) return ''
+    const dist = data.distribution || {}
+    const upStrong = (dist['≥7%'] || 0) + (dist['5%~7%'] || 0) + (dist['3%~5%'] || 0)
+    const downStrong = (dist['≤-7%'] || 0) + (dist['-7%~-5%'] || 0) + (dist['-5%~-3%'] || 0)
+    const upWeak = (dist['0~1%'] || 0) + (dist['1%~3%'] || 0)
+    const downWeak = (dist['-1%~0'] || 0) + (dist['-3%~-1%'] || 0)
+
+    if (upStrong > downStrong * 2 && upStrong > 100) return '🔥 强势上涨，多头主导，关注领涨板块持续性'
+    if (downStrong > upStrong * 2 && downStrong > 100) return '❄️ 恐慌下跌，空头主导，控制仓位规避风险'
+    if (upWeak > downWeak * 1.5 && upStrong < 50) return '⬆️ 温和上涨，市场情绪偏暖，个股机会居多'
+    if (downWeak > upWeak * 1.5 && downStrong < 50) return '⬇️ 温和下跌，市场偏弱，等待企稳信号'
+    if (data.up_ratio > 55 && data.up_ratio < 65) return '⚖️ 涨跌均衡，结构性行情，精选个股为主'
+    if (data.up_ratio >= 65) return '🚀 普涨格局，赚钱效应较好，积极参与'
+    if (data.up_ratio <= 35) return '⚠️ 普跌格局，亏钱效应明显，谨慎观望'
+    return '📊 市场分化，关注主线板块与资金流向'
+  }, [breadthData])
 
   const steps = [
     {
@@ -121,9 +369,6 @@ export default function Overview() {
   ]
 
   const indexEntries = marketData?.indices ? Object.entries(marketData.indices) : []
-  const dist = breadthData?.distribution
-  const distTotal = breadthData?.total || 1
-  const distEntries = dist ? Object.entries(dist) : []
 
   return (
     <div>
@@ -162,6 +407,150 @@ export default function Overview() {
             </Card>
           ))}
         </div>
+
+        {/* ─── 新增：今日击球区 + 观察池异动 ─── */}
+        <Row gutter={[16, 16]} style={{ marginBottom: '1.5rem' }}>
+          {/* 今日击球区 */}
+          <Col xs={24} lg={16}>
+            <Card
+              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
+              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
+              title={
+                <span>
+                  🎯 今日击球区
+                  <Tag color="success" style={{ marginLeft: 8, fontSize: 11 }}>
+                    {strikeZone.length} 只符合条件
+                  </Tag>
+                </span>
+              }
+            >
+              {strikeZone.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {strikeZone.map((item) => (
+                    <div
+                      key={item.ts_code}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        padding: '10px 12px',
+                        background: '#0d1117',
+                        borderRadius: 6,
+                        border: '1px solid #30363d',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => navigate(`/research?code=${item.ts_code}`)}
+                    >
+                      <div style={{ minWidth: 100 }}>
+                        <div style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 14 }}>{item.name}</div>
+                        <div style={{ color: '#8b949e', fontSize: 11 }}>{item.ts_code}</div>
+                      </div>
+                      {/* 三周期概率灯 */}
+                      <div style={{ display: 'flex', gap: 6, minWidth: 140 }}>
+                        <Tooltip title="短期概率">
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_short), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                              短
+                            </div>
+                            <div style={{ fontSize: 10, color: probColor(item.prob_short), marginTop: 2 }}>{(item.prob_short * 100).toFixed(0)}%</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="中期概率">
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_mid), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                              中
+                            </div>
+                            <div style={{ fontSize: 10, color: probColor(item.prob_mid), marginTop: 2 }}>{(item.prob_mid * 100).toFixed(0)}%</div>
+                          </div>
+                        </Tooltip>
+                        <Tooltip title="长期概率">
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_long), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
+                              长
+                            </div>
+                            <div style={{ fontSize: 10, color: probColor(item.prob_long), marginTop: 2 }}>{(item.prob_long * 100).toFixed(0)}%</div>
+                          </div>
+                        </Tooltip>
+                      </div>
+                      {/* 阶段 + 理由 */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <Tag style={{ margin: 0, fontSize: 11, background: stageColor(item.market_stage) + '20', color: stageColor(item.market_stage), borderColor: stageColor(item.market_stage) + '40' }}>
+                            {item.market_stage}
+                          </Tag>
+                          {item.left_side_signal && (
+                            <Tag style={{ margin: 0, fontSize: 11, background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.3)' }}>
+                              {item.left_side_signal}
+                            </Tag>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#8b949e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {item.trigger_reason}
+                        </div>
+                      </div>
+                      <div style={{ color: '#8b949e', fontSize: 18 }}>›</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#8b949e', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+                  暂无击球区标的，请耐心等待高置信度信号
+                </div>
+              )}
+            </Card>
+          </Col>
+
+          {/* 观察池异动 */}
+          <Col xs={24} lg={8}>
+            <Card
+              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
+              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
+              title={
+                <span>
+                  👁️ 观察池异动
+                  <Tag color="processing" style={{ marginLeft: 8, fontSize: 11 }}>
+                    {watchlistAlerts.length} 条更新
+                  </Tag>
+                </span>
+              }
+            >
+              {watchlistAlerts.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {watchlistAlerts.map((alert, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        padding: '8px 10px',
+                        background: '#0d1117',
+                        borderRadius: 4,
+                        borderLeft: `3px solid ${alertSeverityColor(alert.severity)}`,
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => navigate(`/research?code=${alert.ts_code}`)}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <span style={{ color: '#c9d1d9', fontWeight: 500, fontSize: 13 }}>{alert.name}</span>
+                          <span style={{ fontSize: 10, color: alertSeverityColor(alert.severity), background: alertSeverityColor(alert.severity) + '15', padding: '1px 6px', borderRadius: 4 }}>
+                            {alert.severity === 'danger' ? '紧急' : alert.severity === 'warning' ? '关注' : '提示'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#8b949e', lineHeight: 1.4 }}>{alert.message}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#8b949e', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+                  观察池暂无异动
+                </div>
+              )}
+            </Card>
+          </Col>
+        </Row>
 
         {/* ─── 下方：市场速览 ─── */}
         <h3 style={{ color: '#c9d1d9', marginBottom: '0.75rem', fontSize: '1.05rem' }}>📈 市场速览</h3>
@@ -308,6 +697,18 @@ export default function Overview() {
                 </div>
               </div>
 
+              {/* 大涨/大跌 (≥±5%) */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <div style={{ flex: 1, textAlign: 'center', padding: '8px 4px', background: 'rgba(248,81,73,0.05)', borderRadius: 4, border: '1px solid rgba(248,81,73,0.15)' }}>
+                  <div style={{ color: '#f85149', fontSize: 16, fontWeight: 'bold' }}>{breadthData?.rise_ge5 ?? 0}</div>
+                  <div style={{ color: '#8b949e', fontSize: 10, marginTop: 2 }}>大涨 ≥+5%</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center', padding: '8px 4px', background: 'rgba(63,185,80,0.05)', borderRadius: 4, border: '1px solid rgba(63,185,80,0.15)' }}>
+                  <div style={{ color: '#3fb950', fontSize: 16, fontWeight: 'bold' }}>{breadthData?.drop_ge5 ?? 0}</div>
+                  <div style={{ color: '#8b949e', fontSize: 10, marginTop: 2 }}>大跌 ≥-5%</div>
+                </div>
+              </div>
+
               {/* 封板率 / 炸板率 */}
               {breadthData?.seal_rate != null && (
                 <div style={{ marginBottom: 10, padding: '8px 10px', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
@@ -372,6 +773,68 @@ export default function Overview() {
             </Card>
           </Col>
 
+          {/* 近期主线 */}
+          <Col span={24}>
+            <Card
+              style={{ background: '#161b22', borderColor: '#30363d' }}
+              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
+              title="🔥 近期主线（同花顺概念）"
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+                {/* 持续强势概念（3日） */}
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{ fontSize: 12, color: '#f85149', fontWeight: 'bold', marginBottom: 8 }}>
+                    ⬆️ 持续强势概念（近3日）
+                    <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10, marginLeft: 6 }}>涨停数 × 持续天数</span>
+                  </div>
+                  {conceptTrend.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {conceptTrend.slice(0, 5).map((c: any, i: number) => (
+                        <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                          <span style={{ color: '#6e7681', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
+                          <span style={{ color: '#c9d1d9', flex: 1 }}>{c.name}</span>
+                          <span style={{ color: '#f85149', fontSize: 10, minWidth: 65, textAlign: 'right' }}>
+                            {c.days >= 2 ? '🔥 ' : ''}{c.up_nums_total} 涨停
+                          </span>
+                          <span style={{ color: '#8b949e', fontSize: 10, minWidth: 50, textAlign: 'right' }}>
+                            {c.days}天持续
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: '#8b949e', fontSize: 12 }}>暂无数据</div>
+                  )}
+                </div>
+                {/* 当日热点概念 */}
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{ fontSize: 12, color: '#d29922', fontWeight: 'bold', marginBottom: 8 }}>
+                    ⚡ 当日热点概念
+                    <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10, marginLeft: 6 }}>按涨停数排序</span>
+                  </div>
+                  {hotConcepts.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {hotConcepts.slice(0, 5).map((c: any, i: number) => (
+                        <div key={c.name || c.code} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                          <span style={{ color: '#6e7681', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
+                          <span style={{ color: '#c9d1d9', flex: 1 }}>{c.name}</span>
+                          <span style={{ color: '#f85149', fontSize: 10, minWidth: 45, textAlign: 'right' }}>
+                            {c.up_nums ?? '-'} 涨停
+                          </span>
+                          <span style={{ color: '#8b949e', fontSize: 10, minWidth: 45, textAlign: 'right' }}>
+                            {c.pct_chg > 0 ? '+' : ''}{c.pct_chg}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: '#8b949e', fontSize: 12 }}>暂无数据</div>
+                  )}
+                </div>
+              </div>
+            </Card>
+          </Col>
+
           {/* 涨跌分布 */}
           <Col span={24}>
             <Card
@@ -379,40 +842,99 @@ export default function Overview() {
               headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
               title="📉 涨跌分布"
             >
-              {distEntries.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {distEntries.map(([range, count]: [string, any]) => {
-                    const cnt = Number(count) || 0
-                    const pct = (cnt / distTotal) * 100
-                    const isUp = range.includes('≥') || (range.includes('~') && !range.startsWith('-') && range !== '0')
-                    const isDown = range.startsWith('-') || range.startsWith('≤-')
-                    const barColor = isUp ? '#f85149' : isDown ? '#3fb950' : '#8b949e'
-                    return (
-                      <div key={range} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                        <span style={{ color: '#8b949e', minWidth: 56, textAlign: 'right' }}>{range}</span>
-                        <div style={{ flex: 1, height: 16, background: '#0d1117', borderRadius: 2, overflow: 'hidden', position: 'relative' }}>
-                          <div
-                            style={{
-                              width: `${Math.min(pct * 3, 100)}%`,
-                              height: '100%',
-                              background: barColor,
-                              borderRadius: 2,
-                              opacity: 0.7,
-                              transition: 'width 0.5s ease',
-                            }}
-                          />
-                        </div>
-                        <span style={{ color: '#c9d1d9', minWidth: 32, textAlign: 'right' }}>{cnt}</span>
+              {breadthData?.distribution ? (
+                <>
+                  {/* 关键指标 */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 80, textAlign: 'center', padding: '8px 0', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 11, color: '#8b949e' }}>上涨</div>
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#f85149' }}>
+                        {breadthData.up_count || 0}
+                        <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 2, color: '#8b949e' }}>
+                          ({(breadthData.up_ratio || 0).toFixed(1)}%)
+                        </span>
                       </div>
-                    )
-                  })}
-                </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 80, textAlign: 'center', padding: '8px 0', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 11, color: '#8b949e' }}>下跌</div>
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#3fb950' }}>
+                        {breadthData.down_count || 0}
+                        <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 2, color: '#8b949e' }}>
+                          ({breadthData.total ? ((breadthData.down_count / breadthData.total) * 100).toFixed(1) : '0.0'}%)
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 80, textAlign: 'center', padding: '8px 0', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 11, color: '#8b949e' }}>平盘</div>
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#8b949e' }}>
+                        {breadthData.flat_count || 0}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 80, textAlign: 'center', padding: '8px 0', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 11, color: '#8b949e' }}>涨停 / 封板</div>
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#f85149' }}>
+                        {breadthData.up_limit || 0}
+                        <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 2, color: '#8b949e' }}>
+                          / {(breadthData.seal_rate || 0).toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 80, textAlign: 'center', padding: '8px 0', background: '#0d1117', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 11, color: '#8b949e' }}>跌停 / 炸板</div>
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#3fb950' }}>
+                        {breadthData.down_limit || 0}
+                        <span style={{ fontSize: 10, fontWeight: 'normal', marginLeft: 2, color: '#8b949e' }}>
+                          / {(breadthData.broken_rate || 0).toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 分布解读 */}
+                  <div style={{ marginBottom: 10, fontSize: 12, color: '#c9d1d9', padding: '6px 10px', background: '#0d1117', borderRadius: 4, borderLeft: `3px solid ${breadthData.up_ratio >= 50 ? '#f85149' : '#3fb950'}` }}>
+                    {distributionInsight}
+                  </div>
+
+                  {/* ECharts 双向分布图 */}
+                  <ReactECharts option={distributionOption} style={{ height: 320 }} notMerge={true} lazyUpdate={true} />
+                </>
               ) : (
-                <div style={{ color: '#8b949e', fontSize: 12, textAlign: 'center' }}>暂无数据</div>
+                <div style={{ color: '#8b949e', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>暂无数据</div>
               )}
             </Card>
           </Col>
         </Row>
+
+        {/* ─── 底部：最近预警条 ─── */}
+        {systemAlerts.length > 0 && (
+          <div
+            style={{
+              marginTop: '1.5rem',
+              padding: '10px 16px',
+              background: '#161b22',
+              borderRadius: 6,
+              border: '1px solid #30363d',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              overflow: 'hidden',
+            }}
+          >
+            <Badge dot color="#f85149" />
+            <span style={{ color: '#8b949e', fontSize: 12, whiteSpace: 'nowrap' }}>最近预警：</span>
+            <div style={{ display: 'flex', gap: 16, overflow: 'auto' }}>
+              {systemAlerts.map((alert) => (
+                <div key={alert.id} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 10, color: systemAlertColor(alert.level), background: systemAlertColor(alert.level) + '15', padding: '1px 6px', borderRadius: 4 }}>
+                    {alert.level === 'error' ? '错误' : alert.level === 'warning' ? '警告' : '提示'}
+                  </span>
+                  <span style={{ fontSize: 12, color: '#c9d1d9' }}>{alert.message}</span>
+                  <span style={{ fontSize: 11, color: '#6e7681' }}>{alert.time}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Spin>
     </div>
   )

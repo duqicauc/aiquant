@@ -56,7 +56,7 @@ def main():
 
     log.info("\n阶段2完成。待执行:")
     log.info("  - 负样本筛选: python scripts/screen_negative_samples_v2.py")
-    log.info("  - 特征工程: 确认 enrich_features_v6.py 或 add_advanced_factors 的调用方式")
+    log.info("  - 特征工程: 确认 add_advanced_factors 的调用方式")
 
 if __name__ == "__main__":
     main()

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.api.routers import auth, admin, backtest, macro, market, prediction, scheduler, stock, system, watchlist
+from src.api.routers import auth, admin, backtest, macro, market, prediction, scheduler, stock, system, trading, watchlist
 
 
 @asynccontextmanager
@@ -38,7 +38,7 @@ app = FastAPI(
 # CORS for Dash frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8050", "http://127.0.0.1:8050", "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:8050", "http://127.0.0.1:8050", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,6 +55,7 @@ app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["Watchlist"])
 app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Scheduler"])
+app.include_router(trading.router, prefix="/api/trading", tags=["Trading"])
 
 
 @app.get("/api/health")

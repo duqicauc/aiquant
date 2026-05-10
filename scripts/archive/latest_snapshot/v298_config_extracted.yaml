@@ -1,0 +1,113 @@
+# v2.9.8 单 XGBoost 模型训练脚本配置提取
+# 来源: scripts/train_v298_model.py (386行)
+# 提取日期: 2026-05-09
+# 用途: 作为配置驱动重构的对比参考（单模型路线）
+
+meta:
+  version: "v2.9.8"
+  description: "v2.9.8 单 XGBoost - v2.7.0原始特征 + v295样本 + 34天多行增强 + 概率校准"
+  source_script: "train_v298_model.py"
+
+# 数据配置
+data:
+  sample_dir: "data/training/v298"
+  sample_types: ["positive", "negative", "hard_negative"]
+  # 时间序列划分
+  split:
+    method: "time_series_by_sample"
+    train_ratio: 0.65
+    cal_ratio: 0.15
+    # test_ratio 隐含为 0.20
+
+# 特征处理
+feature_processing:
+  exclude_columns:
+    - "ts_code"
+    - "name"
+    - "t1_date"
+    - "t2_date"
+    - "sample_id"
+    - "label"
+    - "trade_date"
+    - "weekly_return_1"
+    - "weekly_return_2"
+    - "weekly_return_3"
+    - "total_return_34d"
+    - "weekly_volume_1"
+    - "weekly_volume_2"
+    - "weekly_volume_3"
+    - "days_to_t1"
+  exclude_unused_binary:
+    - "breakout_high_10d"
+    - "breakout_high_20d"
+    - "breakout_ma10"
+    - "breakout_ma55"
+    - "high_volume_breakout"
+    - "volume_price_match"
+  dtype_filter: ["float64", "int64", "float32", "int32"]
+  inf_nan_handling:
+    replace_inf: true
+    fill_na: 0
+
+# 风险特征 (用于监控和文档)
+risk_features:
+  - "max_drawdown_10d"
+  - "max_drawdown_20d"
+  - "max_drawdown_55d"
+  - "atr_14"
+  - "atr_ratio_14"
+  - "atr_expansion"
+  - "days_from_high_20d"
+  - "days_from_high_55d"
+  - "recovery_ratio_20d"
+
+# 模型超参数
+model:
+  type: "xgboost"
+  objective: "binary:logistic"
+  eval_metric: ["auc", "aucpr"]
+  max_depth: 6
+  learning_rate: 0.1
+  subsample: 0.9
+  colsample_bytree: 0.8
+  min_child_weight: 5
+  gamma: 0.1
+  reg_alpha: 0.1
+  reg_lambda: 0.5
+  scale_pos_weight: 1.5
+  random_state: 42
+  tree_method: "hist"
+  num_boost_round: 500
+  early_stopping_rounds: 50
+  verbose_eval: 50
+
+# 概率校准
+calibration:
+  method: "isotonic_regression"
+  isotonic:
+    out_of_bounds: "clip"
+
+# 评估阈值
+evaluation:
+  thresholds: [0.9, 0.8, 0.7, 0.6, 0.5]
+  metrics: ["precision", "recall", "f1"]
+
+# 输出
+output:
+  model_family: "breakout_launch_scorer"
+  model_version: "v2.9.8"
+  save:
+    - "model.json"
+    - "feature_names.json"
+    - "calibrator.pkl"
+    - "metadata.json"
+  calibration_method: "isotonic_regression"
+
+# 关键注释
+notes:
+  - "v298 是单 XGBoost 路线，与 v297 集成路线形成对比"
+  - "使用 v2.7.0 优化参数 (lr=0.1, colsample=0.8, subsample=0.9)"
+  - "14个新增强特征"
+  - "移除低效二值特征"
+  - "Isotonic Regression 概率校准"
+  - "时间序列划分 (65% train / 15% cal / 20% test)"

@@ -113,18 +113,27 @@ def main():
     report["steps"]["trade_day_check"] = {"is_trade_day": True}
 
     # ========== Step 1: 数据补全 ==========
-    # 获取数据库最新日期
+    # 获取数据库最新日期（优先 ArcticDB）
+    db_latest = None
     try:
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT MAX(trade_date) FROM daily_data")
-        db_latest = cursor.fetchone()[0]
-        conn.close()
-        log.info(f"数据库最新日期: {db_latest}")
+        from src.data.arctic_provider import ArcticDataProvider
+        arctic = ArcticDataProvider()
+        db_latest = arctic.get_latest_trade_date()
+        log.info(f"ArcticDB 最新日期: {db_latest}")
     except Exception as e:
-        log.warning(f"无法获取数据库最新日期: {e}")
-        db_latest = None
+        log.warning(f"无法从 ArcticDB 获取最新日期: {e}")
+        # 回退 SQLite
+        try:
+            import sqlite3
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(trade_date) FROM daily_data")
+            db_latest = cursor.fetchone()[0]
+            conn.close()
+            log.info(f"SQLite 最新日期: {db_latest}")
+        except Exception as e2:
+            log.warning(f"无法从 SQLite 获取最新日期: {e2}")
+            db_latest = None
 
     if db_latest and db_latest >= today:
         log.info(f"数据库已最新 ({db_latest} >= {today})，跳过数据补全")
@@ -189,6 +198,15 @@ def main():
     else:
         log.warning(f"预测文件未生成: {pred_file}")
 
+    # ========== Step 2.5: 3L Enrich（短期/长期评分 + 共振评分） ==========
+    enrich_cmd = [
+        sys.executable,
+        "scripts/enrich_predictions.py",
+        "--date", next_date,
+    ]
+    enrich_result = run_command(enrich_cmd, f"3L Enrich ({next_date})")
+    report["steps"]["enrich"] = enrich_result
+
     # ========== Step 3: 归档到 v294_daily ==========
     daily_dir = PROJECT_ROOT / "data" / "prediction" / "v294_daily"
     daily_dir.mkdir(parents=True, exist_ok=True)
@@ -198,7 +216,30 @@ def main():
         if src.exists():
             import shutil
             shutil.copy2(str(src), str(dst))
+    # 同时归档 enriched 文件
+    for suffix in ["all_enriched.csv", "top100_enriched.csv", "top50_enriched.csv"]:
+        src = PREDICTION_DIR / f"predictions_{next_date}_{suffix}"
+        dst = daily_dir / f"predictions_{next_date}_{suffix}"
+        if src.exists():
+            import shutil
+            shutil.copy2(str(src), str(dst))
     log.info(f"预测结果已归档到: {daily_dir}")
+
+    # ========== Step 3.5: 3L 模型监控 ==========
+    try:
+        from src.monitoring.three_light_monitor import ThreeLightMonitor
+        monitor = ThreeLightMonitor()
+        monitor_result = monitor.run_daily_check(next_date)
+        report["steps"]["three_light_monitor"] = {
+            "success": True,
+            "status": monitor_result.get("status"),
+            "alerts": monitor_result.get("alerts", []),
+        }
+        if monitor_result.get("status") in ("warning", "critical"):
+            log.warning(f"3L 监控告警: {monitor_result.get('alerts')}")
+    except Exception as e:
+        report["steps"]["three_light_monitor"] = {"success": False, "error": str(e)}
+        log.warning(f"3L 监控步骤异常: {e}")
 
     # ========== Step 4: 模型漂移检测 ==========
     monitor = ModelMonitor(

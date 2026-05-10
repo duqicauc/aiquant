@@ -1,0 +1,314 @@
+# v2.9.7 集成模型训练脚本配置提取
+# 来源: scripts/train_v297_ensemble.py (886行)
+# 提取日期: 2026-05-09
+# 用途: 作为配置驱动重构的基线参考
+
+meta:
+  version: "v2.9.7-ensemble"
+  description: "v2.9.7 集成模型 - 动态类别权重 + 适度分歧 + 放宽Gates"
+  source_script: "train_v297_ensemble.py"
+
+# 全局随机种子与类别权重
+random:
+  seed: 42
+  scale_pos_weight: 1.5
+
+# 硬负样本比例上限
+data:
+  sample_dir: "data/training/v297"
+  hard_neg_ratio_max: 0.18
+  negative_downsample:
+    enabled: true
+    target_ratio: 2.22
+    stratify_by: "total_mv"
+    n_strata: 5
+  market_neutralization:
+    enabled: true
+    columns: ["total_mv", "circ_mv"]
+    n_bins: 5
+  feature_cleaning:
+    dead_features:
+      - "breakout_confirmed_10d"
+      - "breakout_confirmed_20d"
+      - "breakout_resonance"
+      - "market_regime"
+      - "breakout_with_volume"
+      - "resonance_volume_confirm"
+      - "days_from_high_20d"
+      - "days_from_high_55d"
+      - "ma10_cross_count"
+    redundant_features:
+      - "obv_calc"
+      - "ma5"
+      - "bbi"
+      - "ktn_mid"
+      - "boll_mid"
+      - "resistance_55d"
+      - "support_55d"
+      - "resistance_10d"
+      - "resistance_20d"
+      - "price_vs_hist_mean"
+      - "return_8d"
+      - "return_34d"
+      - "return_55d"
+      - "breakout_strength_10d"
+      - "breakout_strength_20d"
+      - "max_drawdown_55d"
+      - "vol_ma20_ratio"
+      - "breakout_strength_max"
+      - "price_vs_hist_high"
+
+# 特征分组 (子模型差异化)
+feature_groups:
+  momentum:
+    - "mfi"
+    - "ema_250"
+    - "wr1"
+    - "ma_mass"
+    - "mass"
+    - "ema_5"
+    - "trend_slope_34d"
+    - "momentum_5d"
+    - "mtmma"
+    - "bias_long"
+    - "ma_8d"
+    - "ma60"
+    - "dmi_pdi"
+    - "madpo"
+    - "dmi_mdi"
+    - "dmi_adx"
+    - "dmi_adxr"
+    - "wr"
+    - "mtm"
+    - "roc"
+    - "maroc"
+    - "trix"
+    - "trma"
+    - "expma_12"
+    - "expma_50"
+    - "xsii_td1"
+    - "xsii_td2"
+    - "xsii_td3"
+    - "xsii_td4"
+    - "momentum_10d"
+    - "momentum_20d"
+    - "ema_10"
+    - "ema_20"
+    - "ema_60"
+    - "ema_30"
+    - "ema_90"
+    - "trend_slope_8d"
+    - "trend_slope_55d"
+    - "ma30"
+    - "ma90"
+    - "ma250"
+    - "bias_short"
+    - "bias_mid"
+    - "ma_34d"
+    - "ma_55d"
+    - "ma10"
+    - "ma5"
+    - "dfma_dif"
+    - "dfma_difma"
+    - "macd_dif"
+    - "macd_dea"
+    - "macd"
+    - "rsi_6"
+    - "rsi_12"
+    - "rsi_24"
+    - "kdj_k"
+    - "kdj_d"
+    - "kdj_j"
+  price_volume:
+    - "relative_volatility"
+    - "vr"
+    - "breakout_high_55d"
+    - "support_20d"
+    - "turnover_zscore"
+    - "dist_to_resistance_10d"
+    - "maemv"
+    - "dist_to_support_20d"
+    - "volume_rsv_20d"
+    - "resistance_strength_55d"
+    - "volume_price_corr_10d"
+    - "volume_trend_slope_20d"
+    - "volume_price_divergence_strength"
+    - "volume_price_divergence"
+    - "price_down_vol_up_count_10d"
+    - "ktn_upper"
+    - "ktn_down"
+    - "taq_up"
+    - "taq_down"
+    - "boll_upper"
+    - "boll_lower"
+    - "dist_to_resistance_20d"
+    - "dist_to_support_10d"
+    - "support_strength_10d"
+    - "resistance_strength_10d"
+    - "support_strength_20d"
+    - "resistance_strength_20d"
+    - "breakout_strength_10d"
+    - "breakout_strength_20d"
+    - "breakout_strength_55d"
+    - "breakout_volume_strength"
+    - "high_volume_breakout"
+    - "volume_price_match"
+    - "vol_10d_avg"
+    - "vol_20d_avg"
+    - "vol_ratio_10d"
+    - "vol_ratio_20d"
+    - "turnover_f_change"
+    - "turnover_zscore_20d"
+    - "volume_consistency"
+    - "relative_volume"
+    - "volume_price_sync"
+    - "volume_spike_count_10d"
+    - "obv_trend"
+    - "obv_calc"
+    - "amount"
+    - "turnover_rate"
+    - "turnover_rate_f"
+    - "volume_ratio"
+    - "vol"
+    - "volatility_8d"
+    - "volatility_34d"
+    - "volatility_55d"
+    - "atr"
+    - "atr_14"
+    - "atr_expansion"
+  market:
+    - "market_momentum_10d"
+    - "market_pct_chg"
+    - "momentum_market_interaction"
+    - "market_trend"
+    - "excess_return_cumsum"
+    - "excess_return"
+    - "excess_return_consistency"
+    - "market_volatility_34d"
+    - "market_position_20d"
+    - "market_return_34d"
+    - "market_momentum_20d"
+    - "market_momentum_5d"
+  position:
+    - "price_vs_ma_55d"
+    - "price_vs_ma_34d"
+    - "price_position_8d"
+    - "price_position_avg"
+    - "price_position_55d"
+    - "price_vs_ma_8d"
+    - "price_position_34d"
+
+# 子模型特征分配
+submodel_features:
+  xgboost: "all"
+  lightgbm: ["momentum", "market", "position"]
+  catboost: ["price_volume", "market", "position"]
+
+# 交叉验证
+cross_validation:
+  type: "time_series_by_sample"
+  n_splits: 3
+  train_days: 300
+  val_days: 30
+  test_days: 30
+
+# 子模型超参数
+submodels:
+  xgboost:
+    objective: "binary:logistic"
+    eval_metric: ["auc", "aucpr"]
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.9
+    colsample_bytree: 0.8
+    min_child_weight: 5
+    gamma: 0.1
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    scale_pos_weight: 1.5
+    tree_method: "hist"
+    max_bin: 255
+    grow_policy: "lossguide"
+    max_delta_step: 1
+    num_boost_round: 500
+    early_stopping_rounds: 50
+  lightgbm:
+    objective: "binary"
+    metric: ["auc", "binary_logloss"]
+    boosting_type: "gbdt"
+    max_depth: 6
+    num_leaves: 31
+    learning_rate: 0.1
+    feature_fraction: 0.3
+    bagging_fraction: 0.7
+    bagging_freq: 1
+    min_child_samples: 20
+    min_child_weight: 0.001
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    verbose: -1
+    scale_pos_weight: 1.5
+    num_boost_round: 500
+    early_stopping_rounds: 50
+  catboost:
+    iterations: 500
+    learning_rate: 0.1
+    depth: 6
+    l2_leaf_reg: 3.0
+    border_count: 254
+    early_stopping_rounds: 50
+    loss_function: "Logloss"
+    eval_metric: "AUC"
+    scale_pos_weight: 1.5
+    rsm: 0.8
+
+# 校准 (v297 已禁用)
+calibration:
+  method: "none"
+
+# 集成策略
+aggregation:
+  method: "auc_weighted"
+  # diversity_aware 参数 (v297 未使用，但保留)
+  diversity_aware:
+    alpha: 2.0
+    beta: 0.5
+
+# 训练后验证 Gates
+validation:
+  gates:
+    submodel_correlation:
+      enabled: true
+      min_correlation: 0.40
+      block_on_fail: false
+    probability_distribution:
+      enabled: true
+      mean_min: 0.05
+      mean_max: 0.50
+      block_on_fail: false
+    top50_disagreement:
+      enabled: true
+      max_disagreement: 0.65
+      block_on_fail: false
+    brier_score:
+      enabled: true
+      max_brier: 0.18
+      block_on_fail: true
+
+# 输出
+output:
+  model_family: "breakout_launch_scorer"
+  model_version: "v2.9.5-ensemble"
+  save_submodel_features: true
+  update_current_json: true
+  current_json_stage: "development"
+
+# 关键注释
+notes:
+  - "v297 回归高AUC + 适度分歧路线"
+  - "温度缩放已禁用 (对齐v2.7.0)"
+  - "简单AUC加权投票 (去掉diversity惩罚)"
+  - "分歧度 gate 改为警告而非强制终止"
+  - "动态类别权重计算但使用固定值 1.5"
+  - "时间衰减权重已禁用 (对齐v2.7.0)"
+  - "P0优化: 全部子模型使用全部特征，通过colsample强制diversity"

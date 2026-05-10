@@ -1,0 +1,112 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ─── Python Backend ───
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-core.txt
+          pip install uvicorn
+
+      - name: Prepare data directories
+        run: |
+          mkdir -p data/cache data/database data/prediction/v294_stk_factor
+          # Create minimal business DB (users table etc.)
+          python -c "
+          import sqlite3, os
+          db = sqlite3.connect('data/database/aiquant.db')
+          db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT)')
+          db.execute('INSERT OR IGNORE INTO users VALUES (1, \"admin\", \"pbkdf2:sha256...\")')
+          db.commit()
+          db.close()
+          print('Business DB ready')
+          "
+
+      # ─── Node Frontend ───
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Install Playwright browsers
+        run: |
+          cd frontend
+          npx playwright install chromium
+
+      # ─── Start Backend ───
+      - name: Start FastAPI
+        run: |
+          cd ${{ github.workspace }}
+          nohup python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --log-level warning > /tmp/api.log 2>&1 &
+          echo $! > /tmp/api.pid
+          sleep 8
+          curl -fsS http://127.0.0.1:8000/api/health || (cat /tmp/api.log && exit 1)
+
+      # ─── Start Frontend ───
+      - name: Start Vite dev server
+        run: |
+          cd ${{ github.workspace }}/frontend
+          nohup npm run dev -- --host 127.0.0.1 --port 5173 > /tmp/vite.log 2>&1 &
+          echo $! > /tmp/vite.pid
+          sleep 5
+          curl -fsS http://127.0.0.1:5173/ || (cat /tmp/vite.log && exit 1)
+
+      # ─── Run E2E Tests ───
+      - name: Run Playwright smoke tests
+        run: |
+          cd ${{ github.workspace }}/frontend
+          npx playwright test e2e/smoke-test.spec.ts --workers=1 --reporter=line
+
+      # ─── Artifacts ───
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: frontend/e2e/screenshots/
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+
+      # ─── Cleanup & Logs ───
+      - name: Print logs on failure
+        if: failure()
+        run: |
+          echo "=== API Log ==="
+          cat /tmp/api.log || true
+          echo "=== Vite Log ==="
+          cat /tmp/vite.log || true

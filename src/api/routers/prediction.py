@@ -14,6 +14,10 @@ sys.path.insert(0, str(project_root))
 
 router = APIRouter()
 
+# 简单内存缓存：pipeline-status
+_pipeline_status_cache = {"data": None, "timestamp": 0}
+_PIPELINE_STATUS_CACHE_TTL = 30  # 秒
+
 
 def _compute_distribution(df: Any, prob_col: str = "prob") -> dict:
     """计算概率分布（7分箱）"""
@@ -48,10 +52,13 @@ def _compute_distribution(df: Any, prob_col: str = "prob") -> dict:
 
 
 def _find_all_csv(pred_dirs: list, date_str: str) -> Optional[Path]:
-    """根据日期查找对应的 _all.csv"""
+    """根据日期查找对应的 _all.csv（优先 enriched）"""
     for pred_dir in pred_dirs:
         if not pred_dir.exists():
             continue
+        f_enriched = pred_dir / f"predictions_{date_str}_all_enriched.csv"
+        if f_enriched.exists():
+            return f_enriched
         f = pred_dir / f"predictions_{date_str}_all.csv"
         if f.exists():
             return f
@@ -79,6 +86,8 @@ async def get_latest_predictions(
 
         # Try multiple directories for prediction data (v294优先)
         pred_dirs = [
+            project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
+            project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
             project_root / "data" / "prediction" / "v294_daily",
             project_root / "data" / "prediction" / "v291_integrated",
@@ -87,13 +96,18 @@ async def get_latest_predictions(
         ]
 
         # Gather candidate files across all directories, then pick the latest by date in filename
+        # 优先 enriched 文件，其次普通文件
         candidates = []
         for pred_dir in pred_dirs:
             if not pred_dir.exists():
                 continue
-            # v291_integrated format: predictions_YYYYMMDD_integrated_top50.csv
+            # 优先 enriched 格式
+            candidates.extend(pred_dir.glob("predictions_*_top50_enriched.csv"))
+            candidates.extend(pred_dir.glob("predictions_*_top100_enriched.csv"))
+            candidates.extend(pred_dir.glob("*integrated_top50_enriched.csv"))
+            # v291_integrated format
             candidates.extend(pred_dir.glob("*integrated_top50.csv"))
-            # v291_stk_factor format: predictions_YYYYMMDD_top50.csv, predictions_YYYYMMDD_top100.csv
+            # v291_stk_factor format
             candidates.extend(pred_dir.glob("predictions_*_top50.csv"))
             candidates.extend(pred_dir.glob("predictions_*_top100.csv"))
             # legacy formats
@@ -285,6 +299,8 @@ async def get_prediction_distribution(
         import sqlite3
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
+            project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
             project_root / "data" / "prediction" / "v294_daily",
             project_root / "data" / "prediction" / "v291_integrated",
@@ -405,6 +421,11 @@ async def get_prediction_distribution(
 @router.get("/pipeline-status")
 async def get_pipeline_status():
     """Get daily pipeline execution status: data freshness, prediction status, and monitor."""
+    import time
+    now = time.time()
+    if _pipeline_status_cache["data"] and (now - _pipeline_status_cache["timestamp"]) < _PIPELINE_STATUS_CACHE_TTL:
+        return _pipeline_status_cache["data"]
+
     try:
         import json
         import sqlite3
@@ -436,7 +457,7 @@ async def get_pipeline_status():
         is_data_fresh = db_latest_date == today_str if db_latest_date else False
 
         # ---------- Latest prediction ----------
-        pred_dir = project_root / "data" / "prediction" / "v294_stk_factor"
+        pred_dir = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
         latest_prediction_date = None
         latest_prediction_count = 0
         prediction_file_exists = False
@@ -522,7 +543,7 @@ async def get_pipeline_status():
         except Exception:
             pass
 
-        return {
+        result = {
             "today": today_iso,
             "db_latest_date": db_latest_date,
             "is_data_fresh": is_data_fresh,
@@ -535,6 +556,9 @@ async def get_pipeline_status():
             "scheduler_tasks": scheduler_tasks,
             "pipeline_alert": pipeline_alert,
         }
+        _pipeline_status_cache["data"] = result
+        _pipeline_status_cache["timestamp"] = time.time()
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Pipeline status fetch failed: {str(e)}")
 
@@ -569,3 +593,137 @@ async def run_pipeline():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"触发 Pipeline 失败: {str(e)}")
+
+
+@router.get("/strategy-pool")
+async def get_strategy_pool(
+    l1: bool = Query(True, description="L1 动量主线过滤器"),
+    l2: bool = Query(True, description="L2 最强逻辑过滤器"),
+    l3: bool = Query(True, description="L3 量价择时过滤器"),
+    top_n: int = Query(100, ge=1, le=500),
+):
+    """
+    战略股票池 — 基于 enrich 后的预测结果，按 3L 过滤器筛选。
+
+    3L 定义:
+    - L1 (动量主线): prob_short >= 0.5 且 market_stage 为拉升初期/拉升中期
+    - L2 (最强逻辑): prob_long >= 0.5 且 market_stage 不为下跌/顶部
+    - L3 (量价择时): left_side_signal 非空 或 market_stage 为筑底/拉升初期
+    """
+    try:
+        import pandas as pd
+
+        pred_dirs = [
+            project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
+            project_root / "data" / "prediction" / "v295_stk_factor",
+            project_root / "data" / "prediction" / "v294_stk_factor",
+            project_root / "data" / "prediction" / "v294_daily",
+            project_root / "data" / "prediction" / "v291_integrated",
+            project_root / "data" / "prediction" / "v291_stk_factor",
+            project_root / "data" / "prediction",
+        ]
+
+        # 查找最新的 enriched all 文件
+        df = None
+        for pred_dir in pred_dirs:
+            if not pred_dir.exists():
+                continue
+            enriched_files = sorted(pred_dir.glob("predictions_*_all_enriched.csv"), reverse=True)
+            for f in enriched_files:
+                try:
+                    df = pd.read_csv(f)
+                    break
+                except Exception:
+                    continue
+            if df is not None and not df.empty:
+                break
+
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="暂无战略股票池数据，请先运行预测 enrich")
+
+        # 确保 enrich 字段存在
+        for col in ["prob_short", "prob_long", "market_stage", "left_side_signal"]:
+            if col not in df.columns:
+                df[col] = None if col == "left_side_signal" else ("未知" if col == "market_stage" else 0.0)
+
+        # 计算 3L 标志
+        def _calc_3l(row):
+            stage = str(row.get("market_stage", ""))
+            prob_short = pd.to_numeric(row.get("prob_short", 0), errors="coerce") or 0
+            prob_long = pd.to_numeric(row.get("prob_long", 0), errors="coerce") or 0
+            left_sig = str(row.get("left_side_signal", "")).strip()
+
+            l1_ok = prob_short >= 0.5 and stage in ("拉升初期", "拉升中期")
+            l2_ok = prob_long >= 0.5 and stage not in ("下跌", "顶部")
+            l3_ok = bool(left_sig) and left_sig != "nan" and left_sig != "None" or stage in ("筑底", "拉升初期")
+            return pd.Series([l1_ok, l2_ok, l3_ok])
+
+        df[["l1_momentum", "l2_quality", "l3_timing"]] = df.apply(_calc_3l, axis=1)
+
+        # 应用过滤器
+        if l1:
+            df = df[df["l1_momentum"]]
+        if l2:
+            df = df[df["l2_quality"]]
+        if l3:
+            df = df[df["l3_timing"]]
+
+        # 排序: 综合概率降序
+        prob_col = None
+        for c in ["prob", "probability", "adjusted_score"]:
+            if c in df.columns:
+                prob_col = c
+                break
+        if prob_col:
+            df = df.sort_values(prob_col, ascending=False)
+
+        df = df.head(top_n)
+
+        # 补充 name / industry
+        try:
+            import tushare as ts
+            pro = ts.pro_api()
+            stock_basic = pro.stock_basic(exchange='', list_status='L', fields='ts_code,name,industry')
+            if stock_basic is not None and not stock_basic.empty:
+                for col in ['name', 'industry']:
+                    if col in df.columns:
+                        df = df.drop(columns=[col])
+                df = df.merge(stock_basic, on='ts_code', how='left')
+        except Exception:
+            pass
+
+        # 构造返回字段
+        records = []
+        for _, row in df.iterrows():
+            left_sig = str(row.get("left_side_signal", "")).strip()
+            left_signals = [s.strip() for s in left_sig.split("、") if s.strip()] if left_sig and left_sig not in ("nan", "None", "") else []
+
+            prob_val = row.get("prob", row.get("probability", row.get("adjusted_score", 0)))
+            prob_mid = float(prob_val) if pd.notna(prob_val) else 0.0
+            if prob_mid > 1:
+                prob_mid = prob_mid / 100
+
+            records.append({
+                "ts_code": row.get("ts_code", ""),
+                "name": row.get("name", ""),
+                "industry": row.get("industry", ""),
+                "prob_short": float(row.get("prob_short", 0)) if pd.notna(row.get("prob_short")) else 0.0,
+                "prob_mid": prob_mid,
+                "prob_long": float(row.get("prob_long", 0)) if pd.notna(row.get("prob_long")) else 0.0,
+                "market_stage": str(row.get("market_stage", "未知")),
+                "l1_momentum": bool(row.get("l1_momentum", False)),
+                "l2_quality": bool(row.get("l2_quality", False)),
+                "l3_timing": bool(row.get("l3_timing", False)),
+                "left_side_signals": left_signals,
+                "update_date": str(row.get("update_date", "")) if "update_date" in row else "",
+            })
+
+        return {
+            "count": len(records),
+            "filters": {"l1": l1, "l2": l2, "l3": l3},
+            "data": records,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"战略股票池查询失败: {str(e)}")

@@ -8,7 +8,7 @@ import {
   BarChartOutlined,
   WalletOutlined,
   SettingOutlined,
-
+  StarOutlined,
   ClockCircleOutlined,
   LogoutOutlined,
 } from '@ant-design/icons'
@@ -23,6 +23,7 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '总览驾驶舱' },
   { key: '/market', icon: <GlobalOutlined />, label: '市场分析' },
   { key: '/research', icon: <SearchOutlined />, label: '股票研究' },
+  { key: '/strategy-pool', icon: <StarOutlined />, label: '战略股票池' },
   { key: '/prediction', icon: <RobotOutlined />, label: '选股中心' },
   { key: '/backtest', icon: <BarChartOutlined />, label: '回测中心' },
   { key: '/trading', icon: <WalletOutlined />, label: '模拟交易' },

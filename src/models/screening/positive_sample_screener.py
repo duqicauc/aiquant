@@ -44,9 +44,9 @@ class PositiveSampleScreener:
             "consecutive_weeks": 3,
             "total_return_threshold": 50,
             "max_return_threshold": 70,
-            "min_listing_days": 180,
+            "min_listing_days": 300,
             # v2.4.0新增：防止追龙头的约束
-            "pre_t1_return_max": 25,  # T1前34天涨幅上限(%)
+            "pre_t1_return_max": 40,  # T1前34天涨幅上限(%)
             "pre_t1_volatility_max": 4,  # T1前日均波动率上限(%)
             "enable_anti_chasing": True,  # 是否启用反追龙头约束
         }
@@ -276,7 +276,7 @@ class PositiveSampleScreener:
         合并重叠的时间段样本
 
         规则：
-        1. 如果两个时间段重叠，合并为一个样本，选择最早的T1日期
+        1. 同一个股票的两个样本，如果时间区间重合，以最早的为准（保留最早样本的全部特征）
         2. 如果两个时间段不重叠，保留两个样本
 
         Args:
@@ -288,54 +288,32 @@ class PositiveSampleScreener:
         if len(samples) <= 1:
             return samples
 
-        # 按T1日期排序
+        # 按T1日期排序（从早到晚）
         samples = sorted(samples, key=lambda x: x["t1_date"])
 
-        merged_samples = []
+        kept_samples = []
 
         for sample in samples:
             # 将日期字符串转换为datetime以便比较
             week1_start = pd.to_datetime(sample["week1_start"], format="%Y%m%d")
             week3_end = pd.to_datetime(sample["week3_end"], format="%Y%m%d")
-            t1_date = pd.to_datetime(sample["t1_date"], format="%Y%m%d")
 
-            # 查找是否有重叠的已合并样本
-            merged = False
-            for merged_sample in merged_samples:
-                merged_week1_start = pd.to_datetime(merged_sample["week1_start"], format="%Y%m%d")
-                merged_week3_end = pd.to_datetime(merged_sample["week3_end"], format="%Y%m%d")
-                merged_t1_date = pd.to_datetime(merged_sample["t1_date"], format="%Y%m%d")
+            # 检查是否与已保留的某个样本时间区间重合
+            overlaps = False
+            for kept_sample in kept_samples:
+                kept_week1_start = pd.to_datetime(kept_sample["week1_start"], format="%Y%m%d")
+                kept_week3_end = pd.to_datetime(kept_sample["week3_end"], format="%Y%m%d")
 
-                # 判断时间段是否重叠
-                # 重叠条件：新时间段的开始 <= 已合并时间段的结束 且 新时间段的结束 >= 已合并时间段的开始
-                if week1_start <= merged_week3_end and week3_end >= merged_week1_start:
-                    # 时间段重叠，合并：选择最早的T1日期作为起点
-                    if t1_date < merged_t1_date:
-                        # 新样本的T1更早，更新为新的起点
-                        merged_sample["t1_date"] = sample["t1_date"]
-                        merged_sample["week1_start"] = sample["week1_start"]
-                        merged_sample["week1_open"] = sample["week1_open"]
-                    # 选择最晚的结束时间，覆盖整个上涨周期
-                    if week3_end > merged_week3_end:
-                        merged_sample["week3_end"] = sample["week3_end"]
-                        merged_sample["week3_close"] = sample["week3_close"]
-                    # 选择更高的最高价和涨幅
-                    if sample["three_week_high"] > merged_sample["three_week_high"]:
-                        merged_sample["three_week_high"] = sample["three_week_high"]
-                    if sample["max_return"] > merged_sample["max_return"]:
-                        merged_sample["max_return"] = sample["max_return"]
-                    # 重新计算总涨幅（基于最早的起点和最新的终点）
-                    # 注意：这里需要重新获取数据计算，暂时保留较大的值
-                    if sample["total_return"] > merged_sample["total_return"]:
-                        merged_sample["total_return"] = sample["total_return"]
-                    merged = True
+                # 重叠条件：新时间段的开始 <= 已保留时间段的结束 且 新时间段的结束 >= 已保留时间段的开始
+                if week1_start <= kept_week3_end and week3_end >= kept_week1_start:
+                    overlaps = True
                     break
 
-            # 如果没有重叠，添加为新样本
-            if not merged:
-                merged_samples.append(sample.copy())
+            # 如果不重合，则保留为新样本（如果重合，丢弃，因为已保留的样本更早）
+            if not overlaps:
+                kept_samples.append(sample.copy())
 
-        return merged_samples
+        return kept_samples
 
     def _check_three_week_pattern(
         self, three_weeks: pd.DataFrame, ts_code: str, name: str, list_date: pd.Timestamp
@@ -373,10 +351,10 @@ class PositiveSampleScreener:
         if max_return <= 70:
             return None
 
-        # 条件4: T1时已上市超过半年
+        # 条件4: T1时已上市超过300天
         t1_date = week1["trade_date"]
         days_since_list = (t1_date - list_date).days
-        if days_since_list < 180:
+        if days_since_list < 300:
             return None
 
         # HALT过滤：检查T1日期是否停牌（使用suspend_d接口）
@@ -556,7 +534,7 @@ class PositiveSampleScreener:
         """
         提取单个样本的特征（优先使用Tushare Pro的技术因子API）
 
-        v6修复：确保OHLCV数据完整，不使用估算值
+        确保OHLCV数据完整，不使用估算值
 
         Args:
             ts_code: 股票代码
@@ -590,7 +568,7 @@ class PositiveSampleScreener:
         if df.empty:
             return pd.DataFrame()
 
-        # 2. 确保OHLCV数据完整（v6修复：不使用估算值）
+        # 2. 确保OHLCV数据完整（不使用估算值）
         required_ohlcv = ["open", "high", "low", "close", "vol"]
         missing_ohlcv = [c for c in required_ohlcv if c not in df.columns]
 
@@ -634,7 +612,7 @@ class PositiveSampleScreener:
         if len(df) < lookback_days:
             log.warning(f"{ts_code}: 数据不足{lookback_days}天，实际{len(df)}天")
 
-        # 6. 选择需要的字段（v6修复：包含完整OHLCV）
+        # 6. 选择需要的字段（包含完整OHLCV）
         base_fields = [
             "trade_date",
             "ts_code",

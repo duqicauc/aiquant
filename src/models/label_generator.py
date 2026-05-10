@@ -49,7 +49,14 @@ class LabelGenerator:
         self.lookforward_days = lookforward_days
         self.threshold = threshold
         self.db_path = db_path or PROJECT_ROOT / "data" / "cache" / "quant_data.db"
-        self._data_provider = data_provider  # ArcticDataProvider 实例（可选）
+        # 默认自动创建 ArcticDataProvider，实现行情数据完全走 ArcticDB
+        if data_provider is None:
+            try:
+                from src.data.arctic_provider import ArcticDataProvider
+                data_provider = ArcticDataProvider()
+            except Exception:
+                pass
+        self._data_provider = data_provider
 
     # ==================== 数据加载 ====================
 

@@ -1,8 +1,54 @@
 {
-  "production": "v2.7.0",
-  "staging": "v2.7.0",
-  "testing": "v2.9.1-ensemble",
-  "development": "v2.9.2-catboost-conservative",
-  "updated_at": "2026-04-26T08:25:00+08:00",
-  "notes": "主力策略: v2.9.1-ensemble + integrated (sector-filter)。2024Q4 +18.10%, 2025Q1 +1.44%, 2026Q1 -0.14%。v2.9.2-conservative 作为研究分支: realistic +12.11% 是v292系列最佳，但与integrated不兼容(+1.90%)。优势来源分析见 docs/analysis/v291_vs_v292_deep_dive.md"
+  "production": "v3.0.0-xgb-flat",
+  "staging": "v3.0.0-xgb-flat",
+  "testing": "v3.0.0-xgb-flat",
+  "development": "v3.0.0-xgb-flat",
+  "updated_at": "2026-05-10T08:55:00",
+  "latest_train": {
+    "version": "v3.0.0-xgb-flat",
+    "model": "xgb_flat",
+    "val_auc": 0.8455071084498877,
+    "best_iteration": 71,
+    "feature_count": 5882,
+    "n_days": 34,
+    "train_samples": 8708,
+    "val_samples": 2177,
+    "total_samples": 10885,
+    "seed": 42,
+    "scale_pos_weight": 1.5
+  },
+  "v2_latest_train": {
+    "version": "v2.9.5-ensemble",
+    "ensemble_auc": 0.8536194351954619,
+    "ensemble_f1": 0.5824175824175825,
+    "ensemble_brier": 0.12463649675751008,
+    "mean_disagreement": 0.1358313347363878,
+    "feature_count": 770,
+    "train_samples": 4555,
+    "test_samples": 412,
+    "scale_pos_weight": 1.5
+  },
+  "backtest_v3_2026q1": {
+    "period": "20260105~20260508",
+    "trading_days": 80,
+    "realistic_top10": {
+      "total_return_pct": 2.25,
+      "max_drawdown_pct": -13.17,
+      "buy_count": 384,
+      "sell_count": 370,
+      "total_fees": 79714,
+      "win_rate_pct": 44.9,
+      "profit_loss_ratio": 1.07
+    },
+    "realistic_top20": {
+      "total_return_pct": 3.26,
+      "max_drawdown_pct": -15.54,
+      "buy_count": 721,
+      "sell_count": 692,
+      "total_fees": 106443,
+      "win_rate_pct": 43.8,
+      "profit_loss_ratio": 1.08
+    }
+  },
+  "notes": "主力策略已升级至 v3.0.0-xgb-flat (2026-05-10)。\n模型: XGB-Flat, 5882维(173特征×34天), 验证AUC=0.8455, 71轮迭代。\n回测(20260105~20260508, RealisticBacktester含交易成本): top10收益+2.25%/回撤13.17%/胜率44.9%; top20收益+3.26%/回撤15.54%/胜率43.8%。\n前任主力: v2.9.6-ensemble (AUC=0.8536, Brier=0.1246)。"
 }

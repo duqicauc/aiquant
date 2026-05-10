@@ -17,11 +17,21 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.api.dependencies import get_data_manager
-from src.api.schemas.common import IndexData, MarketBreadth, SectorPerformance
+from src.api.schemas.common import ConceptTrend, IndexData, MarketBreadth, SectorPerformance
 from src.data.market_heat_provider import market_heat_provider
 from src.utils.logger import log
 
 router = APIRouter()
+
+# 简单内存缓存
+_concept_trend_cache = {}
+_CONCEPT_TREND_CACHE_TTL = 60  # 秒
+_market_overview_cache = {"data": None, "timestamp": 0}
+_MARKET_OVERVIEW_CACHE_TTL = 60  # 秒
+_market_breadth_cache = {"data": None, "timestamp": 0}
+_MARKET_BREADTH_CACHE_TTL = 60  # 秒
+_factor_radar_cache = {"data": None, "timestamp": 0}
+_FACTOR_RADAR_CACHE_TTL = 300  # 秒（IC计算较重，缓存5分钟）
 
 # ─── Helper: safe date string ───
 
@@ -67,6 +77,10 @@ def _clean_float(val):
 @router.get("/overview")
 async def get_market_overview():
     """Get comprehensive market overview."""
+    import time
+    now = time.time()
+    if _market_overview_cache["data"] and (now - _market_overview_cache["timestamp"]) < _MARKET_OVERVIEW_CACHE_TTL:
+        return _market_overview_cache["data"]
     try:
         import tushare as ts
         import numpy as np
@@ -238,7 +252,7 @@ async def get_market_overview():
         except Exception:
             pass
 
-        return {
+        result = {
             "indices": index_data,
             "market_regime": regime,
             "regime_score": regime_score,
@@ -251,6 +265,9 @@ async def get_market_overview():
             "north_money": north_money,
             "update_time": datetime.now().isoformat(),
         }
+        _market_overview_cache["data"] = result
+        _market_overview_cache["timestamp"] = time.time()
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Market overview failed: {str(e)}")
 
@@ -260,6 +277,10 @@ async def get_market_overview():
 @router.get("/breadth", response_model=MarketBreadth)
 async def get_market_breadth():
     """Get market breadth data (up/down/flat counts) from Tushare pro.daily."""
+    import time
+    now = time.time()
+    if _market_breadth_cache["data"] and (now - _market_breadth_cache["timestamp"]) < _MARKET_BREADTH_CACHE_TTL:
+        return _market_breadth_cache["data"]
     try:
         import tushare as ts
 
@@ -321,7 +342,7 @@ async def get_market_breadth():
         seal_rate = round(up_limit / limit_total * 100, 2) if limit_total > 0 else 0
         broken_rate = round(broken_limit / limit_total * 100, 2) if limit_total > 0 else 0
 
-        return MarketBreadth(
+        result = MarketBreadth(
             up_count=up_count,
             down_count=down_count,
             flat_count=flat_count,
@@ -335,7 +356,12 @@ async def get_market_breadth():
             broken_limit=broken_limit,
             seal_rate=seal_rate,
             broken_rate=broken_rate,
+            rise_ge5=int((pct >= 5).sum()) if df_daily is not None and not df_daily.empty else 0,
+            drop_ge5=int((pct <= -5).sum()) if df_daily is not None and not df_daily.empty else 0,
         )
+        _market_breadth_cache["data"] = result
+        _market_breadth_cache["timestamp"] = time.time()
+        return result
     except Exception as e:
         # Fallback
         return MarketBreadth(
@@ -348,54 +374,85 @@ async def get_market_breadth():
 
 # ─── Sectors (Shenwan Industry) ───
 
+def _mock_sectors() -> List[SectorPerformance]:
+    return [
+        SectorPerformance(name="人工智能", pct_chg=3.5, pct_chg_3d=8.2),
+        SectorPerformance(name="半导体", pct_chg=2.8, pct_chg_3d=6.5),
+        SectorPerformance(name="新能源", pct_chg=1.9, pct_chg_3d=4.2),
+        SectorPerformance(name="医药生物", pct_chg=0.5, pct_chg_3d=1.2),
+        SectorPerformance(name="银行", pct_chg=-0.3, pct_chg_3d=-0.8),
+        SectorPerformance(name="房地产", pct_chg=-1.2, pct_chg_3d=-3.1),
+        SectorPerformance(name="煤炭", pct_chg=-1.8, pct_chg_3d=-4.5),
+        SectorPerformance(name="钢铁", pct_chg=-2.1, pct_chg_3d=-5.2),
+    ]
+
+
 @router.get("/sectors", response_model=List[SectorPerformance])
 async def get_sector_performance():
-    """Get sector performance ranking from Tushare sw_daily (Shenwan industries)."""
+    """Get sector performance ranking from Tushare sw_daily (Shenwan industries).
+    Returns top 5 up / top 5 down sorted by 3-day cumulative return.
+    """
     try:
         import tushare as ts
-
         pro = ts.pro_api()
         today = _trade_date_str()
 
-        df = pro.sw_daily(trade_date=today)
+        # Fetch last 15 days to cover at least 3 trade days
+        end_date = today
+        start_date = (datetime.strptime(today, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
+        df = pro.sw_daily(start_date=start_date, end_date=end_date)
+
         if df is None or df.empty:
+            # Fallback to single day
             yesterday = _prev_trade_date(pro, today)
             df = pro.sw_daily(trade_date=yesterday)
 
-        if df is not None and not df.empty:
-            # Rename pct_change -> pct_chg for frontend compatibility
-            df = df.rename(columns={"pct_change": "pct_chg"})
-            df["pct_chg"] = pd.to_numeric(df["pct_chg"], errors="coerce")
-            df = df.dropna(subset=["pct_chg"])
-            df = df.sort_values("pct_chg", ascending=False)
+        if df is None or df.empty:
+            return _mock_sectors()
 
-            # Top 5 up + Top 5 down
-            top_up = df.head(5).copy()
-            top_down = df.tail(5).copy()
-            combined = pd.concat([top_up, top_down]).reset_index(drop=True)
+        df = df.rename(columns={"pct_change": "pct_chg"})
+        df["pct_chg"] = pd.to_numeric(df["pct_chg"], errors="coerce")
+        df = df.dropna(subset=["pct_chg"])
+        df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
 
-            sectors = []
-            for _, row in combined.iterrows():
-                sectors.append({
-                    "name": str(row.get("name", row.get("ts_code", ""))),
-                    "pct_chg": round(float(row["pct_chg"]), 2),
-                })
-            return [SectorPerformance(**s) for s in sectors]
+        # Get latest 3 trade days
+        unique_dates = df["trade_date"].drop_duplicates().sort_values()
+        if len(unique_dates) < 1:
+            return _mock_sectors()
 
-        # Ultimate fallback: mock
-        sectors = [
-            {"name": "人工智能", "pct_chg": 3.5},
-            {"name": "半导体", "pct_chg": 2.8},
-            {"name": "新能源", "pct_chg": 1.9},
-            {"name": "医药生物", "pct_chg": 0.5},
-            {"name": "银行", "pct_chg": -0.3},
-            {"name": "房地产", "pct_chg": -1.2},
-            {"name": "煤炭", "pct_chg": -1.8},
-            {"name": "钢铁", "pct_chg": -2.1},
-        ]
+        latest_3_dates = unique_dates.tail(min(3, len(unique_dates)))
+        df_3d = df[df["trade_date"].isin(latest_3_dates)].copy()
+
+        # Calculate 3-day cumulative return per sector
+        sector_3d = df_3d.groupby("name").agg({"pct_chg": "sum"}).reset_index()
+        sector_3d.columns = ["name", "pct_chg_3d"]
+
+        # Get latest single-day data
+        latest_date = unique_dates.iloc[-1]
+        df_latest = df[df["trade_date"] == latest_date].copy()
+
+        # Merge 1d + 3d
+        sector_latest = df_latest[["name", "pct_chg"]].merge(
+            sector_3d, on="name", how="left"
+        )
+        sector_latest = sector_latest.sort_values("pct_chg_3d", ascending=False)
+
+        # Top 5 up + Top 5 down by 3-day return
+        top_up = sector_latest.head(5).copy()
+        top_down = sector_latest.tail(5).copy()
+        combined = pd.concat([top_up, top_down]).reset_index(drop=True)
+
+        sectors = []
+        for _, row in combined.iterrows():
+            sectors.append({
+                "name": str(row.get("name", "")),
+                "pct_chg": round(float(row["pct_chg"]), 2),
+                "pct_chg_3d": round(float(row["pct_chg_3d"]), 2) if pd.notna(row["pct_chg_3d"]) else None,
+            })
         return [SectorPerformance(**s) for s in sectors]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sector data failed: {str(e)}")
+        log.warning(f"Sector data failed: {e}")
+        return _mock_sectors()
 
 
 # ─── Index History ───
@@ -613,205 +670,242 @@ async def get_indices_multi(
 
 # ─── Fund Flow (Tushare primary, AkShare fallback) ───
 
+def _parse_sector_fund_flow_df(df) -> List[dict]:
+    """Parse Tushare moneyflow_ind_ths / moneyflow_cnt_ths DataFrame to uniform records."""
+    records = []
+    for _, row in df.iterrows():
+        net = row.get("net_amount")
+        net_buy = row.get("net_buy_amount")
+        net_sell = row.get("net_sell_amount")
+        main_force_pct = 0.0
+        if pd.notna(net_buy) and pd.notna(net_sell) and (float(net_buy) + float(net_sell)) > 0:
+            main_force_pct = round(float(net) / (float(net_buy) + float(net_sell)) * 100, 2)
+        records.append({
+            "name": str(row.get("industry", row.get("name", ""))),
+            "pct_chg": round(float(row.get("pct_change", 0)), 2),
+            "main_force_net": round(float(net), 2) if pd.notna(net) else 0.0,
+            "main_force_pct": main_force_pct,
+            "net_buy_amount": round(float(net_buy), 2) if pd.notna(net_buy) else 0.0,
+            "net_sell_amount": round(float(net_sell), 2) if pd.notna(net_sell) else 0.0,
+            "top_stock": str(row.get("lead_stock", "")),
+        })
+    records.sort(key=lambda x: x["main_force_net"], reverse=True)
+    for i, r in enumerate(records, start=1):
+        r["rank"] = i
+    return records
+
+
 @router.get("/fund-flow")
 async def get_sector_fund_flow():
     """Get sector fund flow ranking from Tushare moneyflow_ind_ths (requires ≥6000 points).
-    Doc: https://tushare.pro/document/2?doc_id=343
-    Units: net_amount / net_buy_amount / net_sell_amount are already in 亿元 (hundred million CNY).
+    Falls back to AkShare if Tushare fails or returns empty.
     """
+    update_time = datetime.now().isoformat()
     try:
         import tushare as ts
         pro = ts.pro_api()
         today = _trade_date_str()
-        df = pro.moneyflow_ind_ths(trade_date=today)
-        if df is None or df.empty:
-            return {"data": [], "count": 0, "source": "tushare", "update_time": datetime.now().isoformat()}
 
-        records = []
-        for _, row in df.iterrows():
-            net = row.get("net_amount")
-            net_buy = row.get("net_buy_amount")
-            net_sell = row.get("net_sell_amount")
-            main_force_pct = 0.0
-            if pd.notna(net_buy) and pd.notna(net_sell) and (float(net_buy) + float(net_sell)) > 0:
-                main_force_pct = round(float(net) / (float(net_buy) + float(net_sell)) * 100, 2)
-            records.append({
-                "name": str(row.get("industry", "")),
-                "pct_chg": round(float(row.get("pct_change", 0)), 2),
-                "main_force_net": round(float(net), 2) if pd.notna(net) else 0.0,
-                "main_force_pct": main_force_pct,
-                "net_buy_amount": round(float(net_buy), 2) if pd.notna(net_buy) else 0.0,
-                "net_sell_amount": round(float(net_sell), 2) if pd.notna(net_sell) else 0.0,
-                "top_stock": str(row.get("lead_stock", "")),
-            })
-        # Sort by net inflow descending and add rank
-        records.sort(key=lambda x: x["main_force_net"], reverse=True)
-        for i, r in enumerate(records, start=1):
-            r["rank"] = i
-        return {"data": records, "count": len(records), "source": "tushare", "update_time": datetime.now().isoformat()}
+        # Try today then previous trade date
+        for trade_date in [today, _prev_trade_date(pro, today)]:
+            try:
+                df = pro.moneyflow_ind_ths(trade_date=trade_date)
+                if df is not None and not df.empty:
+                    records = _parse_sector_fund_flow_df(df)
+                    return {"data": records, "count": len(records), "source": "tushare", "update_time": update_time}
+            except Exception:
+                continue
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Fund flow failed: {str(e)}")
+        log.warning(f"Tushare 行业资金流向失败: {e}")
+
+    # Fallback to AkShare
+    try:
+        ak_records = market_heat_provider.get_sector_fund_flow()
+        if ak_records:
+            records = []
+            for r in ak_records:
+                main_force_net = r.get("main_force_net", 0) or 0
+                records.append({
+                    "rank": r.get("rank", 0),
+                    "name": r.get("name", ""),
+                    "pct_chg": r.get("pct_chg", 0),
+                    "main_force_net": main_force_net,
+                    "main_force_pct": r.get("main_force_pct", 0),
+                    "net_buy_amount": main_force_net if main_force_net > 0 else 0,
+                    "net_sell_amount": -main_force_net if main_force_net < 0 else 0,
+                    "top_stock": r.get("top_stock", ""),
+                })
+            return {"data": records, "count": len(records), "source": "akshare", "update_time": update_time}
+    except Exception as e:
+        log.warning(f"AkShare 行业资金流向降级失败: {e}")
+
+    return {"data": [], "count": 0, "source": "none", "update_time": update_time}
 
 
 @router.get("/fund-flow/market")
 async def get_market_fund_flow():
     """Get overall market fund flow from Tushare moneyflow_mkt_dc.
-    Doc: https://tushare.pro/document/2?doc_id=345
-    Units: all amount fields are in 元 (CNY); convert to 亿元 by /1e8.
+    Falls back to previous trade date if today's data is empty.
     """
+    update_time = datetime.now().isoformat()
     try:
         import tushare as ts
         pro = ts.pro_api()
         today = _trade_date_str()
-        df = pro.moneyflow_mkt_dc(trade_date=today)
-        if df is None or df.empty:
-            return {"data": None, "source": "tushare", "update_time": datetime.now().isoformat()}
 
-        row = df.iloc[0]
-        def _to_yi(val):
-            return round(float(val) / 1e8, 2) if pd.notna(val) else 0.0
+        for trade_date in [today, _prev_trade_date(pro, today)]:
+            try:
+                df = pro.moneyflow_mkt_dc(trade_date=trade_date)
+                if df is not None and not df.empty:
+                    row = df.iloc[0]
+                    def _to_yi(val):
+                        return round(float(val) / 1e8, 2) if pd.notna(val) else 0.0
 
-        data = {
-            "trade_date": str(row.get("trade_date", today)),
-            "close_sh": _clean_float(row.get("close_sh")),
-            "pct_change_sh": round(float(row.get("pct_change_sh", 0)), 2),
-            "close_sz": _clean_float(row.get("close_sz")),
-            "pct_change_sz": round(float(row.get("pct_change_sz", 0)), 2),
-            "net_amount": _to_yi(row.get("net_amount")),
-            "net_amount_rate": round(float(row.get("net_amount_rate", 0)), 2),
-            "buy_elg_amount": _to_yi(row.get("buy_elg_amount")),
-            "buy_elg_amount_rate": round(float(row.get("buy_elg_amount_rate", 0)), 2),
-            "buy_lg_amount": _to_yi(row.get("buy_lg_amount")),
-            "buy_lg_amount_rate": round(float(row.get("buy_lg_amount_rate", 0)), 2),
-            "buy_md_amount": _to_yi(row.get("buy_md_amount")),
-            "buy_md_amount_rate": round(float(row.get("buy_md_amount_rate", 0)), 2),
-            "buy_sm_amount": _to_yi(row.get("buy_sm_amount")),
-            "buy_sm_amount_rate": round(float(row.get("buy_sm_amount_rate", 0)), 2),
-        }
-        return {"data": data, "source": "tushare", "update_time": datetime.now().isoformat()}
+                    data = {
+                        "trade_date": str(row.get("trade_date", trade_date)),
+                        "close_sh": _clean_float(row.get("close_sh")),
+                        "pct_change_sh": round(float(row.get("pct_change_sh", 0)), 2),
+                        "close_sz": _clean_float(row.get("close_sz")),
+                        "pct_change_sz": round(float(row.get("pct_change_sz", 0)), 2),
+                        "net_amount": _to_yi(row.get("net_amount")),
+                        "net_amount_rate": round(float(row.get("net_amount_rate", 0)), 2),
+                        "buy_elg_amount": _to_yi(row.get("buy_elg_amount")),
+                        "buy_elg_amount_rate": round(float(row.get("buy_elg_amount_rate", 0)), 2),
+                        "buy_lg_amount": _to_yi(row.get("buy_lg_amount")),
+                        "buy_lg_amount_rate": round(float(row.get("buy_lg_amount_rate", 0)), 2),
+                        "buy_md_amount": _to_yi(row.get("buy_md_amount")),
+                        "buy_md_amount_rate": round(float(row.get("buy_md_amount_rate", 0)), 2),
+                        "buy_sm_amount": _to_yi(row.get("buy_sm_amount")),
+                        "buy_sm_amount_rate": round(float(row.get("buy_sm_amount_rate", 0)), 2),
+                    }
+                    return {"data": data, "source": "tushare", "update_time": update_time}
+            except Exception:
+                continue
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Market fund flow failed: {str(e)}")
+        log.warning(f"大盘资金流向获取失败: {e}")
+
+    return {"data": None, "source": "none", "update_time": update_time}
 
 
 @router.get("/fund-flow/north")
 async def get_north_fund_flow():
     """Get north-bound (沪深港通) fund flow from Tushare moneyflow_hsgt.
-    Doc: https://tushare.pro/document/2?doc_id=47
-    Units: per project codebase (backtester_realistic.py line 436) and /overview endpoint,
-    moneyflow_hsgt returns amounts in 万元 (10k CNY); convert to 亿元 by /1e4.
+    Falls back to previous trade date if today's data is empty.
+    Units: moneyflow_hsgt returns amounts in 万元 (10k CNY); convert to 亿元 by /1e4.
     """
+    update_time = datetime.now().isoformat()
     try:
         import tushare as ts
         pro = ts.pro_api()
         today = _trade_date_str()
-        df = pro.moneyflow_hsgt(trade_date=today)
-        if df is None or df.empty:
-            return {"data": None, "source": "tushare", "update_time": datetime.now().isoformat()}
 
-        row = df.iloc[0]
-        def _to_yi(val):
-            return round(float(val) / 1e4, 2) if pd.notna(val) else 0.0
+        for trade_date in [today, _prev_trade_date(pro, today)]:
+            try:
+                df = pro.moneyflow_hsgt(trade_date=trade_date)
+                if df is not None and not df.empty:
+                    row = df.iloc[0]
+                    def _to_yi(val):
+                        return round(float(val) / 1e4, 2) if pd.notna(val) else 0.0
 
-        data = {
-            "trade_date": str(row.get("trade_date", today)),
-            "ggt_ss": _to_yi(row.get("ggt_ss")),
-            "ggt_sz": _to_yi(row.get("ggt_sz")),
-            "hgt": _to_yi(row.get("hgt")),
-            "sgt": _to_yi(row.get("sgt")),
-            "north_money": _to_yi(row.get("north_money")),
-            "south_money": _to_yi(row.get("south_money")),
-        }
-        return {"data": data, "source": "tushare", "update_time": datetime.now().isoformat()}
+                    data = {
+                        "trade_date": str(row.get("trade_date", trade_date)),
+                        "ggt_ss": _to_yi(row.get("ggt_ss")),
+                        "ggt_sz": _to_yi(row.get("ggt_sz")),
+                        "hgt": _to_yi(row.get("hgt")),
+                        "sgt": _to_yi(row.get("sgt")),
+                        "north_money": _to_yi(row.get("north_money")),
+                        "south_money": _to_yi(row.get("south_money")),
+                    }
+                    return {"data": data, "source": "tushare", "update_time": update_time}
+            except Exception:
+                continue
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"North fund flow failed: {str(e)}")
+        log.warning(f"北向资金流向获取失败: {e}")
+
+    return {"data": None, "source": "none", "update_time": update_time}
 
 
 @router.get("/fund-flow/concept")
 async def get_concept_fund_flow():
     """Get concept fund flow ranking from Tushare moneyflow_cnt_ths (requires ≥6000 points).
-    Doc: https://tushare.pro/document/2?doc_id=371
-    Units: net_amount / net_buy_amount / net_sell_amount are already in 亿元.
+    Falls back to previous trade date if today's data is empty.
     """
+    update_time = datetime.now().isoformat()
     try:
         import tushare as ts
         pro = ts.pro_api()
         today = _trade_date_str()
-        df = pro.moneyflow_cnt_ths(trade_date=today)
-        if df is None or df.empty:
-            return {"data": [], "count": 0, "source": "tushare", "update_time": datetime.now().isoformat()}
 
-        records = []
-        for _, row in df.iterrows():
-            net = row.get("net_amount")
-            net_buy = row.get("net_buy_amount")
-            net_sell = row.get("net_sell_amount")
-            main_force_pct = 0.0
-            if pd.notna(net_buy) and pd.notna(net_sell) and (float(net_buy) + float(net_sell)) > 0:
-                main_force_pct = round(float(net) / (float(net_buy) + float(net_sell)) * 100, 2)
-            records.append({
-                "name": str(row.get("name", "")),
-                "pct_chg": round(float(row.get("pct_change", 0)), 2),
-                "main_force_net": round(float(net), 2) if pd.notna(net) else 0.0,
-                "main_force_pct": main_force_pct,
-                "net_buy_amount": round(float(net_buy), 2) if pd.notna(net_buy) else 0.0,
-                "net_sell_amount": round(float(net_sell), 2) if pd.notna(net_sell) else 0.0,
-                "top_stock": str(row.get("lead_stock", "")),
-            })
-        records.sort(key=lambda x: x["main_force_net"], reverse=True)
-        for i, r in enumerate(records, start=1):
-            r["rank"] = i
-        return {"data": records, "count": len(records), "source": "tushare", "update_time": datetime.now().isoformat()}
+        for trade_date in [today, _prev_trade_date(pro, today)]:
+            try:
+                df = pro.moneyflow_cnt_ths(trade_date=trade_date)
+                if df is not None and not df.empty:
+                    records = _parse_sector_fund_flow_df(df)
+                    return {"data": records, "count": len(records), "source": "tushare", "update_time": update_time}
+            except Exception:
+                continue
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Concept fund flow failed: {str(e)}")
+        log.warning(f"概念资金流向获取失败: {e}")
+
+    return {"data": [], "count": 0, "source": "none", "update_time": update_time}
 
 
 # ─── ZT Pool (Tushare primary, AkShare fallback) ───
 
 @router.get("/zt-pool")
 async def get_zt_pool(date: Optional[str] = Query(None, description="Trade date YYYYMMDD, defaults to latest")):
-    """Get limit-up (涨停) stock pool. Tushare primary, AkShare fallback."""
+    """Get limit-up (涨停) stock pool. Tushare primary, AkShare fallback.
+    Falls back to previous trade date if today's data is empty.
+    """
     trade_date = date or _trade_date_str()
     data = []
     source = "tushare"
 
-    # Try Tushare first
+    # Try Tushare first (today then yesterday)
     try:
         import tushare as ts
         pro = ts.pro_api()
-        df = pro.limit_list_d(trade_date=trade_date)
-        if df is not None and not df.empty:
-            # Only limit-up (U); exclude limit-down (D)
-            df = df[df["limit"] == "U"].copy()
-            df = df.sort_values("pct_chg", ascending=False).reset_index(drop=True)
+        for td in [trade_date, _prev_trade_date(pro, trade_date)]:
+            try:
+                df = pro.limit_list_d(trade_date=td)
+                if df is not None and not df.empty:
+                    # Only limit-up (U); exclude limit-down (D)
+                    df = df[df["limit"] == "U"].copy()
+                    df = df.sort_values("pct_chg", ascending=False).reset_index(drop=True)
 
-            for idx, row in df.iterrows():
-                # fd_amount (封单金额) in yuan -> 万元
-                board_money = row.get("fd_amount")
-                if pd.notna(board_money):
-                    board_money = round(float(board_money) / 1e4, 2)
-                else:
-                    board_money = None
+                    for idx, row in df.iterrows():
+                        board_money = row.get("fd_amount")
+                        if pd.notna(board_money):
+                            board_money = round(float(board_money) / 1e4, 2)
+                        else:
+                            board_money = None
 
-                # limit_times (连板数) may be float
-                limit_times = row.get("limit_times")
-                consecutive_boards = int(limit_times) if pd.notna(limit_times) else 1
+                        limit_times = row.get("limit_times")
+                        consecutive_boards = int(limit_times) if pd.notna(limit_times) else 1
 
-                data.append({
-                    "rank": idx + 1,
-                    "code": str(row.get("ts_code", "")),
-                    "name": str(row.get("name", "")),
-                    "industry": str(row.get("industry", "")),
-                    "close": round(float(row.get("close", 0)), 2),
-                    "pct_chg": round(float(row.get("pct_chg", 0)), 2),
-                    "turnover": _clean_float(float(row.get("turnover_ratio", 0))),
-                    "board_money": board_money,
-                    "first_time": str(row.get("first_time", "")),
-                    "last_time": str(row.get("last_time", "")),
-                    "open_count": int(row.get("open_times", 0)) if pd.notna(row.get("open_times")) else 0,
-                    "consecutive_boards": consecutive_boards,
-                    "zt_stats": str(row.get("up_stat", "")),
-                })
+                        data.append({
+                            "rank": idx + 1,
+                            "code": str(row.get("ts_code", "")),
+                            "name": str(row.get("name", "")),
+                            "industry": str(row.get("industry", "")),
+                            "close": round(float(row.get("close", 0)), 2),
+                            "pct_chg": round(float(row.get("pct_chg", 0)), 2),
+                            "turnover": _clean_float(float(row.get("turnover_ratio", 0))),
+                            "board_money": board_money,
+                            "first_time": str(row.get("first_time", "")),
+                            "last_time": str(row.get("last_time", "")),
+                            "open_count": int(row.get("open_times", 0)) if pd.notna(row.get("open_times")) else 0,
+                            "consecutive_boards": consecutive_boards,
+                            "zt_stats": str(row.get("up_stat", "")),
+                        })
+                    trade_date = td
+                    break
+            except Exception:
+                continue
     except Exception as e:
+        log.warning(f"Tushare 涨停股池失败: {e}")
+
+    if not data:
         # Fallback to AkShare
         source = "akshare"
         try:
@@ -888,6 +982,119 @@ async def get_limit_premium():
         return {"data": None, "error": str(e), "date": _trade_date_str(), "update_time": datetime.now().isoformat()}
 
 
+def _get_trade_dates(pro, end_date: str, n: int = 3) -> List[str]:
+    """Get last n trade dates ending at end_date."""
+    dates = [end_date]
+    current = end_date
+    for _ in range(n - 1):
+        prev = _prev_trade_date(pro, current)
+        dates.append(prev)
+        current = prev
+    return dates
+
+
+def _fetch_concept_trend(days: int, top_n: int):
+    """内部函数：实际获取 concept-trend 数据"""
+    try:
+        import tushare as ts
+        pro = ts.pro_api()
+        today = _trade_date_str()
+        trade_dates = _get_trade_dates(pro, today, n=days)
+
+        concept_stats: Dict[str, dict] = {}
+        for td in trade_dates:
+            try:
+                df = pro.limit_cpt_list(trade_date=td)
+                if df is not None and not df.empty:
+                    for _, row in df.iterrows():
+                        name = str(row.get("name", ""))
+                        if not name:
+                            continue
+                        if name not in concept_stats:
+                            concept_stats[name] = {
+                                "name": name,
+                                "up_nums_total": 0,
+                                "cons_nums_total": 0,
+                                "pct_chg_sum": 0.0,
+                                "days": 0,
+                            }
+                        concept_stats[name]["up_nums_total"] += int(row.get("up_nums", 0))
+                        concept_stats[name]["cons_nums_total"] += int(row.get("cons_nums", 0))
+                        concept_stats[name]["pct_chg_sum"] += float(row.get("pct_chg", 0))
+                        concept_stats[name]["days"] += 1
+            except Exception:
+                continue
+
+        if concept_stats:
+            records = []
+            for name, stats in concept_stats.items():
+                d = stats["days"]
+                records.append({
+                    "name": name,
+                    "rank": 0,
+                    "days": d,
+                    "up_nums_total": stats["up_nums_total"],
+                    "cons_nums_total": stats["cons_nums_total"],
+                    "pct_chg_avg": round(stats["pct_chg_sum"] / d, 2) if d > 0 else 0.0,
+                    "score": round(stats["up_nums_total"] * d + stats["cons_nums_total"] * 0.5, 2),
+                })
+            records.sort(key=lambda x: x["score"], reverse=True)
+            for i, r in enumerate(records, start=1):
+                r["rank"] = i
+            return records[:top_n]
+    except Exception as e:
+        log.warning(f"Concept trend failed: {e}")
+
+    # Fallback: today's hot concepts only (no persistence)
+    try:
+        import tushare as ts
+        pro = ts.pro_api()
+        today = _trade_date_str()
+        for td in [today, _prev_trade_date(pro, today)]:
+            try:
+                df = pro.limit_cpt_list(trade_date=td)
+                if df is not None and not df.empty:
+                    records = []
+                    for idx, row in df.head(top_n).iterrows():
+                        records.append({
+                            "name": str(row.get("name", "")),
+                            "rank": idx + 1,
+                            "days": 1,
+                            "up_nums_total": int(row.get("up_nums", 0)),
+                            "cons_nums_total": int(row.get("cons_nums", 0)),
+                            "pct_chg_avg": round(float(row.get("pct_chg", 0)), 2),
+                            "score": float(row.get("up_nums", 0)),
+                        })
+                    return records
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return []
+
+
+@router.get("/concept-trend", response_model=List[ConceptTrend])
+async def get_concept_trend(
+    days: int = Query(3, ge=2, le=5, description="Number of days to track"),
+    top_n: int = Query(15, ge=5, le=30),
+):
+    """Get concept trend over last N trade days using limit_cpt_list.
+    Calculates persistence score: total limit-up count × days appeared.
+    Higher score = stronger主线持续性.
+    """
+    import time
+    cache_key = f"{days}:{top_n}"
+    now = time.time()
+    cached = _concept_trend_cache.get(cache_key)
+    if cached and (now - cached["timestamp"]) < _CONCEPT_TREND_CACHE_TTL:
+        return cached["data"]
+
+    result = _fetch_concept_trend(days, top_n)
+    _concept_trend_cache[cache_key] = {"data": result, "timestamp": time.time()}
+    return result
+
+
 # ─── Hot Concepts / Limit CPT List (requires ≥8000 points) ───
 
 @router.get("/hot-concepts")
@@ -895,26 +1102,34 @@ async def get_hot_concepts(
     date: Optional[str] = Query(None, description="Trade date YYYYMMDD, defaults to latest"),
     top_n: int = Query(20, ge=5, le=50),
 ):
-    """Get hottest concept sectors by limit-up count (最强板块统计). Tushare limit_cpt_list."""
+    """Get hottest concept sectors by limit-up count (最强板块统计). Tushare limit_cpt_list.
+    Falls back to previous trade date if today's data is empty.
+    """
     trade_date = date or _trade_date_str()
     data = []
     try:
         import tushare as ts
         pro = ts.pro_api()
-        df = pro.limit_cpt_list(trade_date=trade_date)
-        if df is not None and not df.empty:
-            df = df.head(top_n)
-            for idx, row in df.iterrows():
-                data.append({
-                    "rank": int(row.get("rank", idx + 1)),
-                    "code": str(row.get("ts_code", "")),
-                    "name": str(row.get("name", "")),
-                    "up_nums": int(row.get("up_nums", 0)),
-                    "cons_nums": int(row.get("cons_nums", 0)),
-                    "days": int(row.get("days", 0)),
-                    "up_stat": str(row.get("up_stat", "")),
-                    "pct_chg": round(float(row.get("pct_chg", 0)), 2),
-                })
+        for td in [trade_date, _prev_trade_date(pro, trade_date)]:
+            try:
+                df = pro.limit_cpt_list(trade_date=td)
+                if df is not None and not df.empty:
+                    df = df.head(top_n)
+                    for idx, row in df.iterrows():
+                        data.append({
+                            "rank": int(row.get("rank", idx + 1)),
+                            "code": str(row.get("ts_code", "")),
+                            "name": str(row.get("name", "")),
+                            "up_nums": int(row.get("up_nums", 0)),
+                            "cons_nums": int(row.get("cons_nums", 0)),
+                            "days": int(row.get("days", 0)),
+                            "up_stat": str(row.get("up_stat", "")),
+                            "pct_chg": round(float(row.get("pct_chg", 0)), 2),
+                        })
+                    trade_date = td
+                    break
+            except Exception:
+                continue
     except Exception as e:
         log.warning(f"limit_cpt_list 获取失败: {e}")
 
@@ -928,26 +1143,33 @@ async def get_concept_heat(
     date: Optional[str] = Query(None, description="Trade date YYYYMMDD, defaults to latest"),
     top_n: int = Query(20, ge=5, le=50),
 ):
-    """Get Tonghuashun concept heat ranking. Tushare ths_hot."""
+    """Get Tonghuashun concept heat ranking. Tushare ths_hot.
+    Falls back to previous trade date if today's data is empty.
+    """
     trade_date = date or _trade_date_str()
     data = []
     try:
         import tushare as ts
         pro = ts.pro_api()
-        df = pro.ths_hot(market="概念板块", trade_date=trade_date, is_new="Y")
-        if df is not None and not df.empty:
-            # Deduplicate by ts_code, keep highest hot value
-            df = df.sort_values("hot", ascending=False).drop_duplicates(subset=["ts_code"], keep="first")
-            df = df.head(top_n).reset_index(drop=True)
-            for idx, row in df.iterrows():
-                data.append({
-                    "rank": int(row.get("rank", idx + 1)),
-                    "code": str(row.get("ts_code", "")),
-                    "name": str(row.get("ts_name", "")),
-                    "hot": round(float(row.get("hot", 0)), 0),
-                    "pct_chg": round(float(row.get("pct_change", 0)), 2),
-                    "concept": str(row.get("concept", "")) if pd.notna(row.get("concept")) else None,
-                })
+        for td in [trade_date, _prev_trade_date(pro, trade_date)]:
+            try:
+                df = pro.ths_hot(market="概念板块", trade_date=td, is_new="Y")
+                if df is not None and not df.empty:
+                    df = df.sort_values("hot", ascending=False).drop_duplicates(subset=["ts_code"], keep="first")
+                    df = df.head(top_n).reset_index(drop=True)
+                    for idx, row in df.iterrows():
+                        data.append({
+                            "rank": int(row.get("rank", idx + 1)),
+                            "code": str(row.get("ts_code", "")),
+                            "name": str(row.get("ts_name", "")),
+                            "hot": round(float(row.get("hot", 0)), 0),
+                            "pct_chg": round(float(row.get("pct_change", 0)), 2),
+                            "concept": str(row.get("concept", "")) if pd.notna(row.get("concept")) else None,
+                        })
+                    trade_date = td
+                    break
+            except Exception:
+                continue
     except Exception as e:
         log.warning(f"ths_hot 获取失败: {e}")
 
@@ -960,7 +1182,9 @@ async def get_concept_heat(
 async def get_lhb_list(
     date: Optional[str] = Query(None, description="Trade date YYYYMMDD, defaults to latest"),
 ):
-    """Get Dragon-Tiger List (异常交易个股). Tushare primary, AkShare fallback."""
+    """Get Dragon-Tiger List (异常交易个股). Tushare primary, AkShare fallback.
+    Falls back to previous trade date if today's data is empty.
+    """
     trade_date = date or _trade_date_str()
     data = []
     source = "tushare"
@@ -969,43 +1193,49 @@ async def get_lhb_list(
     try:
         import tushare as ts
         pro = ts.pro_api()
-        df = pro.top_list(trade_date=trade_date)
-        if df is not None and not df.empty:
-            # Deduplicate by ts_code (one stock may have multiple reasons)
-            df = df.drop_duplicates(subset=["ts_code"], keep="first").reset_index(drop=True)
-            df = df.sort_values("pct_change", ascending=False).reset_index(drop=True)
-
-            # Get industry mapping from limit_list_d (top_list does not have industry)
-            industry_map = {}
+        for td in [trade_date, _prev_trade_date(pro, trade_date)]:
             try:
-                df_limit = pro.limit_list_d(trade_date=trade_date)
-                if df_limit is not None and not df_limit.empty:
-                    industry_map = df_limit.set_index("ts_code")["industry"].astype(str).to_dict()
+                df = pro.top_list(trade_date=td)
+                if df is not None and not df.empty:
+                    df = df.drop_duplicates(subset=["ts_code"], keep="first").reset_index(drop=True)
+                    df = df.sort_values("pct_change", ascending=False).reset_index(drop=True)
+
+                    industry_map = {}
+                    try:
+                        df_limit = pro.limit_list_d(trade_date=td)
+                        if df_limit is not None and not df_limit.empty:
+                            industry_map = df_limit.set_index("ts_code")["industry"].astype(str).to_dict()
+                    except Exception:
+                        pass
+
+                    for idx, row in df.iterrows():
+                        amt = row.get("amount")
+                        if pd.notna(amt):
+                            amt = round(float(amt) / 1e8, 2)
+                        else:
+                            amt = None
+
+                        ts_code = str(row.get("ts_code", ""))
+                        data.append({
+                            "rank": idx + 1,
+                            "code": ts_code,
+                            "name": str(row.get("name", "")),
+                            "industry": industry_map.get(ts_code, "-"),
+                            "close": round(float(row.get("close", 0)), 2),
+                            "pct_chg": round(float(row.get("pct_change", 0)), 2),
+                            "turnover": _clean_float(float(row.get("turnover_rate", 0))),
+                            "volume": None,
+                            "amount": amt,
+                            "reason": str(row.get("reason", "")),
+                        })
+                    trade_date = td
+                    break
             except Exception:
-                pass
+                continue
+    except Exception as e:
+        log.warning(f"Tushare 龙虎榜失败: {e}")
 
-            for idx, row in df.iterrows():
-                # amount in yuan -> 亿元
-                amt = row.get("amount")
-                if pd.notna(amt):
-                    amt = round(float(amt) / 1e8, 2)
-                else:
-                    amt = None
-
-                ts_code = str(row.get("ts_code", ""))
-                data.append({
-                    "rank": idx + 1,
-                    "code": ts_code,
-                    "name": str(row.get("name", "")),
-                    "industry": industry_map.get(ts_code, "-"),
-                    "close": round(float(row.get("close", 0)), 2),
-                    "pct_chg": round(float(row.get("pct_change", 0)), 2),
-                    "turnover": _clean_float(float(row.get("turnover_rate", 0))),
-                    "volume": None,  # top_list does not provide vol; turnover_rate used instead
-                    "amount": amt,
-                    "reason": str(row.get("reason", "")),
-                })
-    except Exception:
+    if not data:
         # Fallback to AkShare
         source = "akshare"
         try:
@@ -1020,7 +1250,6 @@ async def get_lhb_list(
         pro = ts.pro_api()
         df_inst = pro.top_inst(trade_date=trade_date)
         if df_inst is not None and not df_inst.empty:
-            # Aggregate by stock
             inst_agg = df_inst.groupby("ts_code").agg({
                 "buy": "sum",
                 "sell": "sum",
@@ -1028,7 +1257,6 @@ async def get_lhb_list(
             inst_agg["net"] = inst_agg["buy"] - inst_agg["sell"]
             inst_agg = inst_agg.sort_values("net", ascending=False).head(20)
 
-            # Get name & industry for institution stocks
             ts_codes = inst_agg["ts_code"].astype(str).tolist()
             name_map = {}
             industry_map_inst = {}
@@ -1101,3 +1329,49 @@ async def get_market_summary():
         return {"summary": summary}
     except Exception as e:
         return {"summary": f"市场总结生成失败: {str(e)}"}
+
+
+# ─── Factor Radar ───
+
+@router.get("/factor-radar")
+async def get_factor_radar(
+    lookback_short: int = Query(5, ge=3, le=20, description="短期IC回看交易日数"),
+    lookback_long: int = Query(20, ge=10, le=60, description="长期IC回看交易日数"),
+):
+    """因子雷达：计算各因子维度的 Rank IC、IR、相关性矩阵、分组IC。
+    结果缓存5分钟（IC计算涉及全市场历史数据，较重）。
+    """
+    import time
+    now = time.time()
+    cache_key = f"{lookback_short}:{lookback_long}"
+    cached = _factor_radar_cache.get("data")
+    if cached and cached.get("key") == cache_key and (now - _factor_radar_cache.get("timestamp", 0)) < _FACTOR_RADAR_CACHE_TTL:
+        return cached["data"]
+
+    try:
+        from src.analysis.factor_ic import build_radar_response
+        result = build_radar_response(
+            end_date=None,
+            lookback_short=lookback_short,
+            lookback_long=lookback_long,
+        )
+        payload = {"data": result, "source": "tushare", "update_time": result.get("update_time")}
+        _factor_radar_cache["data"] = {"key": cache_key, "data": payload}
+        _factor_radar_cache["timestamp"] = now
+        return payload
+    except Exception as e:
+        log.warning(f"因子雷达计算失败: {e}")
+        # Fallback: 返回空结构
+        empty = {
+            "radar": {
+                "indicators": [{"name": "价值", "max": 0.1}, {"name": "动量", "max": 0.1},
+                               {"name": "质量", "max": 0.1}, {"name": "波动率", "max": 0.1},
+                               {"name": "左侧", "max": 0.1}, {"name": "资金流", "max": 0.1}],
+                "data": [],
+            },
+            "factors": [],
+            "correlation": {"labels": [], "matrix": []},
+            "group_ic": {},
+            "update_time": datetime.now().isoformat(),
+        }
+        return {"data": empty, "source": "fallback", "error": str(e), "update_time": datetime.now().isoformat()}

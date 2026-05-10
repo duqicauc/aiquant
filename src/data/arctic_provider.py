@@ -26,6 +26,7 @@ Usage:
 """
 
 import sys
+import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -46,13 +47,36 @@ DEFAULT_ARCTIC_URI = f"lmdb://{PROJECT_ROOT / 'data' / 'cache' / 'quant_data.arc
 
 
 class ArcticDataProvider:
-    """ArcticDB 数据访问层"""
+    """ArcticDB 数据访问层（单例模式）
+
+    LMDB 不支持同进程多次打开同一数据库路径。
+    使用单例模式确保同进程中只有一个 Arctic 实例，避免重复连接警告。
+    """
+
+    _instance: Optional["ArcticDataProvider"] = None
+    _lock = threading.Lock()
+
+    def __new__(cls, uri: Optional[str] = None):
+        target_uri = uri or DEFAULT_ARCTIC_URI
+        with cls._lock:
+            # 如果已有实例且 URI 相同，直接复用
+            if cls._instance is not None and cls._instance.uri == target_uri:
+                return cls._instance
+            # 如果 URI 不同，创建新实例（旧实例不会被销毁，但通常不会遇到这种情况）
+            instance = super().__new__(cls)
+            instance._initialized = False
+            cls._instance = instance
+            return instance
 
     def __init__(self, uri: Optional[str] = None):
+        # 防止重复初始化
+        if self._initialized:
+            return
         if adb is None:
             raise ImportError("arcticdb 未安装，请运行: pip install arcticdb")
         self.uri = uri or DEFAULT_ARCTIC_URI
         self.ac = adb.Arctic(self.uri)
+        self._initialized = True
         log.info(f"ArcticDB 已连接: {self.uri}")
 
     # ==================== Library 管理 ====================

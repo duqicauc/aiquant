@@ -4,6 +4,7 @@ Provides stock diagnosis, K-line data, and technical analysis.
 """
 import math
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -114,9 +115,9 @@ async def get_stock_diagnosis(
 ):
     """Get full stock diagnosis report."""
     try:
-        from src.analysis.stock_health_checker import StockHealthChecker
+        from src.analysis.stock_health_checker import get_stock_health_checker
 
-        checker = StockHealthChecker()
+        checker = get_stock_health_checker()
         report = checker.check_stock(ts_code, days)
 
         if "error" in report:
@@ -424,28 +425,62 @@ async def get_stock_lhb_detail(
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
-        # Get trade calendar to find valid trade dates
-        cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1")
-        trade_dates = cal["cal_date"].tolist() if cal is not None and not cal.empty else []
+        # Try batch query first (start_date/end_date), fallback to day-by-day
+        df_list = pd.DataFrame()
+        df_inst = pd.DataFrame()
+        try:
+            df_list = pro.top_list(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            if df_list is None:
+                df_list = pd.DataFrame()
+        except Exception:
+            pass
+        try:
+            df_inst = pro.top_inst(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            if df_inst is None:
+                df_inst = pd.DataFrame()
+        except Exception:
+            pass
 
-        all_list = []
-        all_inst = []
-        for td in trade_dates:
-            try:
-                df_list = pro.top_list(ts_code=ts_code, trade_date=td)
-                if df_list is not None and not df_list.empty:
-                    all_list.append(df_list)
-            except Exception:
-                pass
-            try:
-                df_inst = pro.top_inst(ts_code=ts_code, trade_date=td)
-                if df_inst is not None and not df_inst.empty:
-                    all_inst.append(df_inst)
-            except Exception:
-                pass
+        # Fallback: day-by-day query with parallel threads
+        if df_list.empty or df_inst.empty:
+            cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1")
+            trade_dates = cal["cal_date"].tolist() if cal is not None and not cal.empty else []
 
-        df_list = pd.concat(all_list, ignore_index=True) if all_list else pd.DataFrame()
-        df_inst = pd.concat(all_inst, ignore_index=True) if all_inst else pd.DataFrame()
+            def _fetch_list(td: str):
+                try:
+                    dfl = pro.top_list(ts_code=ts_code, trade_date=td)
+                    return dfl if dfl is not None and not dfl.empty else None
+                except Exception:
+                    return None
+
+            def _fetch_inst(td: str):
+                try:
+                    dfi = pro.top_inst(ts_code=ts_code, trade_date=td)
+                    return dfi if dfi is not None and not dfi.empty else None
+                except Exception:
+                    return None
+
+            all_list = []
+            all_inst = []
+            max_workers = min(8, len(trade_dates)) if trade_dates else 1
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                if df_list.empty:
+                    list_futures = {executor.submit(_fetch_list, td): td for td in trade_dates}
+                    for fut in as_completed(list_futures):
+                        res = fut.result()
+                        if res is not None:
+                            all_list.append(res)
+                if df_inst.empty:
+                    inst_futures = {executor.submit(_fetch_inst, td): td for td in trade_dates}
+                    for fut in as_completed(inst_futures):
+                        res = fut.result()
+                        if res is not None:
+                            all_inst.append(res)
+
+            if df_list.empty and all_list:
+                df_list = pd.concat(all_list, ignore_index=True)
+            if df_inst.empty and all_inst:
+                df_inst = pd.concat(all_inst, ignore_index=True)
 
         if df_list.empty and df_inst.empty:
             raise HTTPException(status_code=404, detail=f"No LHB data for {ts_code}")
@@ -511,7 +546,7 @@ async def get_stock_lhb_detail(
 # ---------------------------------------------------------------------------
 
 from fastapi import Depends
-from src.api.routers.auth import get_current_user
+from src.api.routers.auth import get_current_user, get_current_user_optional
 from src.scheduler.models import get_session_factory, UserStockNote, User
 
 
@@ -583,8 +618,10 @@ async def remove_stock_note(
 
 
 @router.get("/notes")
-async def list_stock_notes(user: User = Depends(get_current_user)):
-    """获取当前用户所有股票标记"""
+async def list_stock_notes(user: User = Depends(get_current_user_optional)):
+    """获取当前用户所有股票标记（未登录返回空列表）"""
+    if not user:
+        return {"items": []}
     session_factory = get_session_factory()
     with session_factory() as session:
         notes = (

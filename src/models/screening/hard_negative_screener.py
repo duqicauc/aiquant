@@ -2,8 +2,8 @@
 硬负样本筛选器 - 筛选"接近但未达标"的股票
 
 硬负样本定义：
-- 类型1（near_miss）：34日涨幅在20-45%之间（接近50%阈值但未达标）
-- 类型2（high_position_fail）：T1前已涨较多，但T1后下跌（高位追涨失败）
+- 类型1（near_miss）：34日涨幅在20-40%之间（接近50%阈值但未达标）
+- 类型2（high_position_fail）：T1前已涨≥20%，且T1当日出现冲高回落（上影线>3%）
 
 这些股票"看起来像牛股"，但实际上不是
 用于提高模型的区分能力，减少过拟合，特别是防止追龙头
@@ -21,6 +21,11 @@ import pandas as pd
 
 from src.utils.logger import log
 
+try:
+    from src.data.arctic_provider import ArcticDataProvider
+except ImportError:
+    ArcticDataProvider = None
+
 
 class HardNegativeSampleScreener:
     """硬负样本筛选器 - 筛选接近但未达标的股票"""
@@ -29,13 +34,13 @@ class HardNegativeSampleScreener:
     HARD_NEGATIVE_TYPES = {
         "near_miss": {
             "description": "涨幅接近但未达标",
-            "min_return": 15,  # 从20降至15，扩大下限
-            "max_return": 35,  # 从45降至35，远离正样本50%阈值
+            "min_return": 20,  # 回到20，避免太接近普通负样本
+            "max_return": 40,  # 上限40%，保持足够边界宽度
         },
         "high_position_fail": {
-            "description": "高位启动后下跌",
-            "pre_return_min": 25,  # T1前34天涨幅至少25%
-            "post_return_max": 0,  # T1后表现为负
+            "description": "高位启动后冲高回落",
+            "pre_return_min": 20,  # T1前34天涨幅至少20%
+            "upper_shadow_min": 3,  # T1当日上影线至少3%
         },
         "false_breakout": {
             "description": "伪突破（突破后快速回落）",
@@ -60,13 +65,25 @@ class HardNegativeSampleScreener:
             data_manager: 数据管理器实例
         """
         self.dm = data_manager
+        # 初始化 ArcticDB 批量数据提供者（替代 SQLite 逐只查询）
+        if ArcticDataProvider is not None:
+            try:
+                self.arctic = ArcticDataProvider()
+                log.info("HardNegativeScreener: ArcticDB 批量数据提供者已初始化")
+            except Exception as e:
+                log.warning(f"HardNegativeScreener: ArcticDB 初始化失败: {e}")
+                self.arctic = None
+        else:
+            self.arctic = None
 
     def screen_hard_negatives(
         self,
         positive_samples_df: pd.DataFrame,
         min_return: float = 20.0,
-        max_return: float = 35.0,
-        samples_per_date: int = None,  # v3: 改为None，使用类型默认值
+        max_return: float = 40.0,
+        samples_per_date: int = None,  # v3: 通用默认值
+        near_miss_per_date: int = None,  # 独立控制near_miss配额
+        high_position_fail_per_date: int = None,  # 独立控制high_position_fail配额
         random_seed: int = 42,
         include_high_position_fail: bool = True,
         include_false_breakout: bool = True,  # v3新增：是否包含伪突破类型
@@ -77,8 +94,10 @@ class HardNegativeSampleScreener:
         Args:
             positive_samples_df: 正样本DataFrame（用于获取T1日期）
             min_return: 最小34日涨幅阈值（默认20%）
-            max_return: 最大34日涨幅阈值（默认35%，低于正样本的50%）
-            samples_per_date: 每个T1日期采样的硬负样本数量（None则使用默认值）
+            max_return: 最大34日涨幅阈值（默认40%，低于正样本的50%）
+            samples_per_date: 每个T1日期采样的通用默认值（None则使用类型默认值）
+            near_miss_per_date: near_miss独立配额（None则使用samples_per_date或类型默认值）
+            high_position_fail_per_date: high_position_fail独立配额（None则使用samples_per_date或类型默认值）
             random_seed: 随机种子
             include_high_position_fail: 是否包含高位假启动类型（v2.4.0新增）
             include_false_breakout: 是否包含伪突破类型（v3新增）
@@ -86,9 +105,9 @@ class HardNegativeSampleScreener:
         Returns:
             硬负样本DataFrame
         """
-        # v3: 使用类型默认采样数量
-        near_miss_per_date = samples_per_date or self.DEFAULT_SAMPLES_PER_DATE["near_miss"]
-        high_pos_per_date = samples_per_date or self.DEFAULT_SAMPLES_PER_DATE["high_position_fail"]
+        # 独立配额控制，优先使用专用参数，其次回退到通用参数或类型默认值
+        near_miss_per_date = near_miss_per_date or samples_per_date or self.DEFAULT_SAMPLES_PER_DATE["near_miss"]
+        high_pos_per_date = high_position_fail_per_date or samples_per_date or self.DEFAULT_SAMPLES_PER_DATE["high_position_fail"]
         false_breakout_per_date = self.DEFAULT_SAMPLES_PER_DATE["false_breakout"]
 
         log.info("=" * 80)
@@ -96,9 +115,9 @@ class HardNegativeSampleScreener:
         log.info("=" * 80)
         log.info(f"类型1(near_miss): 34日涨幅在 {min_return}% - {max_return}% 之间, 每日{near_miss_per_date}只")
         if include_high_position_fail:
-            log.info(f"类型2(high_position_fail): T1前已涨>25%，但T1后下跌, 每日{high_pos_per_date}只")
+            log.info(f"类型2(high_position_fail): T1前已涨≥20%，且T1当日冲高回落(上影线>3%), 每日{high_pos_per_date}只")
         if include_false_breakout:
-            log.info(f"类型3(false_breakout): 突破20日高点后5日内回落>5%, 每日{false_breakout_per_date}只")
+            log.info(f"类型3(false_breakout): 4选2技术面 + 30天失败(回撤<-15%或涨幅<20%或最终<5%), 遍历所有股票")
         log.info("")
 
         np.random.seed(random_seed)
@@ -119,13 +138,24 @@ class HardNegativeSampleScreener:
         # 收集硬负样本
         hard_negatives = []
         high_pos_negatives = []  # 高位假启动类型
-        false_breakout_negatives = []  # v3新增：伪突破类型
+        false_breakout_negatives = []  # v2.3.0/v2.7.0 旧版严格定义
         processed_dates = 0
         found_count = 0
         high_pos_count = 0
         false_breakout_count = 0
 
-        log.info("开始筛选硬负样本...")
+        # v2.3.0/v2.7.0 旧版严格定义：false_breakout 在循环外一次性处理
+        if include_false_breakout:
+            log.info("开始筛选 false_breakout 硬负样本（旧版严格定义）...")
+            false_breakout_negatives = self._screen_false_breakout_v2(
+                all_stocks=all_stocks,
+                positive_stocks=positive_stocks,
+                t1_dates=set(str(d) for d in t1_dates),
+            )
+            false_breakout_count = len(false_breakout_negatives)
+            log.info(f"  false_breakout 找到: {false_breakout_count} 个")
+
+        log.info("开始筛选 near_miss / high_position_fail 硬负样本...")
         log.info("=" * 80)
 
         for t1_date in t1_dates:
@@ -168,20 +198,6 @@ class HardNegativeSampleScreener:
                     if high_pos_samples:
                         high_pos_negatives.extend(high_pos_samples)
                         high_pos_count += len(high_pos_samples)
-
-                # 类型3: 筛选伪突破的股票（v3新增）
-                if include_false_breakout:
-                    false_breakout_samples = self._screen_false_breakout_for_date(
-                        t1_date=str(t1_date),
-                        all_stocks=all_stocks,
-                        positive_stocks=positive_stocks,
-                        samples_per_date=false_breakout_per_date,
-                        random_seed=random_seed + processed_dates + 20000,
-                    )
-
-                    if false_breakout_samples:
-                        false_breakout_negatives.extend(false_breakout_samples)
-                        false_breakout_count += len(false_breakout_samples)
 
             except Exception as e:
                 log.warning(f"T1={t1_date}: 筛选失败 - {e}")
@@ -247,7 +263,7 @@ class HardNegativeSampleScreener:
         end_date = (t1_datetime - timedelta(days=1)).strftime("%Y%m%d")
 
         # 筛选在T1日期之前已上市足够长时间的股票
-        min_listing_days = 180
+        min_listing_days = 300
         eligible_stocks = all_stocks[
             (all_stocks["list_date"] < t1_datetime - timedelta(days=min_listing_days))
             & (~all_stocks["ts_code"].isin(positive_stocks))
@@ -256,51 +272,105 @@ class HardNegativeSampleScreener:
         if len(eligible_stocks) == 0:
             return []
 
-        # 随机采样候选股票（减少API调用）
-        sample_size = min(30, len(eligible_stocks))  # 减少到30只
+        # 随机采样候选股票（扩大采样以提高命中率）
+        sample_size = min(60, len(eligible_stocks))  # 扩大到60只
         candidate_stocks = eligible_stocks.sample(n=sample_size, random_state=random_seed)
 
         hard_negatives = []
 
-        for _, stock_row in candidate_stocks.iterrows():
-            ts_code = stock_row["ts_code"]
-            name = stock_row["name"]
-
+        # 批量从 ArcticDB 读取数据（替代逐只 SQLite 查询）
+        candidate_codes = candidate_stocks["ts_code"].tolist()
+        if self.arctic is not None:
             try:
-                # 获取该股票在T1前34天的数据（使用缓存）
-                df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust="qfq")
-
-                if df.empty or len(df) < 20:
+                df_all = self.arctic.read_daily_ohlcv(start_date, end_date)
+                if not df_all.empty and "ts_code" in df_all.columns:
+                    df_all = df_all[df_all["ts_code"].isin(candidate_codes)]
+                    # 按 ts_code 分组计算34日涨幅
+                    for ts_code, name in zip(candidate_stocks["ts_code"], candidate_stocks["name"]):
+                        df_stock = df_all[df_all["ts_code"] == ts_code]
+                        if len(df_stock) < 20:
+                            continue
+                        df_stock = df_stock.sort_index().tail(lookback_days)
+                        if len(df_stock) < 20:
+                            continue
+                        start_price = df_stock.iloc[0]["close"]
+                        end_price = df_stock.iloc[-1]["close"]
+                        return_34d = (end_price - start_price) / start_price * 100
+                        if min_return <= return_34d <= max_return:
+                            stock_row = candidate_stocks[candidate_stocks["ts_code"] == ts_code].iloc[0]
+                            hard_negatives.append(
+                                {
+                                    "ts_code": ts_code,
+                                    "name": name,
+                                    "t1_date": str(t1_date),
+                                    "return_34d": round(return_34d, 2),
+                                    "days_since_list": (t1_datetime - stock_row["list_date"]).days,
+                                    "sample_type": "near_miss",
+                                }
+                            )
+                            if len(hard_negatives) >= samples_per_date:
+                                break
+            except Exception as e:
+                log.warning(f"ArcticDB 批量读取失败，回退到逐只查询: {e}")
+                # 回退到逐只查询
+                for _, stock_row in candidate_stocks.iterrows():
+                    ts_code = stock_row["ts_code"]
+                    name = stock_row["name"]
+                    try:
+                        df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust="qfq")
+                        if df.empty or len(df) < 20:
+                            continue
+                        df = df.sort_values("trade_date").tail(lookback_days)
+                        if len(df) < 20:
+                            continue
+                        start_price = df.iloc[0]["close"]
+                        end_price = df.iloc[-1]["close"]
+                        return_34d = (end_price - start_price) / start_price * 100
+                        if min_return <= return_34d <= max_return:
+                            hard_negatives.append(
+                                {
+                                    "ts_code": ts_code,
+                                    "name": name,
+                                    "t1_date": str(t1_date),
+                                    "return_34d": round(return_34d, 2),
+                                    "days_since_list": (t1_datetime - stock_row["list_date"]).days,
+                                    "sample_type": "near_miss",
+                                }
+                            )
+                            if len(hard_negatives) >= samples_per_date:
+                                break
+                    except Exception:
+                        continue
+        else:
+            # 无 ArcticDB，逐只查询（慢）
+            for _, stock_row in candidate_stocks.iterrows():
+                ts_code = stock_row["ts_code"]
+                name = stock_row["name"]
+                try:
+                    df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust="qfq")
+                    if df.empty or len(df) < 20:
+                        continue
+                    df = df.sort_values("trade_date").tail(lookback_days)
+                    if len(df) < 20:
+                        continue
+                    start_price = df.iloc[0]["close"]
+                    end_price = df.iloc[-1]["close"]
+                    return_34d = (end_price - start_price) / start_price * 100
+                    if min_return <= return_34d <= max_return:
+                        hard_negatives.append(
+                            {
+                                "ts_code": ts_code,
+                                "name": name,
+                                "t1_date": str(t1_date),
+                                "return_34d": round(return_34d, 2),
+                                "days_since_list": (t1_datetime - stock_row["list_date"]).days,
+                                "sample_type": "near_miss",
+                            }
+                        )
+                        if len(hard_negatives) >= samples_per_date:
+                            break
+                except Exception:
                     continue
-
-                # 计算34日涨幅
-                df = df.sort_values("trade_date").tail(lookback_days)
-                if len(df) < 20:
-                    continue
-
-                start_price = df.iloc[0]["close"]
-                end_price = df.iloc[-1]["close"]
-                return_34d = (end_price - start_price) / start_price * 100
-
-                # 检查是否在目标涨幅范围内
-                if min_return <= return_34d <= max_return:
-                    hard_negatives.append(
-                        {
-                            "ts_code": ts_code,
-                            "name": name,
-                            "t1_date": str(t1_date),
-                            "return_34d": round(return_34d, 2),
-                            "days_since_list": (t1_datetime - stock_row["list_date"]).days,
-                            "sample_type": "near_miss",  # v2.4.0: 更明确的类型标识
-                        }
-                    )
-
-                    # 达到目标数量后停止
-                    if len(hard_negatives) >= samples_per_date:
-                        break
-
-            except Exception:
-                continue
 
         return hard_negatives
 
@@ -313,13 +383,14 @@ class HardNegativeSampleScreener:
         random_seed: int = 42,
     ) -> List[Dict]:
         """
-        筛选高位假启动类型的硬负样本（v2.4.0新增）
+        筛选高位冲高回落类型的硬负样本（v3.0重构：消除未来函数）
 
-        条件：
-        - T1前34天涨幅 >= 25%（已经涨了不少）
-        - T1后21天涨幅 <= 0%（启动失败，下跌）
+        条件（仅使用T1前及T1当日数据）：
+        - T1前34天涨幅 >= 20%（已经涨了不少）
+        - T1当日出现冲高回落：上影线 > 3%
+          上影线 = (high - max(open, close)) / close * 100
 
-        这类样本帮助模型学习"不要追高位启动的股票"
+        这类样本帮助模型学习"不要追高，注意冲高回落风险"
 
         Args:
             t1_date: T1日期
@@ -329,24 +400,20 @@ class HardNegativeSampleScreener:
             random_seed: 随机种子
 
         Returns:
-            高位假启动负样本列表
+            高位冲高回落负样本列表
         """
         t1_datetime = pd.to_datetime(str(t1_date))
+        t1_str = t1_datetime.strftime("%Y%m%d")
 
         # 计算日期范围
         lookback_days = 34
-        forward_days = 21  # 向前看21天来判断是否启动失败
 
         # T1前的日期范围
         pre_start_date = (t1_datetime - timedelta(days=lookback_days + 10)).strftime("%Y%m%d")
         pre_end_date = (t1_datetime - timedelta(days=1)).strftime("%Y%m%d")
 
-        # T1后的日期范围
-        post_start_date = t1_datetime.strftime("%Y%m%d")
-        post_end_date = (t1_datetime + timedelta(days=forward_days + 10)).strftime("%Y%m%d")
-
         # 筛选在T1日期之前已上市足够长时间的股票
-        min_listing_days = 180
+        min_listing_days = 300
         eligible_stocks = all_stocks[
             (all_stocks["list_date"] < t1_datetime - timedelta(days=min_listing_days))
             & (~all_stocks["ts_code"].isin(positive_stocks))
@@ -355,191 +422,251 @@ class HardNegativeSampleScreener:
         if len(eligible_stocks) == 0:
             return []
 
-        # 随机采样候选股票
-        sample_size = min(50, len(eligible_stocks))
+        # 随机采样候选股票（扩大采样以提高命中率）
+        sample_size = min(80, len(eligible_stocks))
         np.random.seed(random_seed)
         candidate_stocks = eligible_stocks.sample(n=sample_size, random_state=random_seed)
 
         high_pos_negatives = []
+        candidate_codes = candidate_stocks["ts_code"].tolist()
 
-        for _, stock_row in candidate_stocks.iterrows():
-            ts_code = stock_row["ts_code"]
-            name = stock_row["name"]
-
+        # 批量从 ArcticDB 读取（pre + t1 合并一次查询）
+        if self.arctic is not None:
             try:
-                # 1. 获取T1前的数据，计算pre_return
-                df_pre = self.dm.get_daily_data(ts_code, pre_start_date, pre_end_date, adjust="qfq")
-
-                if df_pre.empty or len(df_pre) < 20:
-                    continue
-
-                df_pre = df_pre.sort_values("trade_date").tail(lookback_days)
-                if len(df_pre) < 20:
-                    continue
-
-                pre_start_price = df_pre.iloc[0]["close"]
-                pre_end_price = df_pre.iloc[-1]["close"]
-                pre_return = (pre_end_price - pre_start_price) / pre_start_price * 100
-
-                # 条件1: T1前涨幅 >= 25%
-                if pre_return < 25:
-                    continue
-
-                # 2. 获取T1后的数据，计算post_return
-                df_post = self.dm.get_daily_data(ts_code, post_start_date, post_end_date, adjust="qfq")
-
-                if df_post.empty or len(df_post) < 15:
-                    continue
-
-                df_post = df_post.sort_values("trade_date").head(forward_days)
-                if len(df_post) < 10:
-                    continue
-
-                post_start_price = df_post.iloc[0]["close"]
-                post_end_price = df_post.iloc[-1]["close"]
-                post_return = (post_end_price - post_start_price) / post_start_price * 100
-
-                # 条件2: T1后涨幅 <= 0%（启动失败）
-                if post_return > 0:
-                    continue
-
-                # 符合条件，添加为高位假启动负样本
-                high_pos_negatives.append(
-                    {
-                        "ts_code": ts_code,
-                        "name": name,
-                        "t1_date": str(t1_date),
-                        "return_34d": round(pre_return, 2),  # 使用pre_return作为return_34d
-                        "pre_return": round(pre_return, 2),
-                        "post_return": round(post_return, 2),
-                        "days_since_list": (t1_datetime - stock_row["list_date"]).days,
-                        "sample_type": "high_position_fail",
-                    }
-                )
-
-                # 达到目标数量后停止
-                if len(high_pos_negatives) >= samples_per_date:
-                    break
-
-            except Exception:
-                continue
-
-        return high_pos_negatives
-
-    def _screen_false_breakout_for_date(
-        self,
-        t1_date: str,
-        all_stocks: pd.DataFrame,
-        positive_stocks: set,
-        samples_per_date: int = 10,
-        random_seed: int = 42,
-    ) -> List[Dict]:
-        """
-        筛选伪突破类型的硬负样本（v3新增）
-
-        条件：
-        - T1前某日突破20日高点
-        - 突破后5日内回落>5%
-
-        这类样本帮助模型学习"识别假突破陷阱"
-
-        Args:
-            t1_date: T1日期
-            all_stocks: 所有有效股票
-            positive_stocks: 正样本股票集合（排除）
-            samples_per_date: 采样数量
-            random_seed: 随机种子
-
-        Returns:
-            伪突破负样本列表
-        """
-        t1_datetime = pd.to_datetime(str(t1_date))
-
-        # 计算日期范围（需要更长的历史数据来检测突破和回落）
-        lookback_days = 40  # 需要34天 + 额外天数来检测突破后的回落
-        start_date = (t1_datetime - timedelta(days=lookback_days + 30)).strftime("%Y%m%d")
-        end_date = (t1_datetime - timedelta(days=1)).strftime("%Y%m%d")
-
-        # 筛选在T1日期之前已上市足够长时间的股票
-        min_listing_days = 180
-        eligible_stocks = all_stocks[
-            (all_stocks["list_date"] < t1_datetime - timedelta(days=min_listing_days))
-            & (~all_stocks["ts_code"].isin(positive_stocks))
-        ]
-
-        if len(eligible_stocks) == 0:
-            return []
-
-        # 随机采样候选股票
-        sample_size = min(80, len(eligible_stocks))  # 增加候选数量，因为伪突破条件更严格
-        np.random.seed(random_seed)
-        candidate_stocks = eligible_stocks.sample(n=sample_size, random_state=random_seed)
-
-        false_breakout_negatives = []
-
-        for _, stock_row in candidate_stocks.iterrows():
-            ts_code = stock_row["ts_code"]
-            name = stock_row["name"]
-
-            try:
-                # 获取该股票的历史数据
-                df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust="qfq")
-
-                if df.empty or len(df) < 30:
-                    continue
-
-                df = df.sort_values("trade_date").reset_index(drop=True)
-
-                # 计算20日高点
-                df["high_20d"] = df["high"].rolling(20).max().shift(1)
-
-                # 检测突破点（收盘价突破20日高点）
-                df["is_breakout"] = df["close"] > df["high_20d"]
-
-                # 寻找突破后回落的情况
-                breakout_indices = df[df["is_breakout"]].index.tolist()
-
-                found_false_breakout = False
-                breakout_return = 0
-                pullback_pct = 0
-
-                for breakout_idx in breakout_indices:
-                    if breakout_idx + 5 >= len(df):
+                df_all = self.arctic.read_daily_ohlcv(pre_start_date, t1_str)
+                if not df_all.empty and "ts_code" in df_all.columns:
+                    df_all = df_all[df_all["ts_code"].isin(candidate_codes)]
+                    for ts_code, name in zip(candidate_stocks["ts_code"], candidate_stocks["name"]):
+                        df_stock = df_all[df_all["ts_code"] == ts_code]
+                        if len(df_stock) < 21:  # 至少20天pre + 1天t1
+                            continue
+                        df_stock = df_stock.sort_index()
+                        # pre 数据
+                        df_pre = df_stock.iloc[:-1].tail(lookback_days)
+                        if len(df_pre) < 20:
+                            continue
+                        pre_start_price = df_pre.iloc[0]["close"]
+                        pre_end_price = df_pre.iloc[-1]["close"]
+                        pre_return = (pre_end_price - pre_start_price) / pre_start_price * 100
+                        if pre_return < 20:
+                            continue
+                        # t1 数据
+                        df_t1 = df_stock.iloc[-1:]
+                        if len(df_t1) < 1:
+                            continue
+                        t1_open = df_t1.iloc[0]["open"]
+                        t1_high = df_t1.iloc[0]["high"]
+                        t1_close = df_t1.iloc[0]["close"]
+                        upper_shadow = (t1_high - max(t1_open, t1_close)) / t1_close * 100
+                        if upper_shadow <= 3:
+                            continue
+                        stock_row = candidate_stocks[candidate_stocks["ts_code"] == ts_code].iloc[0]
+                        high_pos_negatives.append(
+                            {
+                                "ts_code": ts_code,
+                                "name": name,
+                                "t1_date": str(t1_date),
+                                "return_34d": round(pre_return, 2),
+                                "pre_return": round(pre_return, 2),
+                                "upper_shadow": round(upper_shadow, 2),
+                                "days_since_list": (t1_datetime - stock_row["list_date"]).days,
+                                "sample_type": "high_position_fail",
+                            }
+                        )
+                        if len(high_pos_negatives) >= samples_per_date:
+                            break
+            except Exception as e:
+                log.warning(f"ArcticDB 批量读取失败，回退到逐只查询: {e}")
+                # 回退逻辑在下面统一处理
+                pass
+        else:
+            # 无 ArcticDB，使用逐只查询回退
+            for _, stock_row in candidate_stocks.iterrows():
+                ts_code = stock_row["ts_code"]
+                name = stock_row["name"]
+                try:
+                    df_pre = self.dm.get_daily_data(ts_code, pre_start_date, pre_end_date, adjust="qfq")
+                    if df_pre.empty or len(df_pre) < 20:
                         continue
-
-                    breakout_price = df.loc[breakout_idx, "close"]
-
-                    # 检查突破后5日内的最低价
-                    future_5d = df.loc[breakout_idx : breakout_idx + 5, "low"].min()
-                    pullback = (future_5d - breakout_price) / breakout_price * 100
-
-                    # 条件：回落>5%
-                    if pullback < -5:
-                        found_false_breakout = True
-                        # 计算34日涨幅（用于记录）
-                        if len(df) >= 34:
-                            start_price = df.iloc[-34]["close"]
-                            end_price = df.iloc[-1]["close"]
-                            breakout_return = (end_price - start_price) / start_price * 100
-                        pullback_pct = pullback
-                        break
-
-                if found_false_breakout:
-                    false_breakout_negatives.append(
+                    df_pre = df_pre.sort_values("trade_date").tail(lookback_days)
+                    if len(df_pre) < 20:
+                        continue
+                    pre_start_price = df_pre.iloc[0]["close"]
+                    pre_end_price = df_pre.iloc[-1]["close"]
+                    pre_return = (pre_end_price - pre_start_price) / pre_start_price * 100
+                    if pre_return < 20:
+                        continue
+                    df_t1 = self.dm.get_daily_data(ts_code, t1_str, t1_str, adjust="qfq")
+                    if df_t1.empty or len(df_t1) < 1:
+                        continue
+                    t1_open = df_t1.iloc[0]["open"]
+                    t1_high = df_t1.iloc[0]["high"]
+                    t1_close = df_t1.iloc[0]["close"]
+                    upper_shadow = (t1_high - max(t1_open, t1_close)) / t1_close * 100
+                    if upper_shadow <= 3:
+                        continue
+                    high_pos_negatives.append(
                         {
                             "ts_code": ts_code,
                             "name": name,
                             "t1_date": str(t1_date),
-                            "return_34d": round(breakout_return, 2),
-                            "pullback_pct": round(pullback_pct, 2),
+                            "return_34d": round(pre_return, 2),
+                            "pre_return": round(pre_return, 2),
+                            "upper_shadow": round(upper_shadow, 2),
                             "days_since_list": (t1_datetime - stock_row["list_date"]).days,
-                            "sample_type": "false_breakout",
+                            "sample_type": "high_position_fail",
                         }
                     )
-
-                    # 达到目标数量后停止
-                    if len(false_breakout_negatives) >= samples_per_date:
+                    if len(high_pos_negatives) >= samples_per_date:
                         break
+                except Exception:
+                    continue
+
+        return high_pos_negatives
+
+    def _screen_false_breakout_v2(
+        self,
+        all_stocks: pd.DataFrame,
+        positive_stocks: set,
+        t1_dates: set,
+        max_per_stock: int = 1,
+        max_total: int = 1500,
+    ) -> List[Dict]:
+        """
+        筛选伪突破类型的硬负样本（v2.3.0/v2.7.0 旧版严格定义）
+
+        技术面条件（4选2）：
+        - 突破20日新高
+        - 放量（成交量>1.3倍20日均量）
+        - 均线多头（收盘价>MA5>MA10>MA20）
+        - RSI在40-85之间
+
+        失败条件（30天窗口，满足任一）：
+        - 最大回撤 < -15%
+        - 最大涨幅 < 20%
+        - 最终涨幅 < 5%
+
+        遍历所有非正样本股票，不随机采样。
+        限制：每只股票最多保留max_per_stock个，全局最多max_total个。
+
+        Args:
+            all_stocks: 所有有效股票
+            positive_stocks: 正样本股票集合（排除）
+            t1_dates: 正样本的T1日期集合
+            max_per_stock: 每只股票最多保留的false_breakout数量（默认1）
+            max_total: 全局最多保留的false_breakout总数（默认1500）
+
+        Returns:
+            伪突破负样本列表
+        """
+        log.info("  技术面条件: 突破20日新高 + 放量(>1.3x) + 均线多头 + RSI(40-85) [4选2]")
+        log.info("  失败条件: 30天内回撤<-15% 或 最大涨幅<20% 或 最终涨幅<5%")
+        log.info(f"  数量限制: 每只股票最多{max_per_stock}个, 全局最多{max_total}个")
+
+        false_breakout_negatives = []
+        processed = 0
+
+        # 过滤非正样本股票
+        eligible_stocks = all_stocks[~all_stocks["ts_code"].isin(positive_stocks)]
+        log.info(f"  待检查股票: {len(eligible_stocks)} 只")
+
+        # 确定全局日期范围（基于正样本 t1_date）
+        t1_dates_list = sorted(t1_dates)
+        min_t1 = t1_dates_list[0]
+        max_t1 = t1_dates_list[-1]
+        start_date = (pd.to_datetime(str(min_t1)) - timedelta(days=60)).strftime("%Y%m%d")
+        end_date = (pd.to_datetime(str(max_t1)) + timedelta(days=60)).strftime("%Y%m%d")
+
+        for _, stock_row in eligible_stocks.iterrows():
+            ts_code = stock_row["ts_code"]
+            name = stock_row["name"]
+            processed += 1
+
+            # 达到全局上限后停止
+            if len(false_breakout_negatives) >= max_total:
+                log.info(f"  达到全局上限{max_total}，提前停止")
+                break
+
+            if processed % 200 == 0:
+                log.info(f"  进度: {processed}/{len(eligible_stocks)} | 找到: {len(false_breakout_negatives)}")
+
+            try:
+                # 获取完整历史数据
+                df = self.dm.get_daily_data(ts_code, start_date, end_date, adjust="qfq")
+
+                if df.empty or len(df) < 60:
+                    continue
+
+                df = df.sort_values("trade_date").reset_index(drop=True)
+
+                # 计算技术指标
+                df["prev_high_20d"] = df["high"].rolling(20).max().shift(1)
+                df["breakout_high_20d"] = (df["close"] > df["prev_high_20d"]).astype(int)
+                df["vol_ma20"] = df["vol"].rolling(20).mean()
+                df["ma5"] = df["close"].rolling(5).mean()
+                df["ma10"] = df["close"].rolling(10).mean()
+                df["ma20"] = df["close"].rolling(20).mean()
+
+                # RSI-6
+                delta = df["close"].diff()
+                gain = delta.where(delta > 0, 0).rolling(6).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(6).mean()
+                df["rsi_6"] = 100 - (100 / (1 + gain / (loss + 1e-8)))
+
+                # 只检查与正样本 t1_date 匹配的日期
+                # trade_date 可能是 datetime64，需要格式化为 YYYYMMDD 字符串
+                df["trade_date_str"] = pd.to_datetime(df["trade_date"]).dt.strftime("%Y%m%d")
+                matched = df[df["trade_date_str"].isin(t1_dates)]
+
+                stock_found = 0
+                for idx in matched.index:
+                    if idx < 20 or idx + 30 >= len(df):
+                        continue
+
+                    row = df.iloc[idx]
+
+                    # 技术面条件（4选2，放宽以扩大样本量）
+                    breakout_high = row.get("breakout_high_20d", 0) == 1
+                    high_volume = row["vol"] > row["vol_ma20"] * 1.3
+                    ma_bullish = row["close"] > row["ma5"] > row["ma10"] > row["ma20"]
+                    rsi_ok = 40 < row.get("rsi_6", 50) < 85
+                    tech_conditions = sum([breakout_high, high_volume, ma_bullish, rsi_ok])
+
+                    if tech_conditions < 2:
+                        continue
+
+                    # 失败条件（30天窗口）
+                    future = df.iloc[idx + 1 : idx + 31]
+                    if len(future) < 5:
+                        continue
+
+                    future_max = future["high"].max()
+                    future_min = future["low"].min()
+                    future_close = future["close"].iloc[-1]
+
+                    max_gain = (future_max - row["close"]) / row["close"] * 100
+                    max_drawdown = (future_min - row["close"]) / row["close"] * 100
+                    final_return = (future_close - row["close"]) / row["close"] * 100
+
+                    is_failed = (max_drawdown < -15) or (max_gain < 20) or (final_return < 5)
+
+                    if is_failed:
+                        false_breakout_negatives.append(
+                            {
+                                "ts_code": ts_code,
+                                "name": name,
+                                "t1_date": row["trade_date_str"],
+                                "return_34d": round(final_return, 2),
+                                "max_gain": round(max_gain, 2),
+                                "max_drawdown": round(max_drawdown, 2),
+                                "tech_conditions_met": tech_conditions,
+                                "sample_type": "false_breakout",
+                            }
+                        )
+                        stock_found += 1
+                        # 每只股票达到上限后跳出内层循环
+                        if stock_found >= max_per_stock:
+                            break
 
             except Exception:
                 continue

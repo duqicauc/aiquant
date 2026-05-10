@@ -7,6 +7,7 @@
 
 import json
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -20,6 +21,51 @@ sys.path.insert(0, str(project_root))
 
 from src.data.data_manager import DataManager
 from src.utils.logger import log
+
+# ─── Singleton + Cache ───
+_checker_instance = None
+_checker_lock = threading.Lock()
+
+# Cache: key -> (timestamp, result)
+_checker_cache = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+def get_stock_health_checker():
+    """Return singleton StockHealthChecker instance (thread-safe)."""
+    global _checker_instance
+    if _checker_instance is None:
+        with _checker_lock:
+            if _checker_instance is None:
+                _checker_instance = StockHealthChecker()
+                log.info("StockHealthChecker singleton created")
+    return _checker_instance
+
+
+def _cache_key(stock_code: str, days: int) -> str:
+    return f"{stock_code}:{days}"
+
+
+def _get_cached(stock_code: str, days: int):
+    key = _cache_key(stock_code, days)
+    entry = _checker_cache.get(key)
+    if entry is None:
+        return None
+    ts, result = entry
+    if (datetime.now() - ts).total_seconds() > _CACHE_TTL_SECONDS:
+        _checker_cache.pop(key, None)
+        return None
+    log.info(f"[Cache HIT] stock={stock_code}, days={days}")
+    return result
+
+
+def _set_cached(stock_code: str, days: int, result: dict):
+    key = _cache_key(stock_code, days)
+    _checker_cache[key] = (datetime.now(), result)
+    # Keep cache size bounded (LRU-style: drop oldest if >100)
+    if len(_checker_cache) > 100:
+        oldest_key = min(_checker_cache, key=lambda k: _checker_cache[k][0])
+        _checker_cache.pop(oldest_key, None)
 
 # 尝试导入 xgboost
 try:
@@ -254,6 +300,11 @@ class StockHealthChecker:
         Returns:
             dict: 体检报告
         """
+        # --- Cache check ---
+        cached = _get_cached(stock_code, days)
+        if cached is not None:
+            return cached
+
         log.info(f"开始体检股票: {stock_code}")
 
         report = {
@@ -319,6 +370,7 @@ class StockHealthChecker:
             report["recommendation"] = self._generate_recommendation(report)
 
             log.info(f"✓ 体检完成: {stock_code}, 综合评分: {report['overall_score']}")
+            _set_cached(stock_code, days, report)
 
         except Exception as e:
             log.error(f"体检失败: {stock_code}, 错误: {e}", exc_info=True)

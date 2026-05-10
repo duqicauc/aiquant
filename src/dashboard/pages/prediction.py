@@ -258,7 +258,7 @@ def update_predictions(n_interval, n_clicks, top_n):
             "industry": str(row.get("industry", row.get("行业", ""))),
             "probability": float(row.get(prob_col, 0)) if prob_col else 0,
             "score": float(row.get("score", row.get(prob_col, 0))),
-            "model_version": str(row.get("model_version", "v2.9.1")),
+            "model_version": str(row.get("model_version", "v2.9.5")),
         }
         rows.append(rec)
 

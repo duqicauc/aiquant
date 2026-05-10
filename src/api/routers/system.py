@@ -112,3 +112,78 @@ async def get_system_status():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+# ---------- Alert Config ----------
+
+ALERT_CONFIG_DEFAULT = {
+    "wechat_webhook": "",
+    "dingtalk_webhook": "",
+    "smtp_config": "",
+    "alert_strike_zone": True,
+    "alert_stop_loss": True,
+    "alert_model_drift": True,
+    "alert_watchlist": False,
+    "quiet_start": "22:00",
+    "quiet_end": "08:00",
+}
+
+
+def _get_alert_config() -> dict:
+    """从 SQLite user_settings 读取 alert_config"""
+    import json
+    import sqlite3
+
+    db_path = project_root / "data" / "database" / "aiquant.db"
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT setting_value FROM user_settings WHERE user_id = 1 AND setting_key = 'alert_config' ORDER BY id DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0]:
+            return {**ALERT_CONFIG_DEFAULT, **json.loads(row[0])}
+    except Exception:
+        pass
+    return ALERT_CONFIG_DEFAULT.copy()
+
+
+def _save_alert_config(config: dict):
+    """保存 alert_config 到 SQLite user_settings"""
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    db_path = project_root / "data" / "database" / "aiquant.db"
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    # 先删除旧配置
+    cursor.execute("DELETE FROM user_settings WHERE user_id = 1 AND setting_key = 'alert_config'")
+    # 插入新配置
+    cursor.execute(
+        "INSERT INTO user_settings (user_id, setting_key, setting_value, created_at) VALUES (?, ?, ?, ?)",
+        (1, "alert_config", json.dumps(config), datetime.now()),
+    )
+    conn.commit()
+    conn.close()
+
+
+@router.get("/alert-config")
+async def get_alert_config():
+    """获取当前用户的预警配置"""
+    return _get_alert_config()
+
+
+@router.post("/alert-config")
+async def save_alert_config(config: dict):
+    """保存预警配置"""
+    try:
+        # 只保存已知字段
+        allowed = set(ALERT_CONFIG_DEFAULT.keys())
+        filtered = {k: v for k, v in config.items() if k in allowed}
+        _save_alert_config(filtered)
+        return {"success": True, "message": "配置已保存"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")

@@ -37,11 +37,25 @@ class MarketBreadth(BaseModel):
     broken_limit: Optional[int] = Field(default=None, description="Number of broken limit-up stocks")
     seal_rate: Optional[float] = Field(default=None, description="Seal rate percentage")
     broken_rate: Optional[float] = Field(default=None, description="Broken limit rate percentage")
+    rise_ge5: Optional[int] = Field(default=None, description="Number of stocks with pct_chg >= +5%")
+    drop_ge5: Optional[int] = Field(default=None, description="Number of stocks with pct_chg <= -5%")
 
 
 class SectorPerformance(BaseModel):
     """Sector performance data."""
     name: str
     pct_chg: float
+    pct_chg_3d: Optional[float] = Field(default=None, description="3-day cumulative return (%)")
     volume: Optional[float] = None
     amount: Optional[float] = None
+
+
+class ConceptTrend(BaseModel):
+    """Concept trend over multiple days (persistence indicator)."""
+    name: str
+    rank: int
+    days: int = Field(description="Number of days appeared in top list (out of last 3)")
+    up_nums_total: int = Field(description="Total limit-up count over tracked days")
+    cons_nums_total: int = Field(default=0, description="Total consecutive limit-up count")
+    pct_chg_avg: float = Field(description="Average daily pct_chg over tracked days")
+    score: float = Field(description="Composite score = up_nums_total * days")

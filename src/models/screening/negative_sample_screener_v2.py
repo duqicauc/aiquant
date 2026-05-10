@@ -1,11 +1,11 @@
 """
-负样本筛选器 V2 - 同周期其他股票法
+负样本筛选器 V2 - 同周期特征匹配分层采样
 
 筛选逻辑：
 1. 获取正样本的股票代码和T1日期
-2. 对每个正样本，在同一T1日期，随机选择其他未在正样本中的股票
-3. 提取这些股票在T1前34天的交易数据作为负样本
-4. 确保负样本股票符合基本筛选条件
+2. 对每个T1日期，计算正样本的市值、波动率分布
+3. 在同一T1日期的其他股票中，按分层比例匹配正样本分布进行采样
+4. 确保负样本股票符合基本筛选条件（与正样本同源同标准）
 
 过滤规则（与正样本保持一致）：
 - ST: 剔除ST股票（名称包含ST、*ST、S*ST等）
@@ -39,9 +39,9 @@ class NegativeSampleScreenerV2:
     def screen_negative_samples(
         self,
         positive_samples_df: pd.DataFrame,
-        samples_per_positive: int = 1,
+        samples_per_positive: int = 2,
         random_seed: int = 42,
-        stratified_by_mv: bool = False,
+        stratified_by_mv: bool = True,
         mv_quantiles: list = None,
     ) -> pd.DataFrame:
         """
@@ -49,9 +49,9 @@ class NegativeSampleScreenerV2:
 
         Args:
             positive_samples_df: 正样本DataFrame
-            samples_per_positive: 每个正样本对应的负样本数量（默认1）
+            samples_per_positive: 每个正样本对应的负样本数量（默认2，保持2:1比例）
             random_seed: 随机种子
-            stratified_by_mv: 是否按市值分层采样（v3新增）
+            stratified_by_mv: 是否按市值分层采样（默认启用，匹配正样本市值分布）
             mv_quantiles: 市值分位数边界（v3新增）
 
         Returns:
@@ -82,12 +82,24 @@ class NegativeSampleScreenerV2:
         available_stocks = all_stocks[~all_stocks["ts_code"].isin(positive_stocks)]
         log.info(f"可用负样本股票池: {len(available_stocks)} 只")
 
+        # 为正样本补充市值数据（如果缺失）
+        if "circ_mv" not in positive_samples_df.columns:
+            log.info("为正样本补充市值数据...")
+            # 获取带市值的股票列表（使用最新有效交易日）
+            mv_stock_list = self._get_valid_stock_list_with_mv()
+            if "circ_mv" in mv_stock_list.columns:
+                mv_map = mv_stock_list[["ts_code", "circ_mv"]].copy()
+                positive_samples_df = pd.merge(positive_samples_df, mv_map, on="ts_code", how="left")
+                log.info(f"已为正样本补充市值数据: {positive_samples_df['circ_mv'].notna().sum()}/{len(positive_samples_df)}")
+
         # 计算市值分层边界（如果启用分层采样）
         if stratified_by_mv:
             if mv_quantiles is None:
                 # 使用正样本的市值分布计算分位数
                 if "circ_mv" in positive_samples_df.columns:
-                    pos_mv = positive_samples_df.groupby("sample_id")["circ_mv"].first().dropna()
+                    # 按样本分组（优先用sample_id，否则用ts_code+t1_date）
+                    group_col = "sample_id" if "sample_id" in positive_samples_df.columns else "ts_code"
+                    pos_mv = positive_samples_df.groupby(group_col)["circ_mv"].first().dropna()
                     if len(pos_mv) > 0:
                         mv_quantiles = pos_mv.quantile([0.25, 0.5, 0.75]).tolist()
                         log.info(f"市值分层边界（基于正样本）: {[f'{q:.0f}' for q in mv_quantiles]}")
@@ -112,7 +124,7 @@ class NegativeSampleScreenerV2:
         log.info("=" * 80)
 
         # 需要的历史数据天数（lookback + 缓冲）
-        min_days_before_t1 = 180  # 至少上市180天，确保有足够历史数据
+        min_days_before_t1 = 300  # 至少上市300天，与正样本标准一致
 
         for t1_date, group in t1_groups:
             num_positive = len(group)
@@ -351,7 +363,7 @@ class NegativeSampleScreenerV2:
 
     def _add_mv_data_for_date(self, stocks_df: pd.DataFrame, t1_date: str) -> pd.DataFrame:
         """
-        为股票列表添加T1日期的市值数据（动态获取）
+        为股票列表添加T1日期的市值数据（批量获取优化版）
 
         Args:
             stocks_df: 股票列表DataFrame
@@ -366,34 +378,24 @@ class NegativeSampleScreenerV2:
         if "circ_mv" in stocks_df.columns and stocks_df["circ_mv"].notna().sum() > len(stocks_df) * 0.8:
             return stocks_df
 
-        # 计算日期范围（T1前后各5天，确保能获取到数据）
-        t1_dt = pd.to_datetime(t1_date, format="%Y%m%d")
-        start_date = (t1_dt - timedelta(days=10)).strftime("%Y%m%d")
-        end_date = (t1_dt + timedelta(days=5)).strftime("%Y%m%d")
-
-        # 批量获取市值数据
-        mv_data = []
-        for ts_code in stocks_df["ts_code"].tolist():
-            try:
-                # 获取T1日期附近的日线基础数据（包含市值）
-                df = self.dm.get_daily_basic(ts_code, start_date=start_date, end_date=end_date)
+        try:
+            # 向前查找最近的有效交易日（最多10天）
+            t1_dt = pd.to_datetime(t1_date, format="%Y%m%d")
+            df = None
+            for days_back in range(0, 10):
+                check_date = (t1_dt - timedelta(days=days_back)).strftime("%Y%m%d")
+                df = self.dm.get_daily_basic(trade_date=check_date)
                 if not df.empty:
-                    # 找到最接近T1日期的数据
-                    df["trade_date"] = pd.to_datetime(df["trade_date"])
-                    t1_dt_pd = pd.to_datetime(t1_date, format="%Y%m%d")
-                    # 选择T1日期之前最近的数据
-                    df_before = df[df["trade_date"] <= t1_dt_pd]
-                    if not df_before.empty:
-                        latest = df_before.sort_values("trade_date").iloc[-1]
-                        mv_data.append({"ts_code": ts_code, "circ_mv": latest.get("circ_mv", None)})
-            except Exception:
-                continue
+                    log.debug(f"T1={t1_date}: 使用 {check_date} 的市值数据（向前{days_back}天）")
+                    break
 
-        if mv_data:
-            mv_df = pd.DataFrame(mv_data)
-            stocks_df = pd.merge(stocks_df, mv_df, on="ts_code", how="left")
-            log.debug(f"T1={t1_date}: 已获取 {len(mv_data)}/{len(stocks_df)} 只股票的市值数据")
-        else:
+            if df is not None and not df.empty and "circ_mv" in df.columns:
+                mv_df = df[["ts_code", "circ_mv"]].copy()
+                stocks_df = pd.merge(stocks_df, mv_df, on="ts_code", how="left")
+                log.debug(f"T1={t1_date}: 已批量获取 {len(mv_df)} 只股票的市值数据")
+            else:
+                stocks_df["circ_mv"] = None
+        except Exception:
             stocks_df["circ_mv"] = None
 
         return stocks_df
@@ -402,7 +404,8 @@ class NegativeSampleScreenerV2:
         """
         获取有效的股票列表（包含市值信息，用于分层采样）
 
-        v3新增：在基础股票列表上添加最新市值数据
+        v3优化：使用批量接口一次性获取全市场市值数据（替代逐只获取）
+        自动向前查找最近的有效交易日（处理节假日）
 
         Returns:
             股票列表DataFrame（包含circ_mv列）
@@ -410,28 +413,26 @@ class NegativeSampleScreenerV2:
         # 先获取基础股票列表
         stock_list = self._get_valid_stock_list()
 
-        # 尝试获取最新的市值数据
+        # 尝试批量获取最新的市值数据
         try:
-            # 获取最近交易日的日线数据（包含市值）
             from datetime import datetime
 
             today = datetime.now().strftime("%Y%m%d")
+            today_dt = datetime.now()
 
-            # 批量获取市值数据
-            mv_data = []
-            for ts_code in stock_list["ts_code"].tolist()[:100]:  # 先测试100只
-                try:
-                    df = self.dm.get_daily_basic(ts_code, start_date="20240101", end_date=today)
-                    if not df.empty:
-                        latest = df.sort_values("trade_date").iloc[-1]
-                        mv_data.append({"ts_code": ts_code, "circ_mv": latest.get("circ_mv", None)})
-                except Exception:
-                    continue
+            # 向前查找最近的有效交易日（最多10天）
+            df = None
+            for days_back in range(0, 10):
+                check_date = (today_dt - timedelta(days=days_back)).strftime("%Y%m%d")
+                df = self.dm.get_daily_basic(trade_date=check_date)
+                if not df.empty:
+                    log.info(f"使用 {check_date} 的市值数据（向前{days_back}天）")
+                    break
 
-            if mv_data:
-                mv_df = pd.DataFrame(mv_data)
+            if df is not None and not df.empty and "circ_mv" in df.columns:
+                mv_df = df[["ts_code", "circ_mv"]].copy()
                 stock_list = pd.merge(stock_list, mv_df, on="ts_code", how="left")
-                log.info(f"已获取 {len(mv_data)} 只股票的市值数据")
+                log.info(f"已批量获取 {len(mv_df)} 只股票的市值数据")
             else:
                 stock_list["circ_mv"] = None
                 log.warning("未能获取市值数据，将使用随机采样")

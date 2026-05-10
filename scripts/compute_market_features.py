@@ -19,7 +19,7 @@ from src.data.tushare_data_provider import TushareDataProvider
 from src.utils.logger import log
 
 OUTPUT = "data/training/features/market_features.csv"
-START_DATE = "20200101"
+START_DATE = "19990101"
 END_DATE = "20260421"
 
 def get_index_data(pro, ts_code, start, end):

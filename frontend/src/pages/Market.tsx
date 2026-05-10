@@ -93,6 +93,13 @@ export default function Market() {
 
   const [activeTab, setActiveTab] = useState('overview')
 
+  // Factor radar data
+  const [factorRadarData, setFactorRadarData] = useState<any>(null)
+  const [factorRadarLoading, setFactorRadarLoading] = useState(false)
+  const [factorRadarError, setFactorRadarError] = useState<string | null>(null)
+  const [factorRadarHorizon, setFactorRadarHorizon] = useState(5)
+  const [strategyExpanded, setStrategyExpanded] = useState(true)
+
   useEffect(() => {
     // 上证指数含均线
     marketApi.indices('000001.SH', 120, true).then(r => {
@@ -108,6 +115,32 @@ export default function Market() {
     // Market heat data
     loadHeatData()
   }, [])
+
+  useEffect(() => {
+    if (activeTab === 'factor_radar' && !factorRadarData) {
+      loadFactorRadar()
+    }
+  }, [activeTab])
+
+  const loadFactorRadar = (horizon?: number) => {
+    const h = horizon ?? factorRadarHorizon
+    setFactorRadarLoading(true)
+    setFactorRadarError(null)
+    marketApi.factorRadar(h, Math.min(h * 4, 60))
+      .then(r => {
+        if (r.data?.data) {
+          setFactorRadarData(r.data.data)
+        } else {
+          setFactorRadarError('API返回数据为空')
+        }
+      })
+      .catch((err) => {
+        console.error('因子雷达加载失败:', err)
+        setFactorRadarData(null)
+        setFactorRadarError('加载失败，请检查网络或后端服务状态')
+      })
+      .finally(() => setFactorRadarLoading(false))
+  }
 
   const loadHeatData = () => {
     setHeatLoading(true)
@@ -1072,6 +1105,367 @@ export default function Market() {
                         rowKey="code"
                         loading={heatLoading}
                         scroll={{ x: 500 }}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+              </div>
+            ),
+          },
+          {
+            key: 'factor_radar',
+            label: '🎯 因子雷达',
+            children: (
+              <div>
+                <div style={{ marginBottom: '1rem' }}>
+                  <span style={{ color: '#6e7681', fontSize: 12, cursor: 'help' }} title="因子雷达展示近期各因子的信息系数（IC）和有效性评分。IC > 0.03 表示因子有效，IC < -0.02 表示因子反向有效。IR = IC均值/IC标准差，衡量因子稳定性。">
+                    📖 使用说明（ hover 查看）
+                  </span>
+                </div>
+
+                <Space style={{ marginBottom: '1rem' }}>
+                  <Button
+                    size="small"
+                    style={{ background: factorRadarHorizon === 5 ? '#1f6feb' : '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                    onClick={() => { setFactorRadarHorizon(5); loadFactorRadar(5); }}
+                  >
+                    近5日
+                  </Button>
+                  <Button
+                    size="small"
+                    style={{ background: factorRadarHorizon === 10 ? '#1f6feb' : '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                    onClick={() => { setFactorRadarHorizon(10); loadFactorRadar(10); }}
+                  >
+                    近10日
+                  </Button>
+                  <Button
+                    size="small"
+                    style={{ background: factorRadarHorizon === 20 ? '#1f6feb' : '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                    onClick={() => { setFactorRadarHorizon(20); loadFactorRadar(20); }}
+                  >
+                    近20日
+                  </Button>
+                  <Button
+                    size="small"
+                    loading={factorRadarLoading}
+                    onClick={loadFactorRadar}
+                    style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
+                  >
+                    🔄 刷新
+                  </Button>
+                  {factorRadarLoading && (
+                    <span style={{ color: '#8b949e', fontSize: 12 }}>正在计算IC，约需30-60秒...</span>
+                  )}
+                </Space>
+                {factorRadarError && (
+                  <Alert
+                    message={factorRadarError}
+                    type="error"
+                    style={{ background: '#3d0d0d', borderColor: '#f85149', color: '#f85149', marginBottom: '1rem' }}
+                    showIcon
+                  />
+                )}
+
+                {/* ─── 综合策略建议 ─── */}
+                {factorRadarData?.strategy && (
+                  <Card
+                    style={{
+                      background: '#0d1117',
+                      borderColor: '#30363d',
+                      marginBottom: '1rem',
+                      borderLeft: '4px solid #d29922',
+                    }}
+                    bodyStyle={{ padding: '12px 16px' }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ color: '#d29922', fontSize: 14, fontWeight: 600 }}>📋 综合策略</span>
+                        <span style={{ color: '#c9d1d9', fontSize: 13 }}>{factorRadarData.strategy.summary}</span>
+                        <Tag color={factorRadarData.strategy.tone === '进攻' ? 'red' : factorRadarData.strategy.tone === '结构性机会' ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
+                          {factorRadarData.strategy.strategy}
+                        </Tag>
+                      </div>
+                      <Button
+                        size="small"
+                        type="link"
+                        style={{ color: '#8b949e', fontSize: 12, padding: 0 }}
+                        onClick={() => setStrategyExpanded(!strategyExpanded)}
+                      >
+                        {strategyExpanded ? '收起 ▲' : '展开 ▼'}
+                      </Button>
+                    </div>
+
+                    {strategyExpanded && (
+                      <>
+                        <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
+                          <Col span={12}>
+                            <div style={{ background: '#161b22', borderRadius: 4, padding: '8px 10px' }}>
+                              <div style={{ color: '#3fb950', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>🟢 做多方向</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {factorRadarData.strategy.long_directions.map((d: string, idx: number) => (
+                                  <div key={idx} style={{ color: '#c9d1d9', fontSize: 11, lineHeight: 1.4 }}>• {d}</div>
+                                ))}
+                              </div>
+                            </div>
+                          </Col>
+                          <Col span={12}>
+                            <div style={{ background: '#161b22', borderRadius: 4, padding: '8px 10px' }}>
+                              <div style={{ color: '#f85149', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>🔴 回避/空仓</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {factorRadarData.strategy.short_directions.map((d: string, idx: number) => (
+                                  <div key={idx} style={{ color: '#c9d1d9', fontSize: 11, lineHeight: 1.4 }}>• {d}</div>
+                                ))}
+                              </div>
+                            </div>
+                          </Col>
+                        </Row>
+
+                        <div style={{ marginTop: 10, padding: '6px 10px', background: '#21262d', borderRadius: 4, borderLeft: '3px solid #d29922' }}>
+                          <span style={{ color: '#d29922', fontSize: 11, fontWeight: 500 }}>⚠️ </span>
+                          <span style={{ color: '#8b949e', fontSize: 11 }}>{factorRadarData.strategy.risks.join('；')}</span>
+                        </div>
+                      </>
+                    )}
+                  </Card>
+                )}
+
+                {/* ─── 雷达图 + 因子解读 ─── */}
+                <Row gutter={[16, 16]} style={{ marginBottom: '1rem' }}>
+                  <Col span={14}>
+                    <Card title="因子有效性雷达图" style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <ReactECharts
+                        option={{
+                          backgroundColor: 'transparent',
+                          radar: {
+                            indicator: factorRadarData?.radar?.indicators || [
+                              { name: '价值', max: 0.1 }, { name: '动量', max: 0.1 },
+                              { name: '质量', max: 0.1 }, { name: '波动率', max: 0.1 },
+                              { name: '左侧', max: 0.1 }, { name: '资金流', max: 0.1 },
+                            ],
+                            axisName: { color: '#8b949e' },
+                            splitArea: { areaStyle: { color: ['rgba(22,27,34,0.5)', 'rgba(13,17,23,0.5)'] } },
+                            splitLine: { lineStyle: { color: '#30363d' } },
+                            axisLine: { lineStyle: { color: '#30363d' } },
+                          },
+                          series: [{
+                            type: 'radar',
+                            data: factorRadarData?.radar?.data?.length
+                              ? factorRadarData.radar.data.map((d: any, idx: number) => ({
+                                  ...d,
+                                  lineStyle: { color: idx === 0 ? '#58a6ff' : '#3fb950', width: 2 },
+                                  areaStyle: { color: idx === 0 ? 'rgba(88,166,255,0.15)' : 'rgba(63,185,80,0.1)' },
+                                  itemStyle: { color: idx === 0 ? '#58a6ff' : '#3fb950' },
+                                }))
+                              : [],
+                          }],
+                          tooltip: { trigger: 'item', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#c9d1d9' } },
+                          legend: { textStyle: { color: '#8b949e' }, bottom: 0 },
+                        }}
+                        style={{ height: 400 }}
+                        notMerge={true}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={10}>
+                    <Card title="📋 因子解读" style={{ background: '#161b22', borderColor: '#30363d' }} bodyStyle={{ padding: '12px', height: 400, overflowY: 'auto' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {(factorRadarData?.factors || []).map((f: any) => (
+                          <div key={f.key} style={{ padding: '8px 10px', background: '#0d1117', borderRadius: 4, borderLeft: `3px solid ${f.color}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ color: '#c9d1d9', fontSize: 12, fontWeight: 500 }}>{f.name}</span>
+                              <Tag size="small" style={{ margin: 0, fontSize: 10, background: f.color + '15', color: f.color, borderColor: f.color + '30' }}>
+                                IC {f.ic_long > 0 ? '+' : ''}{f.ic_long?.toFixed(3)} | {f.status}
+                              </Tag>
+                            </div>
+                            <div style={{ color: '#8b949e', fontSize: 11, marginTop: 2 }} title={`${f.conclusion} | IR ${f.ir?.toFixed(2)} | 短期IC ${f.ic_short > 0 ? '+' : ''}${f.ic_short?.toFixed(3)} | ${f.stability}`}>
+                              👉 {f.action}
+                            </div>
+                          </div>
+                        ))}
+                        {(!factorRadarData?.factors?.length) && (
+                          <div style={{ color: '#8b949e', textAlign: 'center', padding: 20 }}>加载中...</div>
+                        )}
+                      </div>
+                    </Card>
+                  </Col>
+                </Row>
+
+                {/* ─── IC时间序列 ─── */}
+                <Card
+                  title="IC时间序列（因子失效/复苏判断）"
+                  style={{ background: '#161b22', borderColor: '#30363d', marginBottom: '1rem' }}
+                >
+                  <div style={{ color: '#6e7681', fontSize: 11, marginBottom: '0.5rem' }}>
+                    📖 IC在0轴上方=有效，跌破0=失效，由负转正=复苏
+                  </div>
+                  <ReactECharts
+                    option={{
+                      backgroundColor: 'transparent',
+                      grid: { left: 50, right: 20, top: 30, bottom: 30 },
+                      xAxis: {
+                        type: 'category',
+                        data: factorRadarData?.factors?.[0]?.ic_series?.map((p: any) => p.date?.slice(4, 6) + '-' + p.date?.slice(6, 8)) || [],
+                        axisLine: { lineStyle: { color: '#30363d' } },
+                        axisLabel: { color: '#8b949e', fontSize: 10 },
+                        axisTick: { show: false },
+                      },
+                      yAxis: {
+                        type: 'value',
+                        name: 'Rank IC',
+                        nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                        axisLine: { show: false },
+                        splitLine: { lineStyle: { color: '#21262d' } },
+                        axisLabel: { color: '#8b949e', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
+                      },
+                      tooltip: {
+                        trigger: 'axis',
+                        backgroundColor: '#161b22',
+                        borderColor: '#30363d',
+                        textStyle: { color: '#c9d1d9', fontSize: 11 },
+                      },
+                      legend: { textStyle: { color: '#8b949e' }, top: 0 },
+                      series: (factorRadarData?.factors || []).map((f: any) => ({
+                        name: f.name,
+                        type: 'line',
+                        data: f.ic_series?.map((p: any) => p.ic) || [],
+                        smooth: true,
+                        showSymbol: false,
+                        lineStyle: { width: 1.5 },
+                      })),
+                    }}
+                    style={{ height: 320 }}
+                    notMerge={true}
+                  />
+                </Card>
+
+                {/* ─── 相关性矩阵 + 分组IC ─── */}
+                <Row gutter={[16, 16]}>
+                  <Col span={12}>
+                    <Card title="因子相关性矩阵（避免重复暴露）" style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <div style={{ color: '#6e7681', fontSize: 11, marginBottom: '0.5rem' }}>
+                        📖 红色=正相关，绿色=负相关，黑色=无关；|r|&gt;0.8应去掉其一避免重复暴露
+                      </div>
+                      <ReactECharts
+                        option={{
+                          backgroundColor: 'transparent',
+                          grid: { left: 80, right: 30, top: 30, bottom: 30 },
+                          xAxis: {
+                            type: 'category',
+                            data: factorRadarData?.correlation?.labels || [],
+                            axisLine: { lineStyle: { color: '#30363d' } },
+                            axisLabel: { color: '#8b949e', fontSize: 10, rotate: 30 },
+                            axisTick: { show: false },
+                            splitArea: { show: true, areaStyle: { color: ['rgba(22,27,34,0.3)', 'rgba(13,17,23,0.3)'] } },
+                          },
+                          yAxis: {
+                            type: 'category',
+                            data: factorRadarData?.correlation?.labels || [],
+                            axisLine: { lineStyle: { color: '#30363d' } },
+                            axisLabel: { color: '#8b949e', fontSize: 10 },
+                            axisTick: { show: false },
+                            splitArea: { show: true, areaStyle: { color: ['rgba(22,27,34,0.3)', 'rgba(13,17,23,0.3)'] } },
+                          },
+                          visualMap: {
+                            min: -1,
+                            max: 1,
+                            calculable: false,
+                            orient: 'horizontal',
+                            left: 'center',
+                            bottom: 0,
+                            inRange: {
+                              color: ['#3fb950', '#21262d', '#f85149'],
+                            },
+                            textStyle: { color: '#8b949e', fontSize: 10 },
+                            itemWidth: 12,
+                            itemHeight: 80,
+                          },
+                          tooltip: {
+                            backgroundColor: '#161b22',
+                            borderColor: '#30363d',
+                            textStyle: { color: '#c9d1d9', fontSize: 11 },
+                            formatter: (p: any) => `${p.name}<br/>相关性: ${p.value?.toFixed(3) ?? '-'}`,
+                          },
+                          series: [{
+                            name: '相关性',
+                            type: 'heatmap',
+                            data: (() => {
+                              const m = factorRadarData?.correlation?.matrix || []
+                              const data: any[] = []
+                              m.forEach((row: number[], i: number) => {
+                                row.forEach((val: number, j: number) => {
+                                  data.push([i, j, val])
+                                })
+                              })
+                              return data
+                            })(),
+                            label: {
+                              show: true,
+                              color: '#c9d1d9',
+                              fontSize: 10,
+                              formatter: (p: any) => p.value?.[2]?.toFixed(2) ?? '',
+                            },
+                            itemStyle: { borderColor: '#30363d', borderWidth: 1 },
+                          }],
+                        }}
+                        style={{ height: 380 }}
+                        notMerge={true}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card title="分组IC：大盘 vs 中盘 vs 小盘（找最强风格）" style={{ background: '#161b22', borderColor: '#30363d' }}>
+                      <div style={{ color: '#6e7681', fontSize: 11, marginBottom: '0.5rem' }}>
+                        📖 某组柱子最高=该因子在该市值段最有效，找准最强风格
+                      </div>
+                      <ReactECharts
+                        option={{
+                          backgroundColor: 'transparent',
+                          grid: { left: 60, right: 20, top: 30, bottom: 50 },
+                          xAxis: {
+                            type: 'category',
+                            data: factorRadarData?.radar?.indicators?.map((d: any) => d.name) || ['价值', '动量', '质量', '波动率', '左侧', '资金流'],
+                            axisLine: { lineStyle: { color: '#30363d' } },
+                            axisLabel: { color: '#8b949e', fontSize: 10 },
+                            axisTick: { show: false },
+                          },
+                          yAxis: {
+                            type: 'value',
+                            name: 'IC',
+                            nameTextStyle: { color: '#8b949e', fontSize: 10 },
+                            axisLine: { show: false },
+                            splitLine: { lineStyle: { color: '#21262d' } },
+                            axisLabel: { color: '#8b949e', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
+                          },
+                          tooltip: {
+                            trigger: 'axis',
+                            backgroundColor: '#161b22',
+                            borderColor: '#30363d',
+                            textStyle: { color: '#c9d1d9', fontSize: 11 },
+                          },
+                          legend: { textStyle: { color: '#8b949e' }, bottom: 0 },
+                          series: [
+                            {
+                              name: '大盘',
+                              type: 'bar',
+                              data: factorRadarData?.group_ic?.large_cap?.values || [],
+                              itemStyle: { color: '#58a6ff' },
+                            },
+                            {
+                              name: '中盘',
+                              type: 'bar',
+                              data: factorRadarData?.group_ic?.mid_cap?.values || [],
+                              itemStyle: { color: '#a371f7' },
+                            },
+                            {
+                              name: '小盘',
+                              type: 'bar',
+                              data: factorRadarData?.group_ic?.small_cap?.values || [],
+                              itemStyle: { color: '#f85149' },
+                            },
+                          ],
+                        }}
+                        style={{ height: 380 }}
+                        notMerge={true}
                       />
                     </Card>
                   </Col>

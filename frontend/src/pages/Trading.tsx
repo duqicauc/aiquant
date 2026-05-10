@@ -3,17 +3,23 @@ import { Card, Table, Button, Tag, Space, Modal, Input, InputNumber, Select, Row
 import { useNavigate } from 'react-router-dom'
 import { tradingApi } from '../api/client'
 
+interface TradeEntry {
+  id: number
+  buy_price: number
+  shares: number
+  buy_date: string
+  strategy_tag?: string
+  note?: string
+}
+
 interface Position {
   id: number
   ts_code: string
   name: string
-  buy_price: number
-  shares: number
-  buy_date: string
+  trades: TradeEntry[]
   stop_loss_price?: number
   target_price?: number
-  strategy_tag?: string
-  note?: string
+  current_price?: number
 }
 
 interface HistoryItem {
@@ -34,6 +40,13 @@ const STRATEGY_OPTIONS = [
   'manual',
 ]
 
+const BUILD_TYPE_OPTIONS = [
+  { value: 'first', label: '首仓试探 (33%)', ratio: 0.33 },
+  { value: 'add_float', label: '浮盈加仓 (33%)', ratio: 0.33 },
+  { value: 'add_breakout', label: '突破加仓 (34%)', ratio: 0.34 },
+  { value: 'full', label: '一次性满仓', ratio: 1.0 },
+]
+
 export default function Trading() {
   const navigate = useNavigate()
   const [positions, setPositions] = useState<Position[]>([])
@@ -43,6 +56,7 @@ export default function Trading() {
   const [buyModalOpen, setBuyModalOpen] = useState(false)
   const [sellModalOpen, setSellModalOpen] = useState(false)
   const [activePosition, setActivePosition] = useState<Position | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({})
 
   // 买入表单
   const [buyForm, setBuyForm] = useState({
@@ -53,6 +67,7 @@ export default function Trading() {
     buy_date: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
     stop_loss_price: undefined as number | undefined,
     target_price: undefined as number | undefined,
+    build_type: 'first',
     strategy_tag: 'v294 breakout',
     note: '',
   })
@@ -72,7 +87,31 @@ export default function Trading() {
         tradingApi.history(),
         tradingApi.summary(),
       ])
-      setPositions(posRes.data || [])
+      // Aggregate flat positions by ts_code for tiered-build display
+      const flat = posRes.data || []
+      const grouped: Record<string, Position> = {}
+      flat.forEach((p: any) => {
+        if (!grouped[p.ts_code]) {
+          grouped[p.ts_code] = {
+            id: p.id,
+            ts_code: p.ts_code,
+            name: p.name,
+            trades: [],
+            stop_loss_price: p.stop_loss_price,
+            target_price: p.target_price,
+            current_price: p.current_price,
+          }
+        }
+        grouped[p.ts_code].trades.push({
+          id: p.id,
+          buy_price: p.buy_price,
+          shares: p.shares,
+          buy_date: p.buy_date,
+          strategy_tag: p.strategy_tag,
+          note: p.note,
+        })
+      })
+      setPositions(Object.values(grouped))
       setHistory(histRes.data || [])
       setSummary(sumRes.data)
     } catch {
@@ -129,28 +168,70 @@ export default function Trading() {
           </a>
           <br />
           <span style={{ color: '#8b949e', fontSize: 12 }}>{record.name || '-'}</span>
+          {record.trades.length > 1 && (
+            <Tag size="small" style={{ marginLeft: 4, fontSize: 10, background: '#1f4d7a', color: '#58a6ff', borderColor: '#30363d' }}>
+              {record.trades.length}笔
+            </Tag>
+          )}
         </div>
       ),
     },
-    { title: '成本', dataIndex: 'buy_price', render: (v: number) => v.toFixed(2) },
-    { title: '股数', dataIndex: 'shares' },
-    { title: '仓位', render: (_: any, r: Position) => {
-      const total = summary?.initial_capital || 500000
-      const val = r.buy_price * r.shares
-      return `${(val / total * 100).toFixed(1)}%`
-    }},
+    {
+      title: '综合成本',
+      render: (_: any, r: Position) => {
+        const totalCost = r.trades.reduce((sum, t) => sum + t.buy_price * t.shares, 0)
+        const totalShares = r.trades.reduce((sum, t) => sum + t.shares, 0)
+        const avg = totalShares > 0 ? totalCost / totalShares : 0
+        return (
+          <div>
+            <div style={{ color: '#c9d1d9', fontWeight: 500 }}>{avg.toFixed(2)}</div>
+            {r.trades.length > 1 && (
+              <div style={{ color: '#8b949e', fontSize: 11 }}>{totalShares}股</div>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      title: '仓位',
+      render: (_: any, r: Position) => {
+        const total = summary?.initial_capital || 500000
+        const totalCost = r.trades.reduce((sum, t) => sum + t.buy_price * t.shares, 0)
+        return `${(totalCost / total * 100).toFixed(1)}%`
+      },
+    },
+    {
+      title: '持仓健康度',
+      render: (_: any, r: Position) => {
+        const totalCost = r.trades.reduce((sum, t) => sum + t.buy_price * t.shares, 0)
+        const totalShares = r.trades.reduce((sum, t) => sum + t.shares, 0)
+        const avg = totalShares > 0 ? totalCost / totalShares : 0
+        const current = r.current_price || avg
+        const unrealized = ((current - avg) / avg * 100)
+        const distStop = r.stop_loss_price ? ((avg - r.stop_loss_price) / avg * 100).toFixed(1) : '-'
+        return (
+          <div>
+            <div style={{ color: unrealized >= 0 ? '#f85149' : '#3fb950', fontSize: 13 }}>
+              {unrealized >= 0 ? '+' : ''}{unrealized.toFixed(1)}%
+            </div>
+            <div style={{ color: '#8b949e', fontSize: 11 }}>
+              距止损 {distStop}%
+            </div>
+          </div>
+        )
+      },
+    },
     { title: '止损', dataIndex: 'stop_loss_price', render: (v?: number) => v ? v.toFixed(2) : '-' },
     { title: '目标', dataIndex: 'target_price', render: (v?: number) => v ? v.toFixed(2) : '-' },
-    {
-      title: '策略',
-      dataIndex: 'strategy_tag',
-      render: (v?: string) => v ? <Tag color="blue" style={{ fontSize: 12 }}>{v}</Tag> : '-',
-    },
     {
       title: '操作',
       render: (_: any, record: Position) => (
         <Space>
-          <Button size="small" type="primary" style={{ background: '#238636', borderColor: '#238636' }}
+          <Button size="small" style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9', fontSize: 12 }}
+            onClick={() => { setBuyForm({ ...buyForm, ts_code: record.ts_code, name: record.name || '', build_type: 'add_float' }); setBuyModalOpen(true) }}>
+            加仓
+          </Button>
+          <Button size="small" type="primary" style={{ background: '#238636', borderColor: '#238636', fontSize: 12 }}
             onClick={() => { setActivePosition(record); setSellModalOpen(true) }}>
             卖出
           </Button>
@@ -236,7 +317,35 @@ export default function Trading() {
           </Button>
         }
       >
-        <Table dataSource={positions} columns={positionColumns} rowKey="id" loading={loading} pagination={false} size="small" style={{ background: 'transparent' }} />
+        <Table
+          dataSource={positions}
+          columns={positionColumns}
+          rowKey="ts_code"
+          loading={loading}
+          pagination={false}
+          size="small"
+          style={{ background: 'transparent' }}
+          expandable={{
+            expandedRowRender: (record: Position) => (
+              <div style={{ padding: '8px 16px', background: '#0d1117' }}>
+                <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 8 }}>📋 分笔交易记录</div>
+                {record.trades.map((trade, idx) => (
+                  <div key={trade.id} style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '6px 0', borderBottom: idx < record.trades.length - 1 ? '1px solid #21262d' : 'none' }}>
+                    <span style={{ color: '#8b949e', fontSize: 12, minWidth: 50 }}>第{idx + 1}笔</span>
+                    <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 80 }}>成本 {trade.buy_price.toFixed(2)}</span>
+                    <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 60 }}>{trade.shares}股</span>
+                    <span style={{ color: '#6e7681', fontSize: 11, minWidth: 90 }}>{trade.buy_date}</span>
+                    <Tag size="small" style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
+                      {trade.strategy_tag || 'manual'}
+                    </Tag>
+                    {trade.note && <span style={{ color: '#6e7681', fontSize: 11 }}>{trade.note}</span>}
+                  </div>
+                ))}
+              </div>
+            ),
+            rowExpandable: (record: Position) => record.trades.length > 1,
+          }}
+        />
       </Card>
 
       {/* 历史记录 */}
@@ -250,7 +359,13 @@ export default function Trading() {
 
       {/* 买入弹窗 */}
       <Modal
-        title="买入股票"
+        title={
+          <span>
+            {buyForm.build_type === 'first' ? '🎯 首仓试探' :
+             buyForm.build_type === 'add_float' ? '📈 浮盈加仓' :
+             buyForm.build_type === 'add_breakout' ? '🚀 突破加仓' : '💼 买入股票'}
+          </span>
+        }
         open={buyModalOpen}
         onOk={handleBuy}
         onCancel={() => setBuyModalOpen(false)}
@@ -258,12 +373,28 @@ export default function Trading() {
         cancelText="取消"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* 建仓类型 */}
+          <div>
+            <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 6 }}>建仓类型</div>
+            <Select style={{ width: '100%' }} value={buyForm.build_type} onChange={(v) => setBuyForm({ ...buyForm, build_type: v })}>
+              {BUILD_TYPE_OPTIONS.map((opt) => (
+                <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+              ))}
+            </Select>
+            <div style={{ color: '#d29922', fontSize: 11, marginTop: 4 }}>
+              {buyForm.build_type === 'first' && '首仓轻仓试探，单笔风险可控'}
+              {buyForm.build_type === 'add_float' && '已有浮盈后加仓，止损同步上移'}
+              {buyForm.build_type === 'add_breakout' && '突破确认后满仓，趋势共振'}
+              {buyForm.build_type === 'full' && '一次性满仓，适合高置信度击球区'}
+            </div>
+          </div>
           <Input placeholder="股票代码（如 002578.SZ）" value={buyForm.ts_code} onChange={(e) => setBuyForm({ ...buyForm, ts_code: e.target.value })} />
           <Input placeholder="股票名称" value={buyForm.name} onChange={(e) => setBuyForm({ ...buyForm, name: e.target.value })} />
           <InputNumber placeholder="买入价格" style={{ width: '100%' }} value={buyForm.buy_price} onChange={(v) => setBuyForm({ ...buyForm, buy_price: v || 0 })} />
           <InputNumber placeholder="买入股数" style={{ width: '100%' }} value={buyForm.shares} onChange={(v) => setBuyForm({ ...buyForm, shares: v || 0 })} />
           <Input placeholder="买入日期（YYYYMMDD）" value={buyForm.buy_date} onChange={(e) => setBuyForm({ ...buyForm, buy_date: e.target.value })} />
-          <InputNumber placeholder="止损价格（可选）" style={{ width: '100%' }} value={buyForm.stop_loss_price} onChange={(v) => setBuyForm({ ...buyForm, stop_loss_price: v || undefined })} />
+          <InputNumber placeholder="止损价格（必填，入场即设）" style={{ width: '100%' }} value={buyForm.stop_loss_price} onChange={(v) => setBuyForm({ ...buyForm, stop_loss_price: v || undefined })} />
+          <div style={{ color: '#f85149', fontSize: 11 }}>⚠️ 每笔买入必须同步设定止损位，加仓后止损同步上移</div>
           <InputNumber placeholder="目标价格（可选）" style={{ width: '100%' }} value={buyForm.target_price} onChange={(v) => setBuyForm({ ...buyForm, target_price: v || undefined })} />
           <Select style={{ width: '100%' }} value={buyForm.strategy_tag} onChange={(v) => setBuyForm({ ...buyForm, strategy_tag: v })}>
             {STRATEGY_OPTIONS.map((s) => <Select.Option key={s} value={s}>{s}</Select.Option>)}

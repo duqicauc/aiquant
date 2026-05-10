@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from src.api.routers.auth import get_current_user
+from src.api.routers.auth import get_current_user, get_current_user_optional
 from src.scheduler.models import get_session_factory, UserPosition, UserPositionHistory, User
 
 router = APIRouter()
@@ -266,8 +266,18 @@ async def list_history(user: User = Depends(get_current_user)):
 
 
 @router.get("/summary", response_model=TradingSummary)
-async def get_summary(user: User = Depends(get_current_user)):
-    """获取账户概览"""
+async def get_summary(user: User = Depends(get_current_user_optional)):
+    """获取账户概览（未登录返回默认空数据，便于前端展示）"""
+    if not user:
+        return TradingSummary(
+            initial_capital=500000.0,
+            total_positions=0,
+            holding_value=0.0,
+            cash=500000.0,
+            total_assets=500000.0,
+            total_pnl_pct=0.0,
+        )
+
     session_factory = get_session_factory()
     with session_factory() as session:
         from src.scheduler.models import UserSetting

@@ -5,6 +5,7 @@ import Research from '../pages/Research'
 import Prediction from '../pages/Prediction'
 import Backtest from '../pages/Backtest'
 import Trading from '../pages/Trading'
+import StrategyPool from '../pages/StrategyPool'
 
 import System from '../pages/System'
 import Scheduler from '../pages/Scheduler'
@@ -21,6 +22,7 @@ export default function AppRoutes() {
       <Route path="/prediction" element={<Prediction />} />
       <Route path="/backtest" element={<Backtest />} />
       <Route path="/trading" element={<Trading />} />
+      <Route path="/strategy-pool" element={<StrategyPool />} />
       <Route path="/watchlist" element={<Navigate to="/prediction" replace />} />
       <Route path="/system" element={<System />} />
       <Route path="/scheduler" element={<Scheduler />} />

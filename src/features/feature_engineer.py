@@ -240,8 +240,13 @@ class FeatureEngineer:
             df["breakout_strength_55d"] = 0
 
         # 放量突破强度
-        if "vol" in df.columns and "vol_mean" in df.columns:
-            df["breakout_volume_strength"] = np.where(df["vol_mean"] > 0, df["vol"] / df["vol_mean"], 1)
+        if "vol" in df.columns:
+            group_key = "sample_id" if "sample_id" in df.columns else "ts_code"
+            if group_key in df.columns:
+                vol_ma20 = df.groupby(group_key)["vol"].transform(lambda x: x.rolling(20, min_periods=10).mean())
+            else:
+                vol_ma20 = df["vol"].rolling(20, min_periods=10).mean()
+            df["breakout_volume_strength"] = np.where(vol_ma20 > 0, df["vol"] / vol_ma20, 1)
         elif "volume_ratio" in df.columns:
             df["breakout_volume_strength"] = df["volume_ratio"].fillna(1)
         else:
@@ -298,8 +303,46 @@ class FeatureEngineer:
 
         # 合并市场数据
         df["trade_date"] = pd.to_datetime(df["trade_date"])
+        df_market = df_market.copy()
         df_market["trade_date"] = pd.to_datetime(df_market["trade_date"])
-        df = df.merge(df_market, on="trade_date", how="left")
+
+        # 如果 df_market 只有原始行情数据，本地计算市场特征
+        if "market_pct_chg" not in df_market.columns and "pct_chg" in df_market.columns:
+            df_market["market_pct_chg"] = df_market["pct_chg"]
+
+        if "market_return_34d" not in df_market.columns and "close" in df_market.columns:
+            df_market["market_return_34d"] = df_market["close"].pct_change(34) * 100
+
+        if "market_volatility_34d" not in df_market.columns and "pct_chg" in df_market.columns:
+            df_market["market_volatility_34d"] = df_market["pct_chg"].rolling(34, min_periods=10).std()
+
+        if "market_momentum_5d" not in df_market.columns and "close" in df_market.columns:
+            df_market["market_momentum_5d"] = df_market["close"].pct_change(5) * 100
+
+        if "market_momentum_10d" not in df_market.columns and "close" in df_market.columns:
+            df_market["market_momentum_10d"] = df_market["close"].pct_change(10) * 100
+
+        if "market_momentum_20d" not in df_market.columns and "close" in df_market.columns:
+            df_market["market_momentum_20d"] = df_market["close"].pct_change(20) * 100
+
+        if "market_trend" not in df_market.columns and "close" in df_market.columns:
+            ma5 = df_market["close"].rolling(5, min_periods=3).mean()
+            ma10 = df_market["close"].rolling(10, min_periods=5).mean()
+            df_market["market_trend"] = np.where(ma5 > ma10, 1, np.where(ma5 < ma10, -1, 0))
+
+        if "market_regime" not in df_market.columns:
+            df_market["market_regime"] = 0
+
+        if "market_position_20d" not in df_market.columns and "close" in df_market.columns:
+            high_20 = df_market["close"].rolling(20, min_periods=10).max()
+            low_20 = df_market["close"].rolling(20, min_periods=10).min()
+            df_market["market_position_20d"] = np.where(
+                high_20 > low_20, (df_market["close"] - low_20) / (high_20 - low_20), 0.5
+            )
+
+        # 只保留需要的列进行合并
+        merge_cols = ["trade_date"] + [c for c in market_cols if c in df_market.columns]
+        df = df.merge(df_market[merge_cols], on="trade_date", how="left")
 
         for col in market_cols:
             if col not in df.columns:
@@ -370,7 +413,7 @@ class FeatureEngineer:
     # ==================== 补充特征 ====================
 
     def _calc_supplementary(self, df: pd.DataFrame) -> pd.DataFrame:
-        """计算补充特征（原 regenerate_v6_negative_features.py）"""
+        """计算补充特征"""
         df = df.copy()
         n = len(df)
         if n < 5:
@@ -662,9 +705,15 @@ class FeatureEngineer:
             df["volume_rsv_20d"] = np.where(vol_high > vol_low, (vol - vol_low) / (vol_high - vol_low + 1e-8), 0.5)
 
         if "volume_trend_slope_10d" not in df.columns:
-            df["volume_trend_slope_10d"] = vol.diff(10) / (vol.shift(10) + 1e-8)
+            if groups is not None:
+                df["volume_trend_slope_10d"] = groups["vol"].transform(lambda x: x.rolling(10, min_periods=5).apply(lambda s: np.polyfit(range(len(s)), s, 1)[0], raw=True))
+            else:
+                df["volume_trend_slope_10d"] = vol.rolling(10, min_periods=5).apply(lambda s: np.polyfit(range(len(s)), s, 1)[0], raw=True)
         if "volume_trend_slope_20d" not in df.columns:
-            df["volume_trend_slope_20d"] = vol.diff(20) / (vol.shift(20) + 1e-8)
+            if groups is not None:
+                df["volume_trend_slope_20d"] = groups["vol"].transform(lambda x: x.rolling(20, min_periods=10).apply(lambda s: np.polyfit(range(len(s)), s, 1)[0], raw=True))
+            else:
+                df["volume_trend_slope_20d"] = vol.rolling(20, min_periods=10).apply(lambda s: np.polyfit(range(len(s)), s, 1)[0], raw=True)
 
         # 历史价格位置
         if "price_vs_hist_high" not in df.columns:

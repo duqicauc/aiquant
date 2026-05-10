@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { predictionApi, watchlistApi } from '../api/client'
+import { predictionApi, watchlistApi, stockNoteApi } from '../api/client'
 
 const { Option } = Select
 
@@ -151,6 +151,12 @@ export default function Prediction() {
   const [minProb, setMinProb] = useState<number | undefined>(undefined)
   const [sortBy, setSortBy] = useState<string>('prob')
 
+  // ── New filters for subjective-quant integration ──
+  const [showStrikeOnly, setShowStrikeOnly] = useState(false)
+  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false)
+  const [showBullStageOnly, setShowBullStageOnly] = useState(false)
+  const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
+
   // ── Tab: Explosion ──
   const [explosionData, setExplosionData] = useState<any[]>([])
   const [explosionLoading, setExplosionLoading] = useState(false)
@@ -176,6 +182,12 @@ export default function Prediction() {
     })
     fetchToday()
     fetchPipeline()
+    // 加载观察池列表
+    stockNoteApi.list().then((res) => {
+      const notes = res.data?.items || []
+      const codes = new Set(notes.filter((n: any) => n.note_type === 'watched').map((n: any) => n.ts_code))
+      setWatchedCodes(codes)
+    }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -336,6 +348,46 @@ export default function Prediction() {
     )
   }
 
+  // ── Helpers for multi-cycle & stage visualization ──
+  const probColor = (p: number) => p >= 0.7 ? '#3fb950' : p >= 0.5 ? '#d29922' : '#8b949e'
+  const stageColor = (stage?: string) => {
+    if (!stage) return '#8b949e'
+    if (stage.includes('拉升')) return '#3fb950'
+    if (stage.includes('筑底')) return '#58a6ff'
+    if (stage.includes('顶部')) return '#d29922'
+    return '#f85149'
+  }
+
+  // Three-light indicator for prob_short / prob_mid / prob_long
+  const ThreeLight = ({ short, mid, long }: { short?: number; mid?: number; long?: number }) => {
+    const s = short ?? 0, m = mid ?? 0, l = long ?? 0
+    return (
+      <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+        <Tooltip title={`短期: ${(s * 100).toFixed(0)}%`}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(s), display: 'inline-block' }} />
+        </Tooltip>
+        <Tooltip title={`中期: ${(m * 100).toFixed(0)}%`}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(m), display: 'inline-block' }} />
+        </Tooltip>
+        <Tooltip title={`长期: ${(l * 100).toFixed(0)}%`}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(l), display: 'inline-block' }} />
+        </Tooltip>
+      </div>
+    )
+  }
+
+  // Left-side signal badge
+  const LeftSideBadge = ({ signal }: { signal?: string }) => {
+    if (!signal) return null
+    return (
+      <Tooltip title={`左侧信号: ${signal}`}>
+        <Tag style={{ margin: 0, fontSize: '0.65rem', background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.3)', padding: '0 4px' }}>
+          ⚡ {signal}
+        </Tag>
+      </Tooltip>
+    )
+  }
+
 
 
   // ── Pipeline status bar ──
@@ -389,11 +441,11 @@ export default function Prediction() {
 
 
 
-  // ── Columns: Today Tab (精简) ──
+  // ── Columns: Today Tab (enhanced with multi-cycle) ──
   const todayColumns = [
-    { title: '排名', dataIndex: 'rank', key: 'rank', width: 60 },
+    { title: '排名', dataIndex: 'rank', key: 'rank', width: 50 },
     {
-      title: '股票', key: 'stock', width: 140,
+      title: '股票', key: 'stock', width: 130,
       render: (_: any, r: any) => (
         <div>
           <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
@@ -405,7 +457,18 @@ export default function Prediction() {
       ),
     },
     {
-      title: '预测概率', key: 'prob', width: 90,
+      title: (
+        <Tooltip title="短(5-10天) / 中(34天) / 长(120天+)">
+          <span>三周期🔴</span>
+        </Tooltip>
+      ),
+      key: 'three_light', width: 70,
+      render: (_: any, r: any) => (
+        <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
+      ),
+    },
+    {
+      title: '中期概率', key: 'prob', width: 80,
       render: (_: any, r: any) => {
         const prob = r.prob ?? r.probability ?? 0
         const pct = typeof prob === 'number' ? (prob > 1 ? prob : prob * 100).toFixed(1) : '0'
@@ -413,7 +476,22 @@ export default function Prediction() {
       },
     },
     {
-      title: '分歧度', key: 'disagreement', width: 80,
+      title: '阶段', key: 'stage', width: 85,
+      render: (_: any, r: any) => {
+        const stage = r.market_stage || '未知'
+        return (
+          <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
+            {stage}
+          </Tag>
+        )
+      },
+    },
+    {
+      title: '左侧信号', key: 'left', width: 110,
+      render: (_: any, r: any) => <LeftSideBadge signal={r.left_side_signal} />,
+    },
+    {
+      title: '分歧度', key: 'disagreement', width: 75,
       render: (_: any, r: any) => {
         const px = r.prob_xgb_cal ?? r.prob_xgb
         const pl = r.prob_lgb_cal ?? r.prob_lgb
@@ -431,11 +509,11 @@ export default function Prediction() {
       },
     },
     {
-      title: '最新价', dataIndex: 'close', key: 'close', width: 80,
+      title: '最新价', dataIndex: 'close', key: 'close', width: 70,
       render: (v: any) => (typeof v === 'number' ? v.toFixed(2) : '-'),
     },
     {
-      title: '操作', key: 'action', width: 100,
+      title: '操作', key: 'action', width: 95,
       render: (_: any, r: any) => (
         <Space size={2}>
           <Button size="small" onClick={() => navigate(`/research?code=${r.ts_code}`)}
@@ -447,11 +525,11 @@ export default function Prediction() {
     },
   ]
 
-  // ── Columns: Track Tab ──
+  // ── Columns: Track Tab (enhanced) ──
   const trackColumns = [
-    { title: '排名', dataIndex: 'rank', key: 'rank', width: 50, render: (_: any, __: any, idx: number) => idx + 1 },
+    { title: '排名', dataIndex: 'rank', key: 'rank', width: 45, render: (_: any, __: any, idx: number) => idx + 1 },
     {
-      title: '股票', key: 'stock', width: 130,
+      title: '股票', key: 'stock', width: 120,
       render: (_: any, r: WatchlistRecord) => (
         <div>
           <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
@@ -463,14 +541,40 @@ export default function Prediction() {
       ),
     },
     {
-      title: '预测概率', key: 'prob', width: 80,
+      title: (
+        <Tooltip title="短(5-10天) / 中(34天) / 长(120天+)">
+          <span>三周期</span>
+        </Tooltip>
+      ),
+      key: 'three_light', width: 60,
+      render: (_: any, r: any) => (
+        <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
+      ),
+    },
+    {
+      title: '中期概率', key: 'prob', width: 75,
       render: (_: any, r: WatchlistRecord) => {
         const pct = (r.prob * 100).toFixed(1)
         return <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>{pct}%</Tag>
       },
     },
     {
-      title: '推荐历史', key: 'rec', width: 110,
+      title: '阶段', key: 'stage', width: 80,
+      render: (_: any, r: any) => {
+        const stage = r.market_stage || '未知'
+        return (
+          <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
+            {stage}
+          </Tag>
+        )
+      },
+    },
+    {
+      title: '左侧信号', key: 'left', width: 100,
+      render: (_: any, r: any) => <LeftSideBadge signal={r.left_side_signal} />,
+    },
+    {
+      title: '推荐历史', key: 'rec', width: 100,
       render: (_: any, r: WatchlistRecord) => {
         const h = r.rec_history
         const fmt = (d: string) => d ? `${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
@@ -491,10 +595,10 @@ export default function Prediction() {
         )
       },
     },
-    { title: '1天收益', key: 'r1', width: 80, render: (_: any, r: WatchlistRecord) => returnRender(r.return_1d) },
-    { title: '5天收益', key: 'r5', width: 80, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d) },
+    { title: '1天收益', key: 'r1', width: 75, render: (_: any, r: WatchlistRecord) => returnRender(r.return_1d) },
+    { title: '5天收益', key: 'r5', width: 75, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d) },
     {
-      title: '信号', key: 'signal', width: 80,
+      title: '信号', key: 'signal', width: 75,
       render: (_: any, r: WatchlistRecord) => (
         <Space size={2}>
           {r.is_explosion && <Tag color="red" style={{ fontSize: '0.7rem', padding: '0 4px' }}>🚀</Tag>}
@@ -504,7 +608,7 @@ export default function Prediction() {
       ),
     },
     {
-      title: '建议', key: 'suggestion', width: 180,
+      title: '建议', key: 'suggestion', width: 160,
       render: (_: any, r: WatchlistRecord) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.suggestion}</span>,
     },
   ]
@@ -612,25 +716,129 @@ export default function Prediction() {
             children: (
               <div>
                 <ProbabilityDistribution dist={fullDist} />
+
+                {/* ── 今日击球区卡片栏 ── */}
                 <Card
+                  size="small"
+                  style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }}
+                  bodyStyle={{ padding: '10px 14px' }}
                   title={
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>最新预测结果</span>
-                      <Space size="small">
-                        <span style={{ color: '#8b949e', fontSize: '0.875rem' }}>展示数量</span>
-                        <Select value={todayTopN} onChange={(v) => setTodayTopN(v)} style={{ width: 90 }} dropdownStyle={{ background: '#21262d' }} size="small">
-                          <Option value={10}>Top 10</Option>
-                          <Option value={20}>Top 20</Option>
-                          <Option value={50}>Top 50</Option>
-                          <Option value={100}>Top 100</Option>
-                        </Select>
-                      </Space>
-                    </div>
+                    <span style={{ color: '#c9d1d9', fontSize: '0.9rem' }}>
+                      🎯 今日击球区
+                      <span style={{ color: '#8b949e', fontSize: '0.75rem', marginLeft: 8 }}>
+                        高置信度信号（三周期共振 + 3L全符合 + 拉升初期）
+                      </span>
+                    </span>
                   }
+                >
+                  {(() => {
+                    const strikeItems = todayData.filter((r: any) =>
+                      (r.prob ?? 0) > 0.7 &&
+                      (r.prob_short ?? 0) > 0.6 &&
+                      (r.market_stage || '').includes('拉升')
+                    ).slice(0, 5)
+                    if (strikeItems.length === 0) {
+                      return (
+                        <div style={{ color: '#8b949e', fontSize: '0.8rem', textAlign: 'center', padding: '12px 0' }}>
+                          暂无击球区标的，请耐心等待高置信度信号
+                        </div>
+                      )
+                    }
+                    return (
+                      <div style={{ display: 'flex', gap: 10, overflow: 'auto' }}>
+                        {strikeItems.map((r: any) => (
+                          <div
+                            key={r.ts_code}
+                            onClick={() => navigate(`/research?code=${r.ts_code}`)}
+                            style={{
+                              minWidth: 180,
+                              padding: '10px 12px',
+                              background: '#161b22',
+                              borderRadius: 6,
+                              border: '1px solid #30363d',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6,
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ color: '#c9d1d9', fontWeight: 600, fontSize: '0.85rem' }}>{r.name || r.ts_code}</span>
+                              <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
+                            </div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <Tag style={{ margin: 0, fontSize: '0.65rem', background: stageColor(r.market_stage) + '15', color: stageColor(r.market_stage), borderColor: stageColor(r.market_stage) + '30' }}>
+                                {r.market_stage || '未知'}
+                              </Tag>
+                              {r.left_side_signal && (
+                                <Tag style={{ margin: 0, fontSize: '0.65rem', background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.3)' }}>
+                                  {r.left_side_signal}
+                                </Tag>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: '#8b949e' }}>
+                              中期 {(r.prob ? (r.prob * 100).toFixed(0) : 0)}% | 短期 {(r.prob_short ? (r.prob_short * 100).toFixed(0) : 0)}%
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </Card>
+
+                {/* ── 快捷筛选器 ── */}
+                <Card
+                  size="small"
+                  style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }}
+                  bodyStyle={{ padding: '8px 14px' }}
+                >
+                  <Space size="middle" wrap>
+                    <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>快捷筛选:</span>
+                    <Button
+                      size="small"
+                      type={showStrikeOnly ? 'primary' : 'default'}
+                      onClick={() => setShowStrikeOnly(!showStrikeOnly)}
+                      style={{ background: showStrikeOnly ? '#1f4d7a' : '#21262d', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.75rem' }}
+                    >
+                      🎯 只看击球区
+                    </Button>
+                    <Button
+                      size="small"
+                      type={showBullStageOnly ? 'primary' : 'default'}
+                      onClick={() => setShowBullStageOnly(!showBullStageOnly)}
+                      style={{ background: showBullStageOnly ? '#1f4d7a' : '#21262d', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.75rem' }}
+                    >
+                      📈 只看拉升阶段
+                    </Button>
+                    <Button
+                      size="small"
+                      type={showWatchlistOnly ? 'primary' : 'default'}
+                      onClick={() => setShowWatchlistOnly(!showWatchlistOnly)}
+                      style={{ background: showWatchlistOnly ? '#1f4d7a' : '#21262d', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.75rem' }}
+                    >
+                      👁️ 只看观察池
+                    </Button>
+                    <span style={{ color: '#8b949e', fontSize: '0.8rem', marginLeft: 12 }}>展示数量</span>
+                    <Select value={todayTopN} onChange={(v) => setTodayTopN(v)} style={{ width: 80 }} dropdownStyle={{ background: '#21262d' }} size="small">
+                      <Option value={10}>Top 10</Option>
+                      <Option value={20}>Top 20</Option>
+                      <Option value={50}>Top 50</Option>
+                      <Option value={100}>Top 100</Option>
+                    </Select>
+                  </Space>
+                </Card>
+
+                <Card
+                  title="最新预测结果"
                   style={{ background: '#161b22', borderColor: '#30363d' }}
                 >
                   <Table
-                    dataSource={todayData}
+                    dataSource={todayData.filter((r: any) => {
+                      if (showStrikeOnly && !((r.prob ?? 0) > 0.7 && (r.prob_short ?? 0) > 0.6 && (r.market_stage || '').includes('拉升'))) return false
+                      if (showBullStageOnly && !(r.market_stage || '').includes('拉升')) return false
+                      if (showWatchlistOnly && !watchedCodes.has(r.ts_code || r.code)) return false
+                      return true
+                    })}
                     columns={todayColumns}
                     loading={todayLoading}
                     pagination={{ pageSize: 20 }}

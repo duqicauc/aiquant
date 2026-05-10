@@ -27,7 +27,23 @@ FACTOR_COLS = ["ts_code","trade_date","macd_dif","macd_dea","macd","kdj_k","kdj_
 from src.data.tushare_data_provider import STK_FACTOR_RENAME
 ARCTIC_FACTOR_COLS = ["ts_code", "trade_date"] + list(STK_FACTOR_RENAME.values())
 
-def get_existing_dates(conn, table, start_date: str):
+def get_existing_dates(conn, table, start_date: str, arctic: ArcticDataProvider = None):
+    """获取已存在的日期。优先查 ArcticDB，失败回退 SQLite。"""
+    if arctic is not None:
+        try:
+            if table == "daily_data":
+                df = arctic.read_daily_ohlcv(start_date, "20991231")
+            elif table == "daily_basic":
+                df = arctic.read_daily_basic(start_date, "20991231")
+            elif table == "stk_factor":
+                df = arctic.read_daily_factors(start_date, "20991231")
+            else:
+                df = pd.DataFrame()
+            if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+                return set(df.index.strftime("%Y%m%d"))
+            return set()
+        except Exception:
+            pass
     cursor = conn.cursor()
     cursor.execute(f"SELECT DISTINCT trade_date FROM {table} WHERE trade_date >= ?", (start_date,))
     return {row[0] for row in cursor.fetchall()}
@@ -43,15 +59,6 @@ def chunked_insert(conn, df, table, cols):
         conn.executemany(sql, chunk)
         total += len(chunk)
     return total
-
-def write_daily_data(conn, df, now):
-    if df.empty: return 0
-    df = df.copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.strftime("%Y%m%d")
-    df["update_time"] = now
-    for c in DAILY_COLS:
-        if c not in df.columns: df[c] = None
-    return chunked_insert(conn, df, "daily_data", DAILY_COLS)
 
 def write_daily_basic(conn, df, now):
     if df.empty: return 0
@@ -105,22 +112,21 @@ def write_to_arctic(arctic, df_daily, df_basic, df_factor):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="补全 quant_data.db flat 表缺失数据（同步写入 ArcticDB）")
+    parser = argparse.ArgumentParser(description="补全行情数据（daily_data 写入 ArcticDB，basic/factor 写入 SQLite + ArcticDB）")
     parser.add_argument("--start-date", default=DEFAULT_START_DATE, help="开始日期 YYYYMMDD")
     parser.add_argument("--end-date", default=DEFAULT_END_DATE, help="结束日期 YYYYMMDD")
-    parser.add_argument("--no-arctic", action="store_true", help="不同步写入 ArcticDB")
     args = parser.parse_args()
 
     start_date = args.start_date
     end_date = args.end_date
 
     provider = TushareDataProvider()
-    arctic = None if args.no_arctic else ArcticDataProvider(uri=ARCTIC_URI)
+    arctic = ArcticDataProvider(uri=ARCTIC_URI)
     trade_dates = provider.get_trade_dates(start_date, end_date)
     log.info(f"共有 {len(trade_dates)} 个交易日需要补全: {trade_dates[0]} ~ {trade_dates[-1]}")
     with sqlite3.connect(DB_PATH) as conn:
         existing = {
-            "daily_data": get_existing_dates(conn, "daily_data", start_date),
+            "daily_data": get_existing_dates(conn, "daily_data", start_date, arctic),
             "daily_basic": get_existing_dates(conn, "daily_basic", start_date),
             "stk_factor": get_existing_dates(conn, "stk_factor", start_date),
         }
@@ -131,18 +137,17 @@ def main():
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             df_daily, df_basic, df_factor = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-            # daily_data
+            # daily_data → 仅写入 ArcticDB（不再写 SQLite）
             if date not in existing["daily_data"]:
                 try:
                     df_daily = provider.fetch_daily(date)
-                    n = write_daily_data(conn, df_daily, now)
-                    log.info(f"[{i}/{total}] {date} daily_data: {n} 条")
+                    log.info(f"[{i}/{total}] {date} daily_data: 从 Tushare 获取 {len(df_daily)} 条 → ArcticDB")
                 except Exception as e:
                     log.error(f"[{i}/{total}] {date} daily_data 失败: {e}")
             else:
-                log.info(f"[{i}/{total}] {date} daily_data: 跳过")
+                log.info(f"[{i}/{total}] {date} daily_data: 跳过（ArcticDB 已存在）")
 
-            # daily_basic
+            # daily_basic → 写入 SQLite + ArcticDB
             if date not in existing["daily_basic"]:
                 try:
                     df_basic = provider.fetch_daily_basic(date)
@@ -153,7 +158,7 @@ def main():
             else:
                 log.info(f"[{i}/{total}] {date} daily_basic: 跳过")
 
-            # stk_factor
+            # stk_factor → 写入 SQLite + ArcticDB
             if date not in existing["stk_factor"]:
                 try:
                     df_factor = provider.fetch_stk_factor_pro(date)
@@ -166,15 +171,20 @@ def main():
 
             conn.commit()
 
-            # 同步写入 ArcticDB
-            if arctic:
-                write_to_arctic(arctic, df_daily, df_basic, df_factor)
+            # 统一写入 ArcticDB
+            write_to_arctic(arctic, df_daily, df_basic, df_factor)
 
             if i < total:
                 time.sleep(6)
         log.info("=" * 50)
         log.info("验证结果:")
-        for tbl in ["daily_data", "daily_basic", "stk_factor"]:
+        # ArcticDB daily_data
+        try:
+            df_ohlcv = arctic.read_daily_ohlcv(start_date, "20991231")
+            log.info(f"  ArcticDB daily/ohlcv: {len(df_ohlcv)} 行, {df_ohlcv.index.nunique()} 天")
+        except Exception as e:
+            log.warning(f"  ArcticDB daily/ohlcv 验证失败: {e}")
+        for tbl in ["daily_basic", "stk_factor"]:
             c = conn.cursor()
             c.execute(f"SELECT MAX(trade_date), COUNT(*) FROM {tbl} WHERE trade_date >= ?", (start_date,))
             md, cnt = c.fetchone()

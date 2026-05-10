@@ -156,7 +156,7 @@ def _models_tab():
                                                 [
                                                     dbc.ListGroupItem(
                                                         [
-                                                            html.Strong("v2.9.1-ensemble", className="text-success"),
+                                                            html.Strong("v2.9.5-ensemble", className="text-success"),
                                                             html.Span(" — 当前生产模型", className="text-muted ms-2"),
                                                             dbc.Badge("生产中", color="success", className="ms-2"),
                                                         ],
@@ -165,14 +165,14 @@ def _models_tab():
                                                     dbc.ListGroupItem(
                                                         [
                                                             html.Strong("v2.7.0-ensemble", className="text-info"),
-                                                            html.Span(" — Fallback 模型", className="text-muted ms-2"),
+                                                            html.Span(" — 上一版本", className="text-muted ms-2"),
                                                             dbc.Badge("备用", color="info", className="ms-2"),
                                                         ],
                                                         style={"backgroundColor": "#21262d", "color": "#c9d1d9", "borderColor": "#30363d"},
                                                     ),
                                                     dbc.ListGroupItem(
                                                         [
-                                                            html.Strong("v2.9.2-catboost", className="text-warning"),
+                                                            html.Strong("v2.9.1-ensemble", className="text-warning"),
                                                             html.Span(" — 测试候选", className="text-muted ms-2"),
                                                             dbc.Badge("测试", color="warning", className="ms-2"),
                                                         ],
