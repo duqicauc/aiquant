@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import backtest_v232_v270_complementary as bt  # noqa: E402
+
 from src.trading.ashare_rules import (
     REASON_LIMIT_DOWN_NO_SELL,
     REASON_LIMIT_UP_NO_BUY,
@@ -212,7 +213,7 @@ def main() -> int:
     p.add_argument("--top-buy", type=int, default=10)
     p.add_argument("--top-hold", type=int, default=50)
     p.add_argument("--no-ma5-sell", action="store_true")
-    p.add_argument("--stop-loss-pct", type=float, default=4.0)
+    p.add_argument("--stop-loss-pct", type=float, default=10.0)
     p.add_argument("--stop-loss-mode", type=str, default="close", choices=["none", "close", "intraday_low"])
     p.add_argument("--exclude-sectors", action="store_true")
     p.add_argument("--buy-slippage-bps", type=float, default=15.0)
@@ -340,7 +341,8 @@ def main() -> int:
             "",
             "## 明细指标与阻塞统计",
             "",
-            "| run_id | 收益率% | 最大回撤% | 夏普 | 费用(元) | limit_up | limit_down | suspended | vol_block | halt_buy | 买 | 卖 |",
+            "| run_id | 收益率% | 最大回撤% | 夏普 | 费用(元) | limit_up |"
+            " limit_down | suspended | vol_block | halt_buy | 买 | 卖 |",
             "|--------|---------|-----------|------|----------|----------|------------|-----------|-----------|----------|----|----|",
         ]
     )

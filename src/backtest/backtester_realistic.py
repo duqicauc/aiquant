@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-v2.8.1 实盘策略回测器（贴近实盘版本）
+v2.9.0 实盘策略回测器（贴近实盘版本）
 
 策略参数：
 - 每支股票买入金额: 300,000 元（固定金额）
@@ -9,7 +9,7 @@ v2.8.1 实盘策略回测器（贴近实盘版本）
 - 当日顺序: 先买后卖
 - 资金规则: T日卖出资金 → T+1日开盘才能用于买入
 - 止损: 4%止损(收盘价触发)
-- 卖出策略: 跌出 Top50 且 连续两日收盘价低于 MA5 → T+1日收盘价卖出
+- 卖出策略: 跌出 TopN 且 连续两日收盘价低于 MA5 → T+1日收盘价卖出（可配置 hold_days / top_n_hold）
 - 执行约束: 含滑点 + 交易费用 + 涨跌停/停牌/量能过滤
 
 Usage:
@@ -46,11 +46,13 @@ class RealisticBacktester:
         initial_capital: float = 10_000_000,
         per_stock_amount: float = 300_000,  # 每只股票固定买入金额
         top_n_buy: int = 10,
-        stop_loss_pct: float = 4.0,
-        trailing_stop_pct: float = 3.0,
+        stop_loss_pct: float = 10.0,      # Phase 2 优化: 10% 硬止损减少震荡市误触发
+        trailing_stop_pct: float = 2.0,    # Phase 2 优化: 2% 回撤快速锁定利润
         trailing_stop_activation: float = 5.0,
         ma_window: int = 5,
         ma_consecutive_days: int = 2,
+        hold_days: int = 3,               # Phase 1 优化: 最少持有 3 天
+        top_n_hold: int = 20,             # Phase 1 优化: 跌出 Top20 才触发 MA5 退出
         buy_slippage_bps: float = 15.0,
         sell_slippage_bps: float = 20.0,
         commission_rate: float = 0.00025,  # 佣金率 0.025%
@@ -69,6 +71,8 @@ class RealisticBacktester:
         self.trailing_stop_activation = trailing_stop_activation
         self.ma_window = ma_window
         self.ma_consecutive_days = ma_consecutive_days
+        self.hold_days = hold_days
+        self.top_n_hold = top_n_hold
         self.buy_slippage_bps = buy_slippage_bps
         self.sell_slippage_bps = sell_slippage_bps
         self.commission_rate = commission_rate
@@ -347,14 +351,15 @@ class RealisticBacktester:
 
         log.info("=" * 80)
         log.info(f"实盘策略回测: {trade_dates[0]} ~ {trade_dates[-1]} ({len(trade_dates)}个交易日)")
-        log.info(f"策略: 动态仓位(基础{self.per_stock_amount/10000:.0f}万/股), {self.stop_loss_pct}%止损, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1开盘卖)")
+        hold_info = f", 最少持有{self.hold_days}天" if self.hold_days > 0 else ""
+        log.info(f"策略: 动态仓位(基础{self.per_stock_amount/10000:.0f}万/股), {self.stop_loss_pct}%止损{hold_info}, MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top{self.top_n_hold},T+1开盘卖)")
         log.info(f"费用: 佣金{self.commission_rate*100:.3f}%(最低{self.min_commission:.0f}元) + 印花税{self.stamp_duty_rate*100:.1f}%")
         log.info(f"滑点: 买入{self.buy_slippage_bps}bp / 卖出{self.sell_slippage_bps}bp")
         log.info(f"约束: 涨跌停过滤 + 停牌过滤 + 成交额>{self.min_amount/10000:.0f}万 + 市场环境过滤(上证>=MA20,跌破清仓)")
         log.info("=" * 80)
 
         cash = self.initial_capital  # 可用现金
-        holdings = {}  # {ts_code: {qty, cost, buy_date, peak_price}}
+        holdings = {}  # {ts_code: {qty, cost, buy_date, buy_idx, peak_price}}
         transactions = []
         daily_values = []
         frozen_proceeds = {}  # {解冻日期: 金额}
@@ -389,7 +394,7 @@ class RealisticBacktester:
                     log.debug(f"SectorFilter 排序失败 {signal_date}: {e}")
 
             top10 = pred_df.head(self.top_n_buy)
-            top50_codes = set(pred_df.head(50)["ts_code"].tolist())
+            top_n_hold_codes = set(pred_df.head(self.top_n_hold)["ts_code"].tolist())
 
             # 3. 获取当日价格数据
             df_daily = self.get_daily_prices(date)
@@ -637,6 +642,7 @@ class RealisticBacktester:
                         "qty": qty,
                         "cost": buy_price,
                         "buy_date": date,
+                        "buy_idx": i,
                         "peak_price": buy_price,
                     }
                     bought_today.add(ts_code)
@@ -753,8 +759,9 @@ class RealisticBacktester:
                             })
                     continue
 
-                # MA5_cd2退出检查（仅在跌出Top50时触发，且仅牛市执行）→ T+1日收盘价卖出
-                if is_bull and ts_code not in top50_codes:
+                # MA5_cd2退出检查（仅在跌出TopN时触发，且仅牛市执行，且满足最少持有天数）→ T+1日收盘价卖出
+                hold_days_elapsed = i - pos.get("buy_idx", i)
+                if is_bull and ts_code not in top_n_hold_codes and hold_days_elapsed >= self.hold_days:
                     hist = self.get_stock_hist(ts_code, date, days=self.ma_window + self.ma_consecutive_days + 5)
                     if not hist.empty and len(hist) >= self.ma_window + 1:
                         hist["ma5"] = hist["close"].rolling(self.ma_window).mean()
@@ -769,9 +776,9 @@ class RealisticBacktester:
                                         pending_sells.append({
                                             "ts_code": ts_code,
                                             "sell_date": next_trade_date,
-                                            "reason": "MA5退出(跌出Top50)"
+                                            "reason": f"MA5退出(跌出Top{self.top_n_hold})"
                                         })
-                                        log.info(f"  标记卖出 {ts_code}: MA5退出(跌出Top50), T+1({next_trade_date})开盘卖")
+                                        log.info(f"  标记卖出 {ts_code}: MA5退出(跌出Top{self.top_n_hold}), T+1({next_trade_date})开盘卖")
                                     break
                             else:
                                 below_streak = 0
@@ -954,7 +961,8 @@ class RealisticBacktester:
         with open(report_path, "w") as f:
             f.write("# 实盘策略回测报告\n\n")
             f.write(f"**回测期**: {result['trade_dates'][0]} ~ {result['trade_dates'][-1]}\n")
-            f.write(f"**策略**: 固定{self.per_stock_amount/10000:.0f}万/股, 先买后卖, T+1资金可用, {self.stop_loss_pct}%止损 + MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top50,T+1开盘卖)\n\n")
+            hold_str = f", 最少持有{self.hold_days}天" if self.hold_days > 0 else ""
+            f.write(f"**策略**: 固定{self.per_stock_amount/10000:.0f}万/股, 先买后卖, T+1资金可用, {self.stop_loss_pct}%止损{hold_str} + MA{self.ma_window}_cd{self.ma_consecutive_days}退出(跌出Top{self.top_n_hold},T+1开盘卖)\n\n")
             f.write("## 收益汇总\n\n")
             f.write("| 指标 | 数值 |\n")
             f.write("|------|------|\n")

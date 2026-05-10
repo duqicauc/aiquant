@@ -24,8 +24,8 @@ PERIODS = {
 BASE_PARAMS = {
     "per_stock": 50000,
     "capital": 500000,
-    "stop_loss": 4.0,
-    "trailing_stop": 5.0,
+    "stop_loss": 10.0,
+    "trailing_stop": 2.0,
     "trailing_activation": 5.0,
     "prediction_dir": "data/prediction/v291_stk_factor",
 }
