@@ -65,20 +65,61 @@ async def get_watchlist_dates():
         raise HTTPException(status_code=500, detail=f"Dates fetch failed: {str(e)}")
 
 
-def _load_prediction(date: str, top_n: int = 100):
-    """加载指定日期的预测文件"""
+def _load_prediction(date: str, top_n: int = 100, enriched: bool = False):
+    """加载指定日期的预测文件
+
+    Args:
+        enriched: 是否优先加载 enriched 文件（包含 market_stage 等 enrich 字段）
+    """
     dirs = _get_prediction_dirs()
+    # 优先 enriched 格式
+    if enriched:
+        for d in dirs:
+            for suffix in [f"top{top_n}_enriched.csv", "top100_enriched.csv", "top50_enriched.csv", "all_enriched.csv"]:
+                f = d / f"predictions_{date}_{suffix}"
+                if f.exists():
+                    df = pd.read_csv(f)
+                    if "all" in suffix and len(df) > top_n:
+                        df = df.head(top_n)
+                    return df
+    # 回退普通格式
     for d in dirs:
-        # 尝试 top100 / top50 / all
         for suffix in [f"top{top_n}.csv", "top100.csv", "top50.csv", "all.csv"]:
             f = d / f"predictions_{date}_{suffix}"
             if f.exists():
                 df = pd.read_csv(f)
-                # 如果加载的是 all 但需要 top_n
                 if "all" in suffix and len(df) > top_n:
                     df = df.head(top_n)
                 return df
     return None
+
+
+def _load_enriched_fields(date: str, ts_codes: List[str]) -> dict:
+    """从 enriched 文件加载 market_stage / left_side_signal 等字段
+    Returns: {ts_code: {"market_stage": ..., "left_side_signal": ...}}
+    """
+    result = {}
+    dirs = _get_prediction_dirs()
+    for d in dirs:
+        for suffix in ["all_enriched.csv", "top100_enriched.csv", "top50_enriched.csv"]:
+            f = d / f"predictions_{date}_{suffix}"
+            if f.exists():
+                try:
+                    df = pd.read_csv(f, usecols=["ts_code", "market_stage", "left_side_signal"])
+                    df = df[df["ts_code"].isin(ts_codes)]
+                    for _, row in df.iterrows():
+                        tc = row["ts_code"]
+                        if tc not in result:
+                            result[tc] = {
+                                "market_stage": str(row.get("market_stage", "")).strip() or None,
+                                "left_side_signal": str(row.get("left_side_signal", "")).strip() or None,
+                            }
+                    # 如果已经找到了所有需要的 ts_code，提前退出
+                    if len(result) == len(ts_codes):
+                        return result
+                except Exception:
+                    continue
+    return result
 
 
 def _get_future_returns(ts_codes: List[str], base_date: str, horizons: List[int]):
@@ -273,12 +314,16 @@ def _scan_recommendation_history(ts_code: str, base_date: str, lookback_days: in
 
         # 标签
         label = "📌 首次"
+        summary = "首次入选推荐名单"
         if max_consecutive >= 3:
             label = "🔥 连续推荐"
+            summary = f"连续{max_consecutive}天入选，模型极度看好"
         elif count_100 >= 3 or count_50 >= 2:
             label = "⭐ 高频关注"
+            summary = f"近30天入选Top100共{count_100}次，Top50共{count_50}次"
         elif count_100 > 0 or count_50 > 0:
             label = "📌 多次"
+            summary = f"近30天入选{count_100}次"
 
         # first_date: earliest appearance in history
         first_date = None
@@ -291,11 +336,12 @@ def _scan_recommendation_history(ts_code: str, base_date: str, lookback_days: in
             "count_top50": count_50,
             "max_consecutive": max_consecutive,
             "label": label,
+            "summary": summary,
             "recent_dates": dates_in_top100[:5],
             "first_date": first_date,
         }
     except Exception:
-        return {"count_top100": 0, "count_top50": 0, "max_consecutive": 0, "label": "📌 首次", "recent_dates": []}
+        return {"count_top100": 0, "count_top50": 0, "max_consecutive": 0, "label": "📌 首次", "summary": "首次入选推荐名单", "recent_dates": []}
 
 
 # 全局首次入选索引缓存
@@ -405,31 +451,92 @@ def _calc_cumulative_return(ts_code: str, start_date: str, end_date: str):
 
 
 def _generate_suggestion(prob: float, rec_history: dict, is_explosion: bool, is_breakout: bool, diff: float):
-    """基于推荐频次 + 历史表现 + 分歧度生成建议"""
-    suggestions = []
+    """基于推荐频次 + 历史表现 + 分歧度生成结构化建议
 
-    if rec_history.get("max_consecutive", 0) >= 3:
+    Returns:
+        dict: {
+            "text": str,          # 兼容旧版纯文本建议
+            "action": str,        # 核心操作: 观望/关注/建仓/止盈/止损/减仓
+            "action_color": str,  # 颜色标识
+            "reasons": list,      # 理由列表（短句）
+            "risk_level": str,    # 低/中/高
+        }
+    """
+    action = "观望"
+    action_color = "#8b949e"  # 灰色
+    reasons = []
+    risk_level = "低"
+
+    consecutive = rec_history.get("max_consecutive", 0)
+    count_top100 = rec_history.get("count_top100", 0)
+    count_top50 = rec_history.get("count_top50", 0)
+
+    # 核心判断
+    if consecutive >= 3:
         if is_explosion or is_breakout:
-            suggestions.append("🔥 连续推荐且已验证，可分批建仓")
+            action = "建仓"
+            action_color = "#3fb950"  # 绿色
+            reasons.append(f"连续{consecutive}天入选")
+            reasons.append("已起爆/突破" if is_explosion else "已突破")
+            risk_level = "中"
         else:
-            suggestions.append("🔥 连续推荐，模型极度看好，重点关注")
-    elif rec_history.get("count_top100", 0) >= 3:
+            action = "关注"
+            action_color = "#58a6ff"  # 蓝色
+            reasons.append(f"连续{consecutive}天入选")
+            reasons.append("模型极度看好")
+            risk_level = "低"
+    elif count_top100 >= 3 or count_top50 >= 2:
         if not is_explosion and not is_breakout:
-            suggestions.append("⭐ 多次推荐但市场未响应，注意止损")
+            action = "观望"
+            action_color = "#d29922"  # 橙色
+            reasons.append(f"近30天入选{count_top100}次")
+            reasons.append("市场未响应")
+            risk_level = "高"
         else:
-            suggestions.append("⭐ 高频关注，已出现信号")
-    elif rec_history.get("count_top100", 0) == 0:
+            action = "关注"
+            action_color = "#58a6ff"
+            reasons.append(f"近30天入选{count_top100}次")
+            reasons.append("已出现信号")
+            risk_level = "中"
+    elif count_top100 == 0:
+        action = "观望"
+        action_color = "#8b949e"
+        reasons.append("首次入选")
         if diff <= 0.3:
-            suggestions.append("📌 新入选 + 共识度高，观望等确认")
+            reasons.append("共识度高")
         else:
-            suggestions.append("📌 新入选但分歧大，小仓位试探")
+            reasons.append("分歧较大")
+            risk_level = "中"
     else:
-        suggestions.append("持续观察")
+        action = "观望"
+        action_color = "#8b949e"
+        reasons.append(f"近30天入选{count_top100}次")
 
     if diff > 0.5:
-        suggestions.append("⚠️ 模型分歧大，降低仓位")
+        reasons.append("模型分歧大")
+        risk_level = "高"
+        if action == "建仓":
+            action = "减仓"
+            action_color = "#d29922"
 
-    return "；".join(suggestions)
+    # 概率极高时的修正
+    if prob >= 0.85 and action == "观望":
+        action = "关注"
+        action_color = "#58a6ff"
+        reasons.append("概率极高")
+
+    text_parts = [action]
+    if reasons:
+        text_parts.append("，".join(reasons))
+    text = " | ".join(text_parts)
+
+    return {
+        "text": text,
+        "action": action,
+        "action_color": action_color,
+        "reasons": reasons,
+        "risk_level": risk_level,
+    }
 
 
 @router.get("/performance")
@@ -497,6 +604,9 @@ async def get_watchlist_performance(
 
         h_list = [int(x) for x in horizons.split(",")]
         ts_codes = df_pred["ts_code"].tolist()
+
+        # 从 enriched 文件补充 market_stage / left_side_signal
+        enriched_fields = _load_enriched_fields(date, ts_codes)
 
         # 补充 name 和 industry（预测文件可能缺失）
         name_map = {}
@@ -592,6 +702,12 @@ async def get_watchlist_performance(
             prob = float(row.get("prob", 0) or 0)
             base_close = float(row.get("close", 0) or 0)
 
+            # 起爆/突破判定 & 可用交易日统计
+            ps = price_series_map.get(ts_code, [])
+            # available_trading_days: base_date 之后的交易日数量
+            available_trading_days = max(0, len(ps) - 1) if ps else 0
+            is_explosion, is_breakout, detail = _calc_breakout_explosion(ps, base_close)
+
             # 后续收益
             returns = {}
             for h in h_list:
@@ -604,10 +720,6 @@ async def get_watchlist_performance(
                     returns[f"return_{h}d"] = None
                     returns[f"close_{h}d"] = None
 
-            # 起爆/突破判定
-            ps = price_series_map.get(ts_code, [])
-            is_explosion, is_breakout, detail = _calc_breakout_explosion(ps, base_close)
-
             # 多次推荐统计
             rec_history = _scan_recommendation_history(ts_code, date, 30)
 
@@ -618,7 +730,12 @@ async def get_watchlist_performance(
             cum_data = cumulative_map.get(ts_code, {})
 
             # 建议 (single model: no disagreement)
-            suggestion = _generate_suggestion(prob, rec_history, is_explosion, is_breakout, 0)
+            suggestion_structured = _generate_suggestion(prob, rec_history, is_explosion, is_breakout, 0)
+
+            # enriched 字段
+            ef = enriched_fields.get(ts_code, {})
+            market_stage = ef.get("market_stage") or _clean_value(row.get("market_stage"))
+            left_side_signal = ef.get("left_side_signal") or _clean_value(row.get("left_side_signal"))
 
             name_val = _clean_value(row.get("name")) or name_map.get(ts_code, "")
             industry_val = _clean_value(row.get("industry")) or industry_map.get(ts_code, "")
@@ -639,12 +756,16 @@ async def get_watchlist_performance(
                 "disagreement": 0,
                 "prob_percentile": _clean_value(row.get("prob_percentile")),
                 "rec_history": rec_history,
-                "suggestion": suggestion,
+                "suggestion": suggestion_structured["text"],
+                "suggestion_structured": suggestion_structured,
+                "market_stage": market_stage or "未知",
+                "left_side_signal": left_side_signal,
                 "first_entry_date": first_entry_date,
                 "first_entry_prob": first_entry_prob,
                 "cumulative_return": cum_data.get("cumulative_return"),
                 "max_drawdown": cum_data.get("max_drawdown"),
                 "holding_days": cum_data.get("holding_days"),
+                "available_trading_days": available_trading_days,
             })
 
         # ─── 智能筛选 ───

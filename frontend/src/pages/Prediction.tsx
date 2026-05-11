@@ -63,16 +63,27 @@ interface WatchlistRecord {
     count_top50: number
     max_consecutive: number
     label: string
+    summary: string
     recent_dates: string[]
     first_date: string | null
   }
   suggestion: string
+  suggestion_structured?: {
+    text: string
+    action: string
+    action_color: string
+    reasons: string[]
+    risk_level: string
+  }
+  market_stage?: string
+  left_side_signal?: string
   prob_percentile?: number
   first_entry_date?: string
   first_entry_prob?: number
   cumulative_return?: number
   max_drawdown?: number
   holding_days?: number
+  available_trading_days?: number
 }
 
 const BIN_COLORS = ['#f85149', '#d29922', '#58a6ff', '#1a6fd8', '#238636', '#3fb950', '#7ee787']
@@ -338,8 +349,29 @@ export default function Prediction() {
     return v >= 0 ? '#f85149' : '#3fb950'
   }
 
-  const returnRender = (v?: number) => {
-    if (v === undefined || v === null) return <span style={{ color: '#8b949e' }}>-</span>
+  const returnRender = (v?: number, horizon?: number, availableDays?: number) => {
+    if (v === undefined || v === null) {
+      if (horizon && availableDays !== undefined) {
+        const diff = horizon - availableDays
+        if (diff > 0) {
+          return (
+            <Tooltip title={`已收集 ${availableDays}/${horizon} 个交易日，还差 ${diff} 个交易日`}>
+              <span style={{ color: '#6e7681', fontSize: '0.75rem' }}>还差{diff}天</span>
+            </Tooltip>
+          )
+        }
+        return (
+          <Tooltip title={`已收集 ${availableDays} 个交易日，但T+${horizon}数据缺失`}>
+            <span style={{ color: '#6e7681', fontSize: '0.75rem' }}>数据缺失</span>
+          </Tooltip>
+        )
+      }
+      return (
+        <Tooltip title={horizon ? `预测日之后不足${horizon}个交易日，数据待更新` : '暂无数据'}>
+          <span style={{ color: '#6e7681', fontSize: '0.75rem' }}>待验证</span>
+        </Tooltip>
+      )
+    }
     return <span style={{ color: returnColor(v) }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}%</span>
   }
 
@@ -458,13 +490,23 @@ export default function Prediction() {
       },
     },
     {
-      title: '阶段', key: 'stage', width: 85,
+      title: '阶段', key: 'stage', width: 95,
       render: (_: any, r: any) => {
         const stage = r.market_stage || '未知'
+        const stageTip = stage === '未知'
+          ? '暂无阶段数据，可能该股票未被 enrich 分析'
+          : `市场阶段: ${stage}｜基于价格行为 + 技术指标判断`
         return (
-          <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
-            {stage}
-          </Tag>
+          <Tooltip title={stageTip}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
+                {stage}
+              </Tag>
+              {r.left_side_signal && (
+                <span style={{ fontSize: '0.6rem', color: '#d29922' }}>⚡ {r.left_side_signal}</span>
+              )}
+            </div>
+          </Tooltip>
         )
       },
     },
@@ -514,40 +556,65 @@ export default function Prediction() {
       },
     },
     {
-      title: '阶段', key: 'stage', width: 80,
-      render: (_: any, r: any) => {
-        const stage = r.market_stage || '未知'
-        return (
-          <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
-            {stage}
-          </Tag>
-        )
-      },
-    },
-
-    {
-      title: '推荐历史', key: 'rec', width: 100,
+      title: '阶段', key: 'stage', width: 85,
       render: (_: any, r: WatchlistRecord) => {
-        const h = r.rec_history
-        const fmt = (d: string) => d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
+        const stage = r.market_stage || '未知'
+        const stageTip = stage === '未知'
+          ? '暂无阶段数据，可能该股票未被 enrich 分析'
+          : `市场阶段: ${stage}｜基于价格行为 + 技术指标判断`
         return (
-          <Tooltip title={
-            <div style={{ fontSize: '0.75rem' }}>
-              <div>首次入选: {fmt(h.first_date) || '未知'}</div>
-              <div>近30天 Top100: {h.count_top100} 次</div>
-              <div>近30天 Top50: {h.count_top50} 次</div>
-              <div>最大连续: {h.max_consecutive} 天</div>
-            </div>
-          }>
-            <div>
-              <span style={{ fontSize: '0.8rem' }}>{h.label}</span>
-              {h.first_date && <div style={{ fontSize: '0.7rem', color: '#6e7681' }}>首{fmt(h.first_date)}</div>}
+          <Tooltip title={stageTip}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <Tag style={{ margin: 0, fontSize: '0.7rem', background: stageColor(stage) + '15', color: stageColor(stage), borderColor: stageColor(stage) + '30' }}>
+                {stage}
+              </Tag>
+              {r.left_side_signal && (
+                <span style={{ fontSize: '0.6rem', color: '#d29922' }}>⚡ {r.left_side_signal}</span>
+              )}
             </div>
           </Tooltip>
         )
       },
     },
-    { title: '5天收益', key: 'r5', width: 75, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d) },
+
+    {
+      title: '推荐历史', key: 'rec', width: 130,
+      render: (_: any, r: WatchlistRecord) => {
+        const h = r.rec_history
+        const fmt = (d: string) => d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
+        const labelColor = h.max_consecutive >= 3 ? '#f85149' : h.count_top100 >= 3 ? '#d29922' : h.count_top100 > 0 ? '#58a6ff' : '#8b949e'
+        return (
+          <Tooltip title={
+            <div style={{ fontSize: '0.75rem', lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{h.summary}</div>
+              <div>首次入选: {fmt(h.first_date) || '未知'}</div>
+              <div>近30天 Top100: {h.count_top100} 次 / Top50: {h.count_top50} 次</div>
+              <div>最大连续: {h.max_consecutive} 天</div>
+            </div>
+          }>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 500, color: labelColor }}>{h.label}</span>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {h.count_top100 > 0 && (
+                  <span style={{ fontSize: '0.65rem', color: '#8b949e', background: '#21262d', padding: '1px 4px', borderRadius: 2 }}>
+                    Top100×{h.count_top100}
+                  </span>
+                )}
+                {h.max_consecutive > 1 && (
+                  <span style={{ fontSize: '0.65rem', color: '#8b949e', background: '#21262d', padding: '1px 4px', borderRadius: 2 }}>
+                    连{h.max_consecutive}天
+                  </span>
+                )}
+              </div>
+              {h.first_date && (
+                <span style={{ fontSize: '0.65rem', color: '#6e7681' }}>首{fmt(h.first_date)}</span>
+              )}
+            </div>
+          </Tooltip>
+        )
+      },
+    },
+    { title: '5天收益', key: 'r5', width: 90, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d, 5, r.available_trading_days) },
     {
       title: '首次入选', key: 'first_entry', width: 85,
       render: (_: any, r: WatchlistRecord) => {
@@ -588,8 +655,37 @@ export default function Prediction() {
       ),
     },
     {
-      title: '建议', key: 'suggestion', width: 160,
-      render: (_: any, r: WatchlistRecord) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.suggestion}</span>,
+      title: '建议', key: 'suggestion', width: 170,
+      render: (_: any, r: WatchlistRecord) => {
+        const s = r.suggestion_structured
+        if (!s) return <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>{r.suggestion || '-'}</span>
+        const riskColor = s.risk_level === '高' ? '#f85149' : s.risk_level === '中' ? '#d29922' : '#3fb950'
+        return (
+          <Tooltip title={
+            <div style={{ fontSize: '0.75rem', lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{s.text}</div>
+              <div>风险等级: <span style={{ color: riskColor }}>{s.risk_level}</span></div>
+            </div>
+          }>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <Tag style={{
+                margin: 0, fontSize: '0.75rem', fontWeight: 600,
+                background: s.action_color + '20', color: s.action_color,
+                borderColor: s.action_color + '40', padding: '1px 6px', width: 'fit-content'
+              }}>
+                {s.action}
+              </Tag>
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                {s.reasons.slice(0, 2).map((reason, idx) => (
+                  <span key={idx} style={{ fontSize: '0.65rem', color: '#8b949e' }}>
+                    {reason}{idx < Math.min(s.reasons.length, 2) - 1 ? ' ·' : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </Tooltip>
+        )
+      },
     },
   ]
 
@@ -636,8 +732,9 @@ export default function Prediction() {
       render: (_: any, r: any) => {
         const d = r.first_entry_date
         const fmt = (s: string) => s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : '-'
+        const probText = r.first_entry_prob ? ` (概率 ${(r.first_entry_prob * 100).toFixed(1)}%)` : ''
         return (
-          <Tooltip title={d ? `首次入选: ${fmt(d)} (概率 ${(r.first_entry_prob * 100).toFixed(1)}%)` : '未入选'}>
+          <Tooltip title={d ? `首次入选: ${fmt(d)}${probText}` : '未入选'}>
             <div>
               <span style={{ fontSize: '0.8rem', color: d ? '#58a6ff' : '#8b949e' }}>{fmt(d || '')}</span>
               {d && <div style={{ fontSize: '0.65rem', color: '#6e7681' }}>{r.holding_days}天</div>}

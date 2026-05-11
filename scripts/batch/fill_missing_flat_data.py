@@ -188,10 +188,13 @@ def main():
         except Exception as e:
             log.warning(f"  ArcticDB daily/ohlcv 验证失败: {e}")
         for tbl in ["daily_basic", "stk_factor"]:
-            c = conn.cursor()
-            c.execute(f"SELECT MAX(trade_date), COUNT(*) FROM {tbl} WHERE trade_date >= ?", (start_date,))
-            md, cnt = c.fetchone()
-            log.info(f"  {tbl}: max_date={md}, count={cnt}")
+            try:
+                c = conn.cursor()
+                c.execute(f"SELECT MAX(trade_date), COUNT(*) FROM {tbl} WHERE trade_date >= ?", (start_date,))
+                md, cnt = c.fetchone()
+                log.info(f"  {tbl}: max_date={md}, count={cnt}")
+            except sqlite3.OperationalError:
+                log.warning(f"  {tbl}: SQLite 表不存在，跳过验证（项目已迁移到 ArcticDB）")
     log.success("完成")
 
 if __name__ == "__main__":
