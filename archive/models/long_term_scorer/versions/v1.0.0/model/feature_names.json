@@ -1,0 +1,19 @@
+[
+  "pe",
+  "pb",
+  "pe_industry_zscore",
+  "pb_industry_zscore",
+  "total_mv_log",
+  "circ_mv_log",
+  "turnover_rate",
+  "volume_ratio",
+  "return_20d",
+  "return_60d",
+  "return_120d",
+  "volatility_60d",
+  "volatility_120d",
+  "close_ma60_ratio",
+  "close_ma120_ratio",
+  "max_drawdown_60d",
+  "trend_strength_60d"
+]

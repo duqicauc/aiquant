@@ -34,9 +34,9 @@ interface HistoryItem {
 }
 
 const STRATEGY_OPTIONS = [
-  'v294 breakout',
-  'v294 high prob',
-  'v294 consensus',
+  'v3 breakout',
+  'v3 high prob',
+  'v3 consensus',
   'manual',
 ]
 

@@ -26,9 +26,9 @@ from src.data.tushare_data_provider import TushareDataProvider
 from src.monitoring.model_monitor import ModelMonitor
 from src.utils.logger import log
 
-LOG_DIR = PROJECT_ROOT / "logs" / "auto_pipeline_v294"
+LOG_DIR = PROJECT_ROOT / "logs" / "auto_pipeline_v300"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-PREDICTION_DIR = PROJECT_ROOT / "data" / "prediction" / "v294_stk_factor"
+PREDICTION_DIR = PROJECT_ROOT / "data" / "prediction" / "v3.0.0"
 DB_PATH = PROJECT_ROOT / "data" / "cache" / "quant_data.db"
 
 
@@ -179,10 +179,9 @@ def main():
 
     pred_cmd = [
         sys.executable,
-        "scripts/predict_v294_with_stk_factor.py",
-        "--start-date", next_date,
-        "--end-date", next_date,
-        "--lookback", "34",
+        "scripts/predict_v3_fast_v2.py",
+        "--start", next_date,
+        "--end", next_date,
     ]
     result = run_command(pred_cmd, f"预测生成 ({next_date})")
     report["steps"]["prediction"] = result
@@ -204,11 +203,11 @@ def main():
         "scripts/enrich_predictions.py",
         "--date", next_date,
     ]
-    enrich_result = run_command(enrich_cmd, f"3L Enrich ({next_date})")
+    enrich_result = run_command(enrich_cmd, f"Enrich ({next_date})")
     report["steps"]["enrich"] = enrich_result
 
     # ========== Step 3: 归档到 v294_daily ==========
-    daily_dir = PROJECT_ROOT / "data" / "prediction" / "v294_daily"
+    daily_dir = PROJECT_ROOT / "data" / "prediction" / "v3.0.0_daily"
     daily_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ["all.csv", "top100.csv", "top50.csv"]:
         src = PREDICTION_DIR / f"predictions_{next_date}_{suffix}"
@@ -224,22 +223,6 @@ def main():
             import shutil
             shutil.copy2(str(src), str(dst))
     log.info(f"预测结果已归档到: {daily_dir}")
-
-    # ========== Step 3.5: 3L 模型监控 ==========
-    try:
-        from src.monitoring.three_light_monitor import ThreeLightMonitor
-        monitor = ThreeLightMonitor()
-        monitor_result = monitor.run_daily_check(next_date)
-        report["steps"]["three_light_monitor"] = {
-            "success": True,
-            "status": monitor_result.get("status"),
-            "alerts": monitor_result.get("alerts", []),
-        }
-        if monitor_result.get("status") in ("warning", "critical"):
-            log.warning(f"3L 监控告警: {monitor_result.get('alerts')}")
-    except Exception as e:
-        report["steps"]["three_light_monitor"] = {"success": False, "error": str(e)}
-        log.warning(f"3L 监控步骤异常: {e}")
 
     # ========== Step 4: 模型漂移检测 ==========
     monitor = ModelMonitor(

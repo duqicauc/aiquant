@@ -86,6 +86,7 @@ async def get_latest_predictions(
 
         # Try multiple directories for prediction data (v294优先)
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.0.0",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
@@ -194,15 +195,52 @@ async def get_latest_predictions(
             formatted_period = raw_period
             display_period = raw_period
 
-        # ---------- 全市场概率分布 ----------
+        # ---------- 全市场概率分布 + 概率分位 ----------
         full_dist = {}
+        prob_percentile_map = {}
         all_csv = _find_all_csv(pred_dirs, raw_period)
         if all_csv and all_csv.exists():
             try:
                 df_all = pd.read_csv(all_csv)
                 full_dist = _compute_distribution(df_all, prob_col)
+                # 基于全市场计算概率分位
+                if prob_col in df_all.columns and not df_all.empty:
+                    probs_all = df_all[prob_col].dropna()
+                    if len(probs_all) > 0:
+                        if probs_all.max() > 1:
+                            probs_all = probs_all / 100
+                        sorted_probs = probs_all.sort_values(ascending=False).reset_index(drop=True)
+                        prob_to_rank = {float(p): i + 1 for i, p in enumerate(sorted_probs)}
+                        total_all = len(sorted_probs)
+                        for _, row in df_all.iterrows():
+                            p = row.get(prob_col)
+                            if pd.notna(p):
+                                p_norm = float(p) / 100 if float(p) > 1 else float(p)
+                                prob_percentile_map[row['ts_code']] = round((prob_to_rank.get(p_norm, total_all) - 1) / total_all * 100, 1)
             except Exception:
                 pass
+
+        # 从 ArcticDB 补充 close 和 pct_chg
+        try:
+            from src.data.arctic_provider import ArcticDataProvider
+            arctic = ArcticDataProvider()
+            df_ohlcv = arctic.read_daily_ohlcv(raw_period, raw_period)
+            if not df_ohlcv.empty and 'ts_code' in df_ohlcv.columns:
+                price_map = df_ohlcv.set_index('ts_code')[['close', 'pct_chg']].to_dict('index')
+                for col in ['close', 'pct_chg']:
+                    if col not in df.columns:
+                        df[col] = None
+                for idx, row in df.iterrows():
+                    ts = row.get('ts_code')
+                    if ts in price_map:
+                        df.at[idx, 'close'] = price_map[ts].get('close')
+                        df.at[idx, 'pct_chg'] = price_map[ts].get('pct_chg')
+        except Exception:
+            pass
+
+        # 将全市场概率分位 merge 到 df
+        if prob_percentile_map:
+            df['prob_percentile'] = df['ts_code'].map(prob_percentile_map)
 
         # Handle NaN values for JSON serialization
         df_clean = df.astype(object).where(pd.notna(df), None)
@@ -299,6 +337,7 @@ async def get_prediction_distribution(
         import sqlite3
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.0.0",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
@@ -454,15 +493,32 @@ async def get_pipeline_status():
             except Exception:
                 pass
 
-        is_data_fresh = db_latest_date == today_str if db_latest_date else False
+        # 数据新鲜度判断（考虑周末休市）
+        weekday = datetime.now().weekday()
+        is_weekend = weekday >= 5
+        if db_latest_date == today_str:
+            is_data_fresh = True
+        elif is_weekend and db_latest_date:
+            # 周末时，数据只需要更新到最近一个交易日即可
+            last_friday = (datetime.now() - timedelta(days=(weekday - 4))).strftime("%Y%m%d")
+            is_data_fresh = db_latest_date >= last_friday
+        else:
+            is_data_fresh = False
 
         # ---------- Latest prediction ----------
-        pred_dir = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
+        # 优先检查 v3.0.0，回退到旧目录
+        pred_dirs_check = [
+            project_root / "data" / "prediction" / "v3.0.0",
+            project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
+            project_root / "data" / "prediction" / "v294_stk_factor",
+        ]
         latest_prediction_date = None
         latest_prediction_count = 0
         prediction_file_exists = False
         try:
-            if pred_dir.exists():
+            for pred_dir in pred_dirs_check:
+                if not pred_dir.exists():
+                    continue
                 all_files = sorted(pred_dir.glob("predictions_*_all.csv"), reverse=True)
                 if all_files:
                     latest_file = all_files[0]
@@ -471,11 +527,12 @@ async def get_pipeline_status():
                     df_pred = pd.read_csv(latest_file)
                     latest_prediction_count = len(df_pred)
                     prediction_file_exists = True
+                    break
         except Exception:
             pass
 
         # ---------- Today's pipeline report ----------
-        monitor_dir = project_root / "logs" / "auto_pipeline_v294"
+        monitor_dir = project_root / "logs" / "auto_pipeline_v300"
         today_report = None
         has_run_today = False
         monitor = {}
@@ -529,11 +586,15 @@ async def get_pipeline_status():
         try:
             fill_status = scheduler_tasks.get("daily_fill_data", {}).get("status", "pending")
             if fill_status == "failed":
-                pipeline_alert = {
-                    "level": "error",
-                    "message": "每日补数据任务失败，请前往任务调度页面查看原因并手动重试",
-                    "action": "goto_scheduler",
-                }
+                # 周末/节假日时，如果数据本身已最新，不显示错误（休市日本无新数据）
+                if is_weekend and is_data_fresh:
+                    pipeline_alert = None
+                else:
+                    pipeline_alert = {
+                        "level": "error",
+                        "message": "每日补数据任务失败，请前往任务调度页面查看原因并手动重试",
+                        "action": "goto_scheduler",
+                    }
             elif not is_data_fresh and not has_run_today:
                 pipeline_alert = {
                     "level": "warning",
@@ -597,23 +658,18 @@ async def run_pipeline():
 
 @router.get("/strategy-pool")
 async def get_strategy_pool(
-    l1: bool = Query(True, description="L1 动量主线过滤器"),
-    l2: bool = Query(True, description="L2 最强逻辑过滤器"),
-    l3: bool = Query(True, description="L3 量价择时过滤器"),
+    min_prob: Optional[float] = Query(None, ge=0, le=1, description="最低中期概率阈值"),
+    allowed_stages: Optional[str] = Query(None, description="允许的市场阶段，逗号分隔，如'拉升初期,拉升中期'"),
     top_n: int = Query(100, ge=1, le=500),
 ):
     """
-    战略股票池 — 基于 enrich 后的预测结果，按 3L 过滤器筛选。
-
-    3L 定义:
-    - L1 (动量主线): prob_short >= 0.5 且 market_stage 为拉升初期/拉升中期
-    - L2 (最强逻辑): prob_long >= 0.5 且 market_stage 不为下跌/顶部
-    - L3 (量价择时): left_side_signal 非空 或 market_stage 为筑底/拉升初期
+    战略股票池 — 基于 enrich 后的预测结果，按中期概率 + 市场阶段筛选。
     """
     try:
         import pandas as pd
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.0.0",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
@@ -642,38 +698,30 @@ async def get_strategy_pool(
             raise HTTPException(status_code=404, detail="暂无战略股票池数据，请先运行预测 enrich")
 
         # 确保 enrich 字段存在
-        for col in ["prob_short", "prob_long", "market_stage", "left_side_signal"]:
+        for col in ["market_stage", "left_side_signal"]:
             if col not in df.columns:
-                df[col] = None if col == "left_side_signal" else ("未知" if col == "market_stage" else 0.0)
+                df[col] = "" if col == "left_side_signal" else "未知"
 
-        # 计算 3L 标志
-        def _calc_3l(row):
-            stage = str(row.get("market_stage", ""))
-            prob_short = pd.to_numeric(row.get("prob_short", 0), errors="coerce") or 0
-            prob_long = pd.to_numeric(row.get("prob_long", 0), errors="coerce") or 0
-            left_sig = str(row.get("left_side_signal", "")).strip()
-
-            l1_ok = prob_short >= 0.5 and stage in ("拉升初期", "拉升中期")
-            l2_ok = prob_long >= 0.5 and stage not in ("下跌", "顶部")
-            l3_ok = bool(left_sig) and left_sig != "nan" and left_sig != "None" or stage in ("筑底", "拉升初期")
-            return pd.Series([l1_ok, l2_ok, l3_ok])
-
-        df[["l1_momentum", "l2_quality", "l3_timing"]] = df.apply(_calc_3l, axis=1)
-
-        # 应用过滤器
-        if l1:
-            df = df[df["l1_momentum"]]
-        if l2:
-            df = df[df["l2_quality"]]
-        if l3:
-            df = df[df["l3_timing"]]
-
-        # 排序: 综合概率降序
+        # 概率列归一化
         prob_col = None
         for c in ["prob", "probability", "adjusted_score"]:
             if c in df.columns:
                 prob_col = c
                 break
+        if prob_col:
+            if df[prob_col].max() > 1:
+                df[prob_col] = df[prob_col] / 100
+
+        # 应用概率过滤器
+        if min_prob is not None and prob_col:
+            df = df[df[prob_col] >= min_prob]
+
+        # 应用市场阶段过滤器
+        if allowed_stages:
+            stages = [s.strip() for s in allowed_stages.split(",") if s.strip()]
+            df = df[df["market_stage"].isin(stages)]
+
+        # 排序: 中期概率降序
         if prob_col:
             df = df.sort_values(prob_col, ascending=False)
 
@@ -707,20 +755,15 @@ async def get_strategy_pool(
                 "ts_code": row.get("ts_code", ""),
                 "name": row.get("name", ""),
                 "industry": row.get("industry", ""),
-                "prob_short": float(row.get("prob_short", 0)) if pd.notna(row.get("prob_short")) else 0.0,
-                "prob_mid": prob_mid,
-                "prob_long": float(row.get("prob_long", 0)) if pd.notna(row.get("prob_long")) else 0.0,
+                "prob": prob_mid,
                 "market_stage": str(row.get("market_stage", "未知")),
-                "l1_momentum": bool(row.get("l1_momentum", False)),
-                "l2_quality": bool(row.get("l2_quality", False)),
-                "l3_timing": bool(row.get("l3_timing", False)),
                 "left_side_signals": left_signals,
                 "update_date": str(row.get("update_date", "")) if "update_date" in row else "",
             })
 
         return {
             "count": len(records),
-            "filters": {"l1": l1, "l2": l2, "l3": l3},
+            "filters": {"min_prob": min_prob, "allowed_stages": allowed_stages},
             "data": records,
         }
     except HTTPException:

@@ -17,15 +17,16 @@ sys.path.insert(0, str(project_root))
 
 router = APIRouter()
 
-PREDICTION_DIR = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
-DAILY_DIR = project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2"
+PREDICTION_DIR = project_root / "data" / "prediction" / "v3.0.0"
+DAILY_DIR = project_root / "data" / "prediction" / "v3.0.0"
 DB_PATH = project_root / "data" / "cache" / "quant_data.db"
 
 
 def _get_prediction_dirs():
-    """获取所有预测目录，按优先级排序（v295优先），去重"""
+    """获取所有预测目录，按优先级排序（v3.0.0优先），去重"""
     dirs = []
     candidates = [
+        project_root / "data" / "prediction" / "v3.0.0",
         project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
         project_root / "data" / "prediction" / "v295_stk_factor",
         project_root / "data" / "prediction" / "v294_stk_factor",
@@ -297,6 +298,112 @@ def _scan_recommendation_history(ts_code: str, base_date: str, lookback_days: in
         return {"count_top100": 0, "count_top50": 0, "max_consecutive": 0, "label": "📌 首次", "recent_dates": []}
 
 
+# 全局首次入选索引缓存
+_first_entry_index: Optional[dict] = None
+_first_entry_index_mtime: float = 0
+
+
+def _build_global_first_entry_index(prob_threshold: float = 0.7):
+    """一次性构建全局首次入选索引，返回 {ts_code: (first_date, first_prob)}"""
+    global _first_entry_index, _first_entry_index_mtime
+    try:
+        dirs = _get_prediction_dirs()
+        all_files = []
+        for d in dirs:
+            for f in d.glob("predictions_*_all.csv"):
+                date = _parse_date(f.name)
+                if date:
+                    all_files.append((date, f))
+
+        # 按日期排序
+        all_files.sort(key=lambda x: x[0])
+
+        # 用 pandas 一次性读取所有文件（只读 ts_code + prob）
+        all_rows = []
+        for date, f in all_files:
+            try:
+                df = pd.read_csv(f, usecols=["ts_code", "prob"])
+                df["date"] = date
+                all_rows.append(df)
+            except Exception:
+                continue
+
+        if not all_rows:
+            return {}
+
+        df_all = pd.concat(all_rows, ignore_index=True)
+        # 统一 prob 格式
+        if df_all["prob"].max() > 1:
+            df_all["prob"] = df_all["prob"] / 100
+
+        # 筛选 prob >= threshold
+        df_valid = df_all[df_all["prob"] >= prob_threshold].copy()
+        # 按日期排序后取每组第一个
+        df_valid = df_valid.sort_values("date")
+        index = {}
+        for ts_code, group in df_valid.groupby("ts_code"):
+            first_row = group.iloc[0]
+            index[ts_code] = (first_row["date"], float(first_row["prob"]))
+
+        _first_entry_index = index
+        import time
+        _first_entry_index_mtime = time.time()
+        return index
+    except Exception:
+        return {}
+
+
+def _scan_global_first_entry(ts_code: str, prob_threshold: float = 0.7):
+    """查询全局首次入选日期（使用索引缓存）"""
+    global _first_entry_index
+    import time
+    # 缓存不存在或超过 5 分钟则重建
+    if _first_entry_index is None or (time.time() - _first_entry_index_mtime) > 300:
+        _build_global_first_entry_index(prob_threshold)
+
+    if _first_entry_index and ts_code in _first_entry_index:
+        fd, fp = _first_entry_index[ts_code]
+        return {"first_entry_date": fd, "first_entry_prob": fp}
+    return {"first_entry_date": None, "first_entry_prob": None}
+
+
+def _calc_cumulative_return(ts_code: str, start_date: str, end_date: str):
+    """计算从 start_date 到 end_date 的累计收益和最大回撤"""
+    try:
+        from src.data.arctic_provider import ArcticDataProvider
+        arctic = ArcticDataProvider()
+        df = arctic.read_daily_ohlcv(start_date, end_date, columns=["ts_code", "close"])
+        if df.empty:
+            return None, None, None
+
+        df_stock = df[df["ts_code"] == ts_code].sort_index()
+        if df_stock.empty or len(df_stock) < 2:
+            return None, None, None
+
+        closes = df_stock["close"].values
+        start_close = float(closes[0])
+        end_close = float(closes[-1])
+        if start_close <= 0:
+            return None, None, None
+
+        cumulative_return = (end_close - start_close) / start_close * 100
+
+        # 最大回撤
+        peak = closes[0]
+        max_dd = 0.0
+        for c in closes[1:]:
+            if c > peak:
+                peak = c
+            dd = (peak - c) / peak * 100
+            if dd > max_dd:
+                max_dd = dd
+
+        holding_days = len(closes) - 1
+        return round(cumulative_return, 2), round(max_dd, 2), holding_days
+    except Exception:
+        return None, None, None
+
+
 def _generate_suggestion(prob: float, rec_history: dict, is_explosion: bool, is_breakout: bool, diff: float):
     """基于推荐频次 + 历史表现 + 分歧度生成建议"""
     suggestions = []
@@ -331,7 +438,7 @@ async def get_watchlist_performance(
     top_n: int = Query(50, ge=1, le=200),
     horizons: Optional[str] = Query("1,3,5,10", description="跟踪天数，逗号分隔"),
     min_prob: Optional[float] = Query(None, ge=0, le=1, description="最小预测概率"),
-    disagreement_filter: Optional[str] = Query(None, description="分歧度筛选: all/consensus/divergent"),
+    # disagreement_filter removed (single model has no sub-model disagreement)
     min_consecutive: Optional[int] = Query(None, ge=1, le=30, description="最小连续入选天数"),
     min_mv: Optional[float] = Query(None, ge=0, description="最小总市值(亿元)"),
     max_mv: Optional[float] = Query(None, ge=0, description="最大总市值(亿元)"),
@@ -344,6 +451,49 @@ async def get_watchlist_performance(
         df_pred = _load_prediction(date, top_n)
         if df_pred is None or df_pred.empty:
             raise HTTPException(status_code=404, detail=f"No prediction data for {date}")
+
+        # 从 ArcticDB 补充 close 和 pct_chg（v3.0.0 预测文件可能缺失）
+        try:
+            from src.data.arctic_provider import ArcticDataProvider
+            arctic = ArcticDataProvider()
+            df_ohlcv = arctic.read_daily_ohlcv(date, date)
+            if not df_ohlcv.empty and 'ts_code' in df_ohlcv.columns:
+                price_map = df_ohlcv.set_index('ts_code')[['close', 'pct_chg']].to_dict('index')
+                for col in ['close', 'pct_chg']:
+                    if col not in df_pred.columns:
+                        df_pred[col] = None
+                for idx, row in df_pred.iterrows():
+                    ts = row.get('ts_code')
+                    if ts in price_map:
+                        df_pred.at[idx, 'close'] = price_map[ts].get('close')
+                        df_pred.at[idx, 'pct_chg'] = price_map[ts].get('pct_chg')
+        except Exception:
+            pass
+
+        # 计算概率分位（基于全市场 all 文件）
+        prob_percentile_map = {}
+        for d in _get_prediction_dirs():
+            all_f = d / f"predictions_{date}_all.csv"
+            if all_f.exists():
+                try:
+                    df_all = pd.read_csv(all_f)
+                    if "prob" in df_all.columns and not df_all.empty:
+                        probs_all = df_all["prob"].dropna()
+                        if probs_all.max() > 1:
+                            probs_all = probs_all / 100
+                        sorted_probs = probs_all.sort_values(ascending=False).reset_index(drop=True)
+                        prob_to_rank = {float(p): i + 1 for i, p in enumerate(sorted_probs)}
+                        total_all = len(sorted_probs)
+                        for _, row in df_all.iterrows():
+                            p = row.get("prob")
+                            if pd.notna(p):
+                                p_norm = float(p) / 100 if float(p) > 1 else float(p)
+                                prob_percentile_map[row['ts_code']] = round((prob_to_rank.get(p_norm, total_all) - 1) / total_all * 100, 1)
+                except Exception:
+                    pass
+                break
+        if prob_percentile_map:
+            df_pred["prob_percentile"] = df_pred["ts_code"].map(prob_percentile_map)
 
         h_list = [int(x) for x in horizons.split(",")]
         ts_codes = df_pred["ts_code"].tolist()
@@ -372,6 +522,65 @@ async def get_watchlist_performance(
         for ts_code in ts_codes:
             price_series_map[ts_code] = _get_price_series(ts_code, date, 15)
 
+        # 获取最新数据日期（用于累计收益计算）
+        latest_data_date = None
+        try:
+            from src.data.arctic_provider import ArcticDataProvider
+            latest_data_date = ArcticDataProvider().get_latest_trade_date()
+        except Exception:
+            latest_data_date = date
+
+        # ── 批量计算全局首次入选和累计收益 ──
+        first_entry_map = {}
+        earliest_first_date = None
+        for ts_code in ts_codes:
+            fe = _scan_global_first_entry(ts_code, 0.7)
+            first_entry_map[ts_code] = fe
+            fd = fe.get("first_entry_date")
+            if fd and (earliest_first_date is None or fd < earliest_first_date):
+                earliest_first_date = fd
+
+        # 批量读取 ArcticDB 数据（一次性读取所有需要的数据）
+        cumulative_map = {}
+        if earliest_first_date and latest_data_date:
+            try:
+                from src.data.arctic_provider import ArcticDataProvider
+                arctic = ArcticDataProvider()
+                df_all_prices = arctic.read_daily_ohlcv(earliest_first_date, latest_data_date, columns=["ts_code", "close"])
+                if not df_all_prices.empty:
+                    for ts_code in ts_codes:
+                        fd = first_entry_map[ts_code].get("first_entry_date")
+                        if not fd:
+                            continue
+                        df_stock = df_all_prices[df_all_prices["ts_code"] == ts_code].sort_index()
+                        # 截取从该股票自己的 first_entry_date 开始的数据
+                        from pandas import to_datetime
+                        fd_dt = to_datetime(fd)
+                        df_stock = df_stock[df_stock.index >= fd_dt]
+                        if df_stock.empty or len(df_stock) < 2:
+                            continue
+                        closes = df_stock["close"].values
+                        start_close = float(closes[0])
+                        end_close = float(closes[-1])
+                        if start_close <= 0:
+                            continue
+                        cum_ret = (end_close - start_close) / start_close * 100
+                        peak = closes[0]
+                        max_dd = 0.0
+                        for c in closes[1:]:
+                            if c > peak:
+                                peak = c
+                            dd = (peak - c) / peak * 100
+                            if dd > max_dd:
+                                max_dd = dd
+                        cumulative_map[ts_code] = {
+                            "cumulative_return": round(cum_ret, 2),
+                            "max_drawdown": round(max_dd, 2),
+                            "holding_days": len(closes) - 1,
+                        }
+            except Exception:
+                pass
+
         def _clean_value(v):
             if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
                 return None
@@ -380,8 +589,8 @@ async def get_watchlist_performance(
         records = []
         for _, row in df_pred.iterrows():
             ts_code = row["ts_code"]
-            prob = float(row.get("prob", 0))
-            base_close = float(row.get("close", 0))
+            prob = float(row.get("prob", 0) or 0)
+            base_close = float(row.get("close", 0) or 0)
 
             # 后续收益
             returns = {}
@@ -402,14 +611,14 @@ async def get_watchlist_performance(
             # 多次推荐统计
             rec_history = _scan_recommendation_history(ts_code, date, 30)
 
-            # 分歧度
-            px = row.get("prob_xgb_cal") or row.get("prob_xgb") or 0
-            pl = row.get("prob_lgb_cal") or row.get("prob_lgb") or 0
-            pc = row.get("prob_cat_cal") or row.get("prob_cat") or 0
-            diff = max(px, pl, pc) - min(px, pl, pc) if all(isinstance(x, (int, float)) for x in [px, pl, pc]) else 0
+            # 全局首次入选（prob >= 0.7）
+            first_entry = first_entry_map.get(ts_code, {})
+            first_entry_date = first_entry.get("first_entry_date")
+            first_entry_prob = first_entry.get("first_entry_prob")
+            cum_data = cumulative_map.get(ts_code, {})
 
-            # 建议
-            suggestion = _generate_suggestion(prob, rec_history, is_explosion, is_breakout, diff)
+            # 建议 (single model: no disagreement)
+            suggestion = _generate_suggestion(prob, rec_history, is_explosion, is_breakout, 0)
 
             name_val = _clean_value(row.get("name")) or name_map.get(ts_code, "")
             industry_val = _clean_value(row.get("industry")) or industry_map.get(ts_code, "")
@@ -427,9 +636,15 @@ async def get_watchlist_performance(
                 "is_explosion": is_explosion,
                 "is_breakout": is_breakout,
                 "breakout_detail": detail,
-                "disagreement": round(diff, 4),
+                "disagreement": 0,
+                "prob_percentile": _clean_value(row.get("prob_percentile")),
                 "rec_history": rec_history,
                 "suggestion": suggestion,
+                "first_entry_date": first_entry_date,
+                "first_entry_prob": first_entry_prob,
+                "cumulative_return": cum_data.get("cumulative_return"),
+                "max_drawdown": cum_data.get("max_drawdown"),
+                "holding_days": cum_data.get("holding_days"),
             })
 
         # ─── 智能筛选 ───
@@ -437,11 +652,6 @@ async def get_watchlist_performance(
         for r in records:
             # 概率阈值
             if min_prob is not None and r["prob"] < min_prob:
-                continue
-            # 分歧度
-            if disagreement_filter == "consensus" and r["disagreement"] > 0.3:
-                continue
-            if disagreement_filter == "divergent" and r["disagreement"] <= 0.3:
                 continue
             # 连续入选
             if min_consecutive is not None and r["rec_history"]["max_consecutive"] < min_consecutive:
@@ -554,15 +764,17 @@ async def get_today_watchlist(
         except Exception:
             pass
 
+        # 计算概率分位
+        if "prob" in df.columns and not df.empty:
+            probs = df["prob"].dropna().sort_values(ascending=False).reset_index(drop=True)
+            prob_to_rank = {float(p): i + 1 for i, p in enumerate(probs)}
+            total = len(probs)
+            df["prob_percentile"] = df["prob"].apply(lambda p: round((prob_to_rank.get(float(p), total) - 1) / total * 100, 1) if pd.notna(p) else None)
+
         records = []
         for _, row in df.iterrows():
             ts_code = row["ts_code"]
             prob = float(row.get("prob", 0))
-            px = row.get("prob_xgb_cal") or row.get("prob_xgb") or 0
-            pl = row.get("prob_lgb_cal") or row.get("prob_lgb") or 0
-            pc = row.get("prob_cat_cal") or row.get("prob_cat") or 0
-            diff = max(px, pl, pc) - min(px, pl, pc) if all(isinstance(x, (int, float)) for x in [px, pl, pc]) else 0
-
             price_info = latest_prices.get(ts_code, {})
 
             records.append({
@@ -572,7 +784,8 @@ async def get_today_watchlist(
                 "close": price_info.get("close") or row.get("close"),
                 "pct_chg": price_info.get("pct_chg") or row.get("pct_chg"),
                 "industry": row.get("industry") or "-",
-                "disagreement": round(diff, 4),
+                "disagreement": 0,
+                "prob_percentile": row.get("prob_percentile"),
                 "is_watched": (ts_code, "watched") in note_map,
                 "is_researched": (ts_code, "researched") in note_map,
                 "is_excluded": (ts_code, "excluded") in note_map,
@@ -666,6 +879,31 @@ async def get_explosion_stocks(
             if df_pred is None or df_pred.empty:
                 continue
 
+            # 计算概率分位（基于全市场 all 文件）
+            prob_percentile_map = {}
+            for d in _get_prediction_dirs():
+                all_f = d / f"predictions_{date}_all.csv"
+                if all_f.exists():
+                    try:
+                        df_all = pd.read_csv(all_f)
+                        if "prob" in df_all.columns and not df_all.empty:
+                            probs_all = df_all["prob"].dropna()
+                            if probs_all.max() > 1:
+                                probs_all = probs_all / 100
+                            sorted_probs = probs_all.sort_values(ascending=False).reset_index(drop=True)
+                            prob_to_rank = {float(p): i + 1 for i, p in enumerate(sorted_probs)}
+                            total_all = len(sorted_probs)
+                            for _, row in df_all.iterrows():
+                                p = row.get("prob")
+                                if pd.notna(p):
+                                    p_norm = float(p) / 100 if float(p) > 1 else float(p)
+                                    prob_percentile_map[row['ts_code']] = round((prob_to_rank.get(p_norm, total_all) - 1) / total_all * 100, 1)
+                    except Exception:
+                        pass
+                    break
+            if prob_percentile_map:
+                df_pred["prob_percentile"] = df_pred["ts_code"].map(prob_percentile_map)
+
             ts_codes = df_pred["ts_code"].tolist()
 
             for _, row in df_pred.iterrows():
@@ -696,6 +934,7 @@ async def get_explosion_stocks(
                     "industry": row.get("industry") or "-",
                     "prediction_date": date,
                     "prob": float(row.get("prob", 0)),
+                    "prob_percentile": row.get("prob_percentile"),
                     "base_close": base_close,
                     "is_explosion": is_explosion,
                     "is_breakout": is_breakout,
@@ -709,6 +948,73 @@ async def get_explosion_stocks(
                     explosion_records[ts_code] = record
                 elif date > explosion_records[ts_code]["scan_date"]:
                     explosion_records[ts_code] = record
+
+        # ── 批量计算全局首次入选和累计收益 ──
+        all_ts_codes = list(explosion_records.keys())
+        first_entry_map = {}
+        earliest_first_date = None
+        for ts_code in all_ts_codes:
+            fe = _scan_global_first_entry(ts_code, 0.7)
+            first_entry_map[ts_code] = fe
+            fd = fe.get("first_entry_date")
+            if fd and (earliest_first_date is None or fd < earliest_first_date):
+                earliest_first_date = fd
+
+        latest_data_date = None
+        try:
+            from src.data.arctic_provider import ArcticDataProvider
+            latest_data_date = ArcticDataProvider().get_latest_trade_date()
+        except Exception:
+            pass
+
+        cumulative_map = {}
+        if earliest_first_date and latest_data_date:
+            try:
+                from src.data.arctic_provider import ArcticDataProvider
+                arctic = ArcticDataProvider()
+                df_all_prices = arctic.read_daily_ohlcv(earliest_first_date, latest_data_date, columns=["ts_code", "close"])
+                if not df_all_prices.empty:
+                    for ts_code in all_ts_codes:
+                        fd = first_entry_map[ts_code].get("first_entry_date")
+                        if not fd:
+                            continue
+                        df_stock = df_all_prices[df_all_prices["ts_code"] == ts_code].sort_index()
+                        # 截取从该股票自己的 first_entry_date 开始的数据
+                        from pandas import to_datetime
+                        fd_dt = to_datetime(fd)
+                        df_stock = df_stock[df_stock.index >= fd_dt]
+                        if df_stock.empty or len(df_stock) < 2:
+                            continue
+                        closes = df_stock["close"].values
+                        start_close = float(closes[0])
+                        end_close = float(closes[-1])
+                        if start_close <= 0:
+                            continue
+                        cum_ret = (end_close - start_close) / start_close * 100
+                        peak = closes[0]
+                        max_dd = 0.0
+                        for c in closes[1:]:
+                            if c > peak:
+                                peak = c
+                            dd = (peak - c) / peak * 100
+                            if dd > max_dd:
+                                max_dd = dd
+                        cumulative_map[ts_code] = {
+                            "cumulative_return": round(cum_ret, 2),
+                            "max_drawdown": round(max_dd, 2),
+                            "holding_days": len(closes) - 1,
+                        }
+            except Exception:
+                pass
+
+        for ts_code, record in explosion_records.items():
+            fe = first_entry_map.get(ts_code, {})
+            record["first_entry_date"] = fe.get("first_entry_date")
+            record["first_entry_prob"] = fe.get("first_entry_prob")
+            cum = cumulative_map.get(ts_code, {})
+            record["cumulative_return"] = cum.get("cumulative_return")
+            record["max_drawdown"] = cum.get("max_drawdown")
+            record["holding_days"] = cum.get("holding_days")
 
         records = sorted(explosion_records.values(), key=lambda x: x["scan_date"], reverse=True)
 

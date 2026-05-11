@@ -1,0 +1,85 @@
+{
+  "oof_auc": 0.7793562992074644,
+  "calibrated_auc": 0.7793562992074644,
+  "fold_aucs": [
+    0.9080077289410721,
+    0.9137923429077506,
+    0.8778751767273324,
+    0.8683051131613608,
+    0.9050949685057839
+  ],
+  "best_iteration": 191,
+  "n_samples": 1757126,
+  "n_positive": 300140,
+  "positive_rate": 0.1708130208078419,
+  "top_features": [
+    {
+      "feature": "close_ma120_ratio",
+      "importance": 3320750.03764534
+    },
+    {
+      "feature": "return_120d",
+      "importance": 893402.7613868713
+    },
+    {
+      "feature": "close_ma60_ratio",
+      "importance": 227798.67608833313
+    },
+    {
+      "feature": "return_60d",
+      "importance": 159547.88589000702
+    },
+    {
+      "feature": "max_drawdown_60d",
+      "importance": 142387.2908296585
+    },
+    {
+      "feature": "volatility_120d",
+      "importance": 138721.7169713974
+    },
+    {
+      "feature": "volatility_60d",
+      "importance": 101557.34098052979
+    },
+    {
+      "feature": "return_20d",
+      "importance": 71824.50470733643
+    },
+    {
+      "feature": "trend_strength_60d",
+      "importance": 65512.9899559021
+    },
+    {
+      "feature": "pb",
+      "importance": 0.0
+    },
+    {
+      "feature": "volume_ratio",
+      "importance": 0.0
+    },
+    {
+      "feature": "turnover_rate",
+      "importance": 0.0
+    },
+    {
+      "feature": "circ_mv_log",
+      "importance": 0.0
+    },
+    {
+      "feature": "total_mv_log",
+      "importance": 0.0
+    },
+    {
+      "feature": "pb_industry_zscore",
+      "importance": 0.0
+    },
+    {
+      "feature": "pe_industry_zscore",
+      "importance": 0.0
+    },
+    {
+      "feature": "pe",
+      "importance": 0.0
+    }
+  ]
+}

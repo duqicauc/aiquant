@@ -44,9 +44,12 @@ def get_existing_dates(conn, table, start_date: str, arctic: ArcticDataProvider 
             return set()
         except Exception:
             pass
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT DISTINCT trade_date FROM {table} WHERE trade_date >= ?", (start_date,))
-    return {row[0] for row in cursor.fetchall()}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT DISTINCT trade_date FROM {table} WHERE trade_date >= ?", (start_date,))
+        return {row[0] for row in cursor.fetchall()}
+    except sqlite3.OperationalError:
+        return set()
 
 def chunked_insert(conn, df, table, cols):
     if df.empty: return 0

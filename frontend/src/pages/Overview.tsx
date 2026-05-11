@@ -8,9 +8,7 @@ import { marketApi, predictionApi, tradingApi, stockNoteApi } from '../api/clien
 interface StrikeZoneItem {
   ts_code: string
   name: string
-  prob_short: number
-  prob_mid: number
-  prob_long: number
+  prob: number
   market_stage: string
   trigger_reason: string
   left_side_signal?: string
@@ -99,16 +97,14 @@ export default function Overview() {
 
       // 击球区：3L全符合的 top 标的
       try {
-        const szRes = await predictionApi.strategyPool({ l1: true, l2: true, l3: true, top_n: 5 })
+        const szRes = await predictionApi.strategyPool({ min_prob: 0.7, allowed_stages: '拉升初期,拉升中期', top_n: 5 })
         const szData = szRes.data?.data || []
         setStrikeZone(szData.map((r: any) => ({
           ts_code: r.ts_code,
           name: r.name,
-          prob_short: r.prob_short,
-          prob_mid: r.prob_mid,
-          prob_long: r.prob_long,
+          prob: r.prob,
           market_stage: r.market_stage,
-          trigger_reason: r.l1_momentum && r.l2_quality && r.l3_timing ? '三周期共振 + 3L全符合' : '多因子共振',
+          trigger_reason: '高概率 + 拉升阶段',
           left_side_signal: r.left_side_signals?.[0] || '',
         })))
       } catch {
@@ -417,7 +413,7 @@ export default function Overview() {
               headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
               title={
                 <span>
-                  🎯 今日击球区
+                  🎯 今日精选
                   <Tag color="success" style={{ marginLeft: 8, fontSize: 11 }}>
                     {strikeZone.length} 只符合条件
                   </Tag>
@@ -445,30 +441,13 @@ export default function Overview() {
                         <div style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 14 }}>{item.name}</div>
                         <div style={{ color: '#8b949e', fontSize: 11 }}>{item.ts_code}</div>
                       </div>
-                      {/* 三周期概率灯 */}
-                      <div style={{ display: 'flex', gap: 6, minWidth: 140 }}>
-                        <Tooltip title="短期概率">
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_short), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
-                              短
-                            </div>
-                            <div style={{ fontSize: 10, color: probColor(item.prob_short), marginTop: 2 }}>{(item.prob_short * 100).toFixed(0)}%</div>
-                          </div>
-                        </Tooltip>
+                      {/* 中期概率 */}
+                      <div style={{ display: 'flex', gap: 6, minWidth: 80, alignItems: 'center' }}>
                         <Tooltip title="中期概率">
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_mid), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
-                              中
+                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: probColor(item.prob), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
+                              {(item.prob * 100).toFixed(0)}%
                             </div>
-                            <div style={{ fontSize: 10, color: probColor(item.prob_mid), marginTop: 2 }}>{(item.prob_mid * 100).toFixed(0)}%</div>
-                          </div>
-                        </Tooltip>
-                        <Tooltip title="长期概率">
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: probColor(item.prob_long), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>
-                              长
-                            </div>
-                            <div style={{ fontSize: 10, color: probColor(item.prob_long), marginTop: 2 }}>{(item.prob_long * 100).toFixed(0)}%</div>
                           </div>
                         </Tooltip>
                       </div>

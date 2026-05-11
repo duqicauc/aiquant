@@ -1,0 +1,10 @@
+{
+  "model_name": "short_term_scorer",
+  "version": "v1.0.0",
+  "created_at": "2026-05-06T21:14:49.072874",
+  "lookforward_days": 5,
+  "return_threshold": 0.05,
+  "max_drawdown_threshold": -0.03,
+  "excess_return": false,
+  "n_features": 27
+}

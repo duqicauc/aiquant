@@ -58,7 +58,6 @@ interface WatchlistRecord {
   is_explosion: boolean
   is_breakout: boolean
   breakout_detail: string
-  disagreement: number
   rec_history: {
     count_top100: number
     count_top50: number
@@ -68,9 +67,15 @@ interface WatchlistRecord {
     first_date: string | null
   }
   suggestion: string
+  prob_percentile?: number
+  first_entry_date?: string
+  first_entry_prob?: number
+  cumulative_return?: number
+  max_drawdown?: number
+  holding_days?: number
 }
 
-const BIN_COLORS = ['#30363d', '#21262d', '#1f4d7a', '#1a6fd8', '#238636', '#3fb950', '#7ee787']
+const BIN_COLORS = ['#f85149', '#d29922', '#58a6ff', '#1a6fd8', '#238636', '#3fb950', '#7ee787']
 
 // ─── Sub: Probability Distribution Mini Bar ───
 function ProbabilityDistribution({ dist }: { dist: FullDistribution | null }) {
@@ -118,7 +123,7 @@ function UsageGuide() {
           <div><strong>今日推荐</strong>：展示模型最新交易日推荐的股票，按预测概率排序。</div>
           <div style={{ marginTop: 4 }}><strong>跟踪验证</strong>：默认展示上一个交易日的推荐，查看实际收益表现（1天/5天）。</div>
           <div style={{ marginTop: 4 }}><strong>起爆精选</strong>：扫描近N天内推荐后出现起爆/突破信号的股票，用于深度分析是否追入。</div>
-          <div style={{ marginTop: 4 }}><strong>分歧度</strong>：🟢 共识 🟡 谨慎 🔴 分歧大</div>
+          <div style={{ marginTop: 4 }}><strong>概率分位</strong>：按当日全市场概率从高到低排序，Top 10% 为极高置信度。</div>
         </div>
       )}
     </Card>
@@ -151,8 +156,7 @@ export default function Prediction() {
   const [minProb, setMinProb] = useState<number | undefined>(undefined)
   const [sortBy, setSortBy] = useState<string>('prob')
 
-  // ── New filters for subjective-quant integration ──
-  const [showStrikeOnly, setShowStrikeOnly] = useState(false)
+  // ── Filters ──
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false)
   const [showBullStageOnly, setShowBullStageOnly] = useState(false)
   const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
@@ -339,13 +343,19 @@ export default function Prediction() {
     return <span style={{ color: returnColor(v) }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}%</span>
   }
 
-  const healthBall = (diff: number) => {
-    const color = diff <= 0.3 ? '#3fb950' : diff <= 0.5 ? '#d29922' : '#f85149'
-    return (
-      <Tooltip title={`分歧度: ${diff.toFixed(3)}`}>
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block', boxShadow: `0 0 6px ${color}66` }} />
-      </Tooltip>
-    )
+  // 概率分位标签（优先使用后端计算的 prob_percentile；越低越靠前）
+  const probPercentileTag = (prob: number, probPercentile?: number) => {
+    if (probPercentile !== undefined) {
+      if (probPercentile <= 10) return <Tag color="success" style={{ fontSize: '0.7rem', margin: 0 }}>极高</Tag>
+      if (probPercentile <= 30) return <Tag color="processing" style={{ fontSize: '0.7rem', margin: 0 }}>高</Tag>
+      if (probPercentile <= 50) return <Tag color="warning" style={{ fontSize: '0.7rem', margin: 0 }}>中</Tag>
+      return <Tag style={{ fontSize: '0.7rem', margin: 0, background: '#30363d', color: '#8b949e', borderColor: '#30363d' }}>低</Tag>
+    }
+    const p = prob > 1 ? prob : prob * 100
+    if (p >= 90) return <Tag color="success" style={{ fontSize: '0.7rem', margin: 0 }}>极高</Tag>
+    if (p >= 70) return <Tag color="processing" style={{ fontSize: '0.7rem', margin: 0 }}>高</Tag>
+    if (p >= 50) return <Tag color="warning" style={{ fontSize: '0.7rem', margin: 0 }}>中</Tag>
+    return <Tag style={{ fontSize: '0.7rem', margin: 0, background: '#30363d', color: '#8b949e', borderColor: '#30363d' }}>低</Tag>
   }
 
   // ── Helpers for multi-cycle & stage visualization ──
@@ -356,24 +366,6 @@ export default function Prediction() {
     if (stage.includes('筑底')) return '#58a6ff'
     if (stage.includes('顶部')) return '#d29922'
     return '#f85149'
-  }
-
-  // Three-light indicator for prob_short / prob_mid / prob_long
-  const ThreeLight = ({ short, mid, long }: { short?: number; mid?: number; long?: number }) => {
-    const s = short ?? 0, m = mid ?? 0, l = long ?? 0
-    return (
-      <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-        <Tooltip title={`短期: ${(s * 100).toFixed(0)}%`}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(s), display: 'inline-block' }} />
-        </Tooltip>
-        <Tooltip title={`中期: ${(m * 100).toFixed(0)}%`}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(m), display: 'inline-block' }} />
-        </Tooltip>
-        <Tooltip title={`长期: ${(l * 100).toFixed(0)}%`}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: probColor(l), display: 'inline-block' }} />
-        </Tooltip>
-      </div>
-    )
   }
 
   // Left-side signal badge
@@ -456,17 +448,7 @@ export default function Prediction() {
         </div>
       ),
     },
-    {
-      title: (
-        <Tooltip title="短(5-10天) / 中(34天) / 长(120天+)">
-          <span>三周期🔴</span>
-        </Tooltip>
-      ),
-      key: 'three_light', width: 70,
-      render: (_: any, r: any) => (
-        <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
-      ),
-    },
+
     {
       title: '中期概率', key: 'prob', width: 80,
       render: (_: any, r: any) => {
@@ -486,27 +468,10 @@ export default function Prediction() {
         )
       },
     },
+
     {
-      title: '左侧信号', key: 'left', width: 110,
-      render: (_: any, r: any) => <LeftSideBadge signal={r.left_side_signal} />,
-    },
-    {
-      title: '分歧度', key: 'disagreement', width: 75,
-      render: (_: any, r: any) => {
-        const px = r.prob_xgb_cal ?? r.prob_xgb
-        const pl = r.prob_lgb_cal ?? r.prob_lgb
-        const pc = r.prob_cat_cal ?? r.prob_cat
-        if (typeof px !== 'number' || typeof pl !== 'number' || typeof pc !== 'number') return '-'
-        const diff = Math.max(px, pl, pc) - Math.min(px, pl, pc)
-        return (
-          <Tooltip title={`分歧度: ${diff.toFixed(3)}`}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              {healthBall(diff)}
-              <span style={{ color: diff <= 0.3 ? '#3fb950' : diff <= 0.5 ? '#d29922' : '#f85149', fontSize: '0.75rem' }}>{diff.toFixed(2)}</span>
-            </span>
-          </Tooltip>
-        )
-      },
+      title: '置信度', key: 'confidence', width: 70,
+      render: (_: any, r: any) => probPercentileTag(r.prob ?? r.probability ?? 0, r.prob_percentile),
     },
     {
       title: '最新价', dataIndex: 'close', key: 'close', width: 70,
@@ -540,17 +505,7 @@ export default function Prediction() {
         </div>
       ),
     },
-    {
-      title: (
-        <Tooltip title="短(5-10天) / 中(34天) / 长(120天+)">
-          <span>三周期</span>
-        </Tooltip>
-      ),
-      key: 'three_light', width: 60,
-      render: (_: any, r: any) => (
-        <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
-      ),
-    },
+
     {
       title: '中期概率', key: 'prob', width: 75,
       render: (_: any, r: WatchlistRecord) => {
@@ -569,19 +524,16 @@ export default function Prediction() {
         )
       },
     },
-    {
-      title: '左侧信号', key: 'left', width: 100,
-      render: (_: any, r: any) => <LeftSideBadge signal={r.left_side_signal} />,
-    },
+
     {
       title: '推荐历史', key: 'rec', width: 100,
       render: (_: any, r: WatchlistRecord) => {
         const h = r.rec_history
-        const fmt = (d: string) => d ? `${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
+        const fmt = (d: string) => d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
         return (
           <Tooltip title={
             <div style={{ fontSize: '0.75rem' }}>
-              <div>首次入选: {h.first_date || '未知'}</div>
+              <div>首次入选: {fmt(h.first_date) || '未知'}</div>
               <div>近30天 Top100: {h.count_top100} 次</div>
               <div>近30天 Top50: {h.count_top50} 次</div>
               <div>最大连续: {h.max_consecutive} 天</div>
@@ -595,15 +547,43 @@ export default function Prediction() {
         )
       },
     },
-    { title: '1天收益', key: 'r1', width: 75, render: (_: any, r: WatchlistRecord) => returnRender(r.return_1d) },
     { title: '5天收益', key: 'r5', width: 75, render: (_: any, r: WatchlistRecord) => returnRender(r.return_5d) },
+    {
+      title: '首次入选', key: 'first_entry', width: 85,
+      render: (_: any, r: WatchlistRecord) => {
+        const d = r.first_entry_date
+        const fmt = (s: string) => s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : '-'
+        return (
+          <Tooltip title={d ? `首次入选: ${fmt(d)} (概率 ${(r.first_entry_prob! * 100).toFixed(1)}%)` : '未入选'}>
+            <div>
+              <span style={{ fontSize: '0.8rem', color: d ? '#58a6ff' : '#8b949e' }}>{fmt(d || '')}</span>
+              {d && <div style={{ fontSize: '0.65rem', color: '#6e7681' }}>{r.holding_days}天</div>}
+            </div>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '持有收益', key: 'cum_ret', width: 85,
+      render: (_: any, r: WatchlistRecord) => {
+        const v = r.cumulative_return
+        if (v === undefined || v === null) return <span style={{ color: '#8b949e' }}>-</span>
+        return (
+          <Tooltip title={r.max_drawdown !== undefined ? `最大回撤: ${r.max_drawdown.toFixed(1)}%` : ''}>
+            <span style={{ color: v >= 0 ? '#f85149' : '#3fb950', fontWeight: 500, fontSize: '0.8rem' }}>
+              {v >= 0 ? '+' : ''}{v.toFixed(1)}%
+            </span>
+          </Tooltip>
+        )
+      },
+    },
     {
       title: '信号', key: 'signal', width: 75,
       render: (_: any, r: WatchlistRecord) => (
         <Space size={2}>
           {r.is_explosion && <Tag color="red" style={{ fontSize: '0.7rem', padding: '0 4px' }}>🚀</Tag>}
           {r.is_breakout && <Tag color="blue" style={{ fontSize: '0.7rem', padding: '0 4px' }}>📈</Tag>}
-          {healthBall(r.disagreement)}
+          {probPercentileTag(r.prob ?? r.probability ?? 0, r.prob_percentile)}
         </Space>
       ),
     },
@@ -652,7 +632,36 @@ export default function Prediction() {
       render: (_: any, r: any) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.breakout_detail || '-'}</span>,
     },
     {
-      title: '累计涨幅', key: 'return', width: 90,
+      title: '首次入选', key: 'first_entry', width: 85,
+      render: (_: any, r: any) => {
+        const d = r.first_entry_date
+        const fmt = (s: string) => s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : '-'
+        return (
+          <Tooltip title={d ? `首次入选: ${fmt(d)} (概率 ${(r.first_entry_prob * 100).toFixed(1)}%)` : '未入选'}>
+            <div>
+              <span style={{ fontSize: '0.8rem', color: d ? '#58a6ff' : '#8b949e' }}>{fmt(d || '')}</span>
+              {d && <div style={{ fontSize: '0.65rem', color: '#6e7681' }}>{r.holding_days}天</div>}
+            </div>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '持有收益', key: 'cum_ret', width: 85,
+      render: (_: any, r: any) => {
+        const v = r.cumulative_return
+        if (v === undefined || v === null) return <span style={{ color: '#8b949e' }}>-</span>
+        return (
+          <Tooltip title={r.max_drawdown !== undefined ? `最大回撤: ${r.max_drawdown.toFixed(1)}%` : ''}>
+            <span style={{ color: v >= 0 ? '#f85149' : '#3fb950', fontWeight: 500, fontSize: '0.8rem' }}>
+              {v >= 0 ? '+' : ''}{v.toFixed(1)}%
+            </span>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '预测后收益', key: 'return', width: 90,
       render: (_: any, r: any) => {
         const v = r.total_return
         return <span style={{ color: (v ?? 0) >= 0 ? '#f85149' : '#3fb950', fontWeight: 500 }}>{v >= 0 ? '+' : ''}{v?.toFixed(2)}%</span>
@@ -724,29 +733,28 @@ export default function Prediction() {
                   bodyStyle={{ padding: '10px 14px' }}
                   title={
                     <span style={{ color: '#c9d1d9', fontSize: '0.9rem' }}>
-                      🎯 今日击球区
+                      🎯 今日精选
                       <span style={{ color: '#8b949e', fontSize: '0.75rem', marginLeft: 8 }}>
-                        高置信度信号（三周期共振 + 3L全符合 + 拉升初期）
+                        高概率 + 拉升阶段
                       </span>
                     </span>
                   }
                 >
                   {(() => {
-                    const strikeItems = todayData.filter((r: any) =>
+                    const pickItems = todayData.filter((r: any) =>
                       (r.prob ?? 0) > 0.7 &&
-                      (r.prob_short ?? 0) > 0.6 &&
                       (r.market_stage || '').includes('拉升')
                     ).slice(0, 5)
-                    if (strikeItems.length === 0) {
+                    if (pickItems.length === 0) {
                       return (
                         <div style={{ color: '#8b949e', fontSize: '0.8rem', textAlign: 'center', padding: '12px 0' }}>
-                          暂无击球区标的，请耐心等待高置信度信号
+                          暂无精选标的，请耐心等待高概率信号
                         </div>
                       )
                     }
                     return (
                       <div style={{ display: 'flex', gap: 10, overflow: 'auto' }}>
-                        {strikeItems.map((r: any) => (
+                        {pickItems.map((r: any) => (
                           <div
                             key={r.ts_code}
                             onClick={() => navigate(`/research?code=${r.ts_code}`)}
@@ -764,7 +772,14 @@ export default function Prediction() {
                           >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span style={{ color: '#c9d1d9', fontWeight: 600, fontSize: '0.85rem' }}>{r.name || r.ts_code}</span>
-                              <ThreeLight short={r.prob_short} mid={r.prob} long={r.prob_long} />
+                              <span style={{ color: r.prob >= 0.7 ? '#3fb950' : '#d29922', fontWeight: 500, fontSize: '0.8rem' }}>
+                                {(r.prob ? (r.prob * 100).toFixed(0) : 0)}%
+                              </span>
+                              {r.prob_percentile !== undefined && (
+                                <span style={{ fontSize: '0.65rem', color: '#8b949e' }}>
+                                  前 {Math.max(1, Math.ceil(r.prob_percentile + 0.1))}%
+                                </span>
+                              )}
                             </div>
                             <div style={{ display: 'flex', gap: 6 }}>
                               <Tag style={{ margin: 0, fontSize: '0.65rem', background: stageColor(r.market_stage) + '15', color: stageColor(r.market_stage), borderColor: stageColor(r.market_stage) + '30' }}>
@@ -777,7 +792,7 @@ export default function Prediction() {
                               )}
                             </div>
                             <div style={{ fontSize: '0.7rem', color: '#8b949e' }}>
-                              中期 {(r.prob ? (r.prob * 100).toFixed(0) : 0)}% | 短期 {(r.prob_short ? (r.prob_short * 100).toFixed(0) : 0)}%
+                              中期概率 {(r.prob ? (r.prob * 100).toFixed(0) : 0)}%
                             </div>
                           </div>
                         ))}
@@ -794,14 +809,6 @@ export default function Prediction() {
                 >
                   <Space size="middle" wrap>
                     <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>快捷筛选:</span>
-                    <Button
-                      size="small"
-                      type={showStrikeOnly ? 'primary' : 'default'}
-                      onClick={() => setShowStrikeOnly(!showStrikeOnly)}
-                      style={{ background: showStrikeOnly ? '#1f4d7a' : '#21262d', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.75rem' }}
-                    >
-                      🎯 只看击球区
-                    </Button>
                     <Button
                       size="small"
                       type={showBullStageOnly ? 'primary' : 'default'}
@@ -834,7 +841,6 @@ export default function Prediction() {
                 >
                   <Table
                     dataSource={todayData.filter((r: any) => {
-                      if (showStrikeOnly && !((r.prob ?? 0) > 0.7 && (r.prob_short ?? 0) > 0.6 && (r.market_stage || '').includes('拉升'))) return false
                       if (showBullStageOnly && !(r.market_stage || '').includes('拉升')) return false
                       if (showWatchlistOnly && !watchedCodes.has(r.ts_code || r.code)) return false
                       return true

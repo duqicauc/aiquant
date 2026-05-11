@@ -104,16 +104,16 @@ research, and deployment activities in the AIQuant project.
 | 12. Atomic Computation | ✅ Enforced | 80+ Tushare factors via `stk_factor_pro` |
 | 13. Completeness Validation | ✅ Enforced | Pre-training validation gates |
 | 14. Avoid Multicollinearity | ⚠️ Planned | Feature correlation audit in stage 3 |
-| 15. Simplicity First | ✅ Enforced | Ensemble only after single-model baselines; 3L short/long use single LightGBM (not ensemble) |
-| 16. Preserve Interpretability | ✅ Enforced | Feature importance output to metrics.json for all 3L models; top-20 reported |
+| 15. Simplicity First | ✅ Enforced | Ensemble only after single-model baselines; mid-term model (v3.0.0) is core |
+| 16. Preserve Interpretability | ✅ Enforced | Feature importance output to metrics.json for mid-term model; top-20 reported |
 | 17. Monitor Disagreement | ⚠️ Planned | Sub-model correlation monitoring in stage 3 |
-| 18. Calibration is Mandatory | ✅ Enforced | Platt calibration applied to prob_short and prob_long; monitored via `three_light_monitor.py` |
-| 19. AUC is Necessary but Not Sufficient | ✅ Enforced | Multi-metric evaluation required; 3L models evaluated with OOF AUC + fold AUCs + calibrated AUC |
-| 20. Out-of-Sample Testing | ✅ Enforced | 3L models use time-series CV (n_splits=5) |
+| 18. Calibration is Mandatory | ✅ Enforced | Platt calibration applied to mid-term model outputs |
+| 19. AUC is Necessary but Not Sufficient | ✅ Enforced | Multi-metric evaluation required; mid-term model evaluated with OOF AUC + fold AUCs + calibrated AUC |
+| 20. Out-of-Sample Testing | ✅ Enforced | Mid-term model uses time-series CV (n_splits=5) |
 | 21-27 | ⚠️ Ongoing | Backtest rigor, production monitoring, and risk control to be strengthened |
-| 28. Code as Documentation | ✅ Enforced | `docs/reference/3l_scoring_spec.md` documents scoring logic, thresholds, and formulas |
-| 29. Reproducibility | ✅ Enforced | `train_3l_models.py` reproduces models deterministically; versions never overwritten |
-| 30. Change Audit | ✅ Enforced | All 3L changes (thresholds, features, labels) documented in `docs/reference/3l_scoring_spec.md` |
+| 28. Code as Documentation | ✅ Enforced | Core logic documented in place; historical 3L spec archived at `docs/archive/3l_scoring_spec.md` |
+| 29. Reproducibility | ✅ Enforced | Model training scripts reproducible; versions never overwritten |
+| 30. Change Audit | ✅ Enforced | All changes documented in place; 3L removal recorded in `docs/3l_removal.md` |
 
 ---
 

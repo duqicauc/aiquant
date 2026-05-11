@@ -140,11 +140,7 @@ export default function Research() {
           if (found) {
             setModelView({
               prob: found.prob ?? found.probability ?? 0,
-              prob_xgb: found.prob_xgb,
-              prob_lgb: found.prob_lgb,
-              prob_cat: found.prob_cat,
               rank: found.rank,
-              disagreement: found.disagreement,
             })
           } else {
             setModelView(null)
@@ -516,14 +512,6 @@ export default function Research() {
             {modelView.rank && (
               <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>排名 #{modelView.rank}</span>
             )}
-            {typeof modelView.disagreement === 'number' && (
-              <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
-                分歧度: {modelView.disagreement.toFixed(3)}
-              </span>
-            )}
-            <span style={{ color: '#8b949e', fontSize: '0.75rem' }}>
-              🌳 {(modelView.prob_xgb * 100).toFixed(1)}% · 🍃 {(modelView.prob_lgb * 100).toFixed(1)}% · 🐱 {(modelView.prob_cat * 100).toFixed(1)}%
-            </span>
             <Button
               size="small"
               onClick={() => navigate('/prediction')}
@@ -1636,28 +1624,23 @@ export default function Research() {
                                     置信度: {diagnosis.model_prediction.confidence}
                                   </Tag>
                                 </div>
-                                {/* 三子模型 */}
+                                {/* 模型信息 */}
                                 <div style={{ marginTop: 10 }}>
-                                  <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 6 }}>三子模型概率</div>
-                                  {[
-                                    { label: 'XGBoost', key: 'prob_xgb', color: '#58a6ff' },
-                                    { label: 'LightGBM', key: 'prob_lgb', color: '#a371f7' },
-                                    { label: 'CatBoost', key: 'prob_cat', color: '#3fb950' },
-                                  ].map((m) => {
-                                    const val = (diagnosis.model_prediction as any)[m.key] as number
-                                    if (val === undefined) return null
-                                    return (
-                                      <div key={m.key} style={{ marginBottom: 6 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                                          <span style={{ color: '#8b949e', fontSize: '0.7rem' }}>{m.label}</span>
-                                          <span style={{ color: m.color, fontSize: '0.75rem', fontWeight: 500 }}>{(val * 100).toFixed(1)}%</span>
-                                        </div>
-                                        <div style={{ width: '100%', height: 4, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
-                                          <div style={{ width: `${Math.min(val * 100, 100)}%`, height: '100%', background: m.color, borderRadius: 2 }} />
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
+                                  <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 6 }}>模型版本</div>
+                                  <div style={{ marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                                      <span style={{ color: '#8b949e', fontSize: '0.7rem' }}>v3.0.0 XGBoost Flatten</span>
+                                      <span style={{ color: '#58a6ff', fontSize: '0.75rem', fontWeight: 500 }}>{((diagnosis.model_prediction?.prob ?? diagnosis.model_prediction?.probability ?? 0) * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div style={{ width: '100%', height: 4, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
+                                      <div style={{
+                                        width: `${Math.min(((diagnosis.model_prediction?.prob ?? diagnosis.model_prediction?.probability ?? 0)) * 100, 100)}%`,
+                                        height: '100%',
+                                        background: (diagnosis.model_prediction?.prob ?? diagnosis.model_prediction?.probability ?? 0) > 0.7 ? '#3fb950' : '#58a6ff',
+                                        borderRadius: 2
+                                      }} />
+                                    </div>
+                                  </div>
                                 </div>
                                 <div style={{ color: '#8b949e', fontSize: '0.7rem', marginTop: 8 }}>
                                   模型: {diagnosis.model_prediction.model_version}

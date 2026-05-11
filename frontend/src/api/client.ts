@@ -83,7 +83,7 @@ export const predictionApi = {
   runPipeline: () => client.post('/api/prediction/run-pipeline'),
   distribution: (params?: { date?: string; exclude_bj?: boolean; exclude_st?: boolean; exclude_suspended?: boolean; min_mv?: number }) =>
     client.get('/api/prediction/distribution', { params }),
-  strategyPool: (params?: { l1?: boolean; l2?: boolean; l3?: boolean; top_n?: number }) =>
+  strategyPool: (params?: { min_prob?: number; allowed_stages?: string; top_n?: number }) =>
     client.get('/api/prediction/strategy-pool', { params }),
 }
 

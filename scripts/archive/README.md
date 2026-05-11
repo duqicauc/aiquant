@@ -194,5 +194,5 @@ cp scripts/archive/train_scripts/*.py scripts/
 ## 四、关联文档
 
 - [中期模型训练指南](../../docs/guides/MIDTERM_TRAINING_GUIDE.md) — 新框架完整文档
-- [3L 评分系统规格书](../../docs/reference/3l_scoring_spec.md) — 3L 架构说明
+- [3L 评分系统规格书](../../docs/archive/3l_scoring_spec.md) — 3L 架构说明（已归档）
 - [AGENTS.md](../../AGENTS.md) — 项目开发原则
