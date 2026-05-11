@@ -994,7 +994,15 @@ def _get_trade_dates(pro, end_date: str, n: int = 3) -> List[str]:
 
 
 def _fetch_concept_trend(days: int, top_n: int):
-    """内部函数：实际获取 concept-trend 数据"""
+    """内部函数：实际获取 concept-trend 数据，区分主线与强题材。
+
+    区分逻辑：
+    - 主线 (main_line): Tushare 历史上榜天数(raw_days)>=10，近期仍在活跃，
+                        且平均每日涨停家数>=8（容量大、持续性长）。
+    - 强题材 (strong_theme): 短期爆发力极强（单日涨停>=12 或 连板总数>=6
+                            或 平均涨停>=10），但历史上榜天数短或容量不足。
+    - 热点 (hot_spot): 其他当日/近两日活跃概念。
+    """
     try:
         import tushare as ts
         pro = ts.pro_api()
@@ -1002,7 +1010,8 @@ def _fetch_concept_trend(days: int, top_n: int):
         trade_dates = _get_trade_dates(pro, today, n=days)
 
         concept_stats: Dict[str, dict] = {}
-        for td in trade_dates:
+        # reversed 保证最后处理的是最新日期，latest_rank / latest_up_nums 正确
+        for td in reversed(trade_dates):
             try:
                 df = pro.limit_cpt_list(trade_date=td)
                 if df is not None and not df.empty:
@@ -1017,11 +1026,29 @@ def _fetch_concept_trend(days: int, top_n: int):
                                 "cons_nums_total": 0,
                                 "pct_chg_sum": 0.0,
                                 "days": 0,
+                                "raw_days": 0,
+                                "daily_up_nums": [],
+                                "latest_rank": None,
+                                "latest_up_nums": None,
                             }
-                        concept_stats[name]["up_nums_total"] += int(row.get("up_nums", 0))
-                        concept_stats[name]["cons_nums_total"] += int(row.get("cons_nums", 0))
-                        concept_stats[name]["pct_chg_sum"] += float(row.get("pct_chg", 0))
+                        up_nums = int(row.get("up_nums", 0))
+                        cons_nums = int(row.get("cons_nums", 0))
+                        pct_chg = float(row.get("pct_chg", 0))
+                        raw_days = int(row.get("days", 0))
+                        rank_val = row.get("rank", 999)
+                        try:
+                            rank = int(rank_val)
+                        except (ValueError, TypeError):
+                            rank = 999
+
+                        concept_stats[name]["up_nums_total"] += up_nums
+                        concept_stats[name]["cons_nums_total"] += cons_nums
+                        concept_stats[name]["pct_chg_sum"] += pct_chg
                         concept_stats[name]["days"] += 1
+                        concept_stats[name]["raw_days"] = max(concept_stats[name]["raw_days"], raw_days)
+                        concept_stats[name]["daily_up_nums"].append(up_nums)
+                        concept_stats[name]["latest_rank"] = rank
+                        concept_stats[name]["latest_up_nums"] = up_nums
             except Exception:
                 continue
 
@@ -1029,6 +1056,39 @@ def _fetch_concept_trend(days: int, top_n: int):
             records = []
             for name, stats in concept_stats.items():
                 d = stats["days"]
+                up_nums_avg = round(stats["up_nums_total"] / d, 1) if d > 0 else 0.0
+                up_nums_max = max(stats["daily_up_nums"]) if stats["daily_up_nums"] else 0
+                raw_days = stats["raw_days"]
+
+                # 综合评分：持续性 + 容量 + 强度
+                score = round(stats["up_nums_total"] * d + stats["cons_nums_total"] * 0.5, 2)
+
+                # ---- 主线 vs 强题材 分类 ----
+                # 主线：长期持续 + 近期仍在 + 容量够
+                is_main_line = (
+                    raw_days >= 10
+                    and d >= max(2, days - 1)
+                    and up_nums_avg >= 8
+                )
+
+                # 强题材：短期爆发，但不够"主线"标准
+                is_strong_theme = (
+                    not is_main_line
+                    and d >= 2
+                    and (
+                        up_nums_max >= 12
+                        or stats["cons_nums_total"] >= 6
+                        or up_nums_avg >= 10
+                    )
+                )
+
+                if is_main_line:
+                    category = "main_line"
+                elif is_strong_theme:
+                    category = "strong_theme"
+                else:
+                    category = "hot_spot"
+
                 records.append({
                     "name": name,
                     "rank": 0,
@@ -1036,9 +1096,19 @@ def _fetch_concept_trend(days: int, top_n: int):
                     "up_nums_total": stats["up_nums_total"],
                     "cons_nums_total": stats["cons_nums_total"],
                     "pct_chg_avg": round(stats["pct_chg_sum"] / d, 2) if d > 0 else 0.0,
-                    "score": round(stats["up_nums_total"] * d + stats["cons_nums_total"] * 0.5, 2),
+                    "score": score,
+                    "category": category,
+                    "raw_days": raw_days,
+                    "up_nums_avg": up_nums_avg,
+                    "latest_rank": stats["latest_rank"],
+                    "latest_up_nums": stats["latest_up_nums"],
                 })
-            records.sort(key=lambda x: x["score"], reverse=True)
+
+            # 排序：主线 > 强题材 > 热点，同类内按 score 降序
+            records.sort(key=lambda x: (
+                0 if x["category"] == "main_line" else (1 if x["category"] == "strong_theme" else 2),
+                -x["score"],
+            ))
             for i, r in enumerate(records, start=1):
                 r["rank"] = i
             return records[:top_n]
@@ -1056,14 +1126,23 @@ def _fetch_concept_trend(days: int, top_n: int):
                 if df is not None and not df.empty:
                     records = []
                     for idx, row in df.head(top_n).iterrows():
+                        raw_days = int(row.get("days", 0))
+                        up_nums = int(row.get("up_nums", 0))
+                        # fallback 无多日数据，仅凭单日 raw_days 粗略分类
+                        category = "main_line" if raw_days >= 10 else "hot_spot"
                         records.append({
                             "name": str(row.get("name", "")),
                             "rank": idx + 1,
                             "days": 1,
-                            "up_nums_total": int(row.get("up_nums", 0)),
+                            "up_nums_total": up_nums,
                             "cons_nums_total": int(row.get("cons_nums", 0)),
                             "pct_chg_avg": round(float(row.get("pct_chg", 0)), 2),
-                            "score": float(row.get("up_nums", 0)),
+                            "score": float(up_nums),
+                            "category": category,
+                            "raw_days": raw_days,
+                            "up_nums_avg": float(up_nums),
+                            "latest_rank": idx + 1,
+                            "latest_up_nums": up_nums,
                         })
                     return records
             except Exception:

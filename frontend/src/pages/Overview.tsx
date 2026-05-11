@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Card, Row, Col, Tag, Spin, Badge, Tooltip } from 'antd'
+import { Card, Row, Col, Tag, Spin, Badge, Tooltip, Select } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import { marketApi, predictionApi, tradingApi, stockNoteApi } from '../api/client'
@@ -41,6 +41,7 @@ export default function Overview() {
   const [sectorData, setSectorData] = useState<any[]>([])
   const [hotConcepts, setHotConcepts] = useState<any[]>([])
   const [conceptTrend, setConceptTrend] = useState<any[]>([])
+  const [conceptTrendDays, setConceptTrendDays] = useState(3)
 
   // New states for subjective-quant integration
   const [strikeZone, setStrikeZone] = useState<StrikeZoneItem[]>([])
@@ -51,6 +52,13 @@ export default function Overview() {
     fetchCore()
     fetchSecondary()
   }, [])
+
+  // 近期主线：支持动态切换天数
+  useEffect(() => {
+    marketApi.conceptTrend(conceptTrendDays).then((res: any) => {
+      setConceptTrend(res.data || [])
+    }).catch(() => setConceptTrend([]))
+  }, [conceptTrendDays])
 
   // 核心数据：先加载，不阻塞主界面展示
   const fetchCore = async () => {
@@ -73,20 +81,18 @@ export default function Overview() {
   const fetchSecondary = async () => {
     setLoadingSecondary(true)
     try {
-      const [pRes, nRes, tRes, sRes, hRes, cRes] = await Promise.all([
+      const [pRes, nRes, tRes, sRes, hRes] = await Promise.all([
         predictionApi.pipelineStatus().catch(() => ({ data: null })),
         stockNoteApi.list().catch(() => ({ data: { items: [] } })),
         tradingApi.summary().catch(() => ({ data: null })),
         marketApi.sectors().catch(() => ({ data: [] })),
         marketApi.hotConcepts().catch(() => ({ data: [] })),
-        marketApi.conceptTrend().catch(() => ({ data: [] })),
       ])
 
       setPipelineStatus(pRes.data)
       setTradingSummary(tRes.data)
       setSectorData(sRes.data || [])
       setHotConcepts(hRes.data?.data || [])
-      setConceptTrend(cRes.data || [])
 
       const notes = nRes.data?.items || []
       setNoteStats({
@@ -757,42 +763,81 @@ export default function Overview() {
             <Card
               style={{ background: '#161b22', borderColor: '#30363d' }}
               headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
-              title="🔥 近期主线（同花顺概念）"
+              title={
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  🔥 近期主线（同花顺概念）
+                  <Select
+                    size="small"
+                    value={conceptTrendDays}
+                    onChange={setConceptTrendDays}
+                    style={{ minWidth: 70 }}
+                    dropdownStyle={{ fontSize: 12 }}
+                    options={[
+                      { value: 2, label: '2天' },
+                      { value: 3, label: '3天' },
+                      { value: 4, label: '4天' },
+                      { value: 5, label: '5天' },
+                    ]}
+                  />
+                </span>
+              }
             >
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-                {/* 持续强势概念（3日） */}
-                <div style={{ flex: 1, minWidth: 240 }}>
-                  <div style={{ fontSize: 12, color: '#f85149', fontWeight: 'bold', marginBottom: 8 }}>
-                    ⬆️ 持续强势概念（近3日）
-                    <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10, marginLeft: 6 }}>涨停数 × 持续天数</span>
+                {/* 主线 */}
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 12, color: '#ff7b72', fontWeight: 'bold', marginBottom: 8 }}>
+                    🔥 主线 <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10 }}>长期持续 / 容量大</span>
                   </div>
-                  {conceptTrend.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {conceptTrend.slice(0, 5).map((c: any, i: number) => (
+                  {conceptTrend.filter((c: any) => c.category === 'main_line').length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {conceptTrend.filter((c: any) => c.category === 'main_line').slice(0, 5).map((c: any, i: number) => (
                         <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                           <span style={{ color: '#6e7681', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
                           <span style={{ color: '#c9d1d9', flex: 1 }}>{c.name}</span>
                           <span style={{ color: '#f85149', fontSize: 10, minWidth: 65, textAlign: 'right' }}>
-                            {c.days >= 2 ? '🔥 ' : ''}{c.up_nums_total} 涨停
+                            {c.up_nums_total} 涨停
                           </span>
-                          <span style={{ color: '#8b949e', fontSize: 10, minWidth: 50, textAlign: 'right' }}>
-                            {c.days}天持续
+                          <span style={{ color: '#8b949e', fontSize: 10, minWidth: 55, textAlign: 'right' }}>
+                            {c.raw_days}天历史
                           </span>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div style={{ color: '#8b949e', fontSize: 12 }}>暂无数据</div>
+                    <div style={{ color: '#8b949e', fontSize: 12 }}>暂无主线</div>
+                  )}
+                </div>
+                {/* 强题材 */}
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 12, color: '#d29922', fontWeight: 'bold', marginBottom: 8 }}>
+                    ⚡ 强题材 <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10 }}>短期爆发 / 强度高</span>
+                  </div>
+                  {conceptTrend.filter((c: any) => c.category === 'strong_theme').length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {conceptTrend.filter((c: any) => c.category === 'strong_theme').slice(0, 5).map((c: any, i: number) => (
+                        <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                          <span style={{ color: '#6e7681', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
+                          <span style={{ color: '#c9d1d9', flex: 1 }}>{c.name}</span>
+                          <span style={{ color: '#f85149', fontSize: 10, minWidth: 65, textAlign: 'right' }}>
+                            {c.up_nums_total} 涨停
+                          </span>
+                          <span style={{ color: '#8b949e', fontSize: 10, minWidth: 55, textAlign: 'right' }}>
+                            {c.days}天活跃
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: '#8b949e', fontSize: 12 }}>暂无强题材</div>
                   )}
                 </div>
                 {/* 当日热点概念 */}
-                <div style={{ flex: 1, minWidth: 240 }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
                   <div style={{ fontSize: 12, color: '#d29922', fontWeight: 'bold', marginBottom: 8 }}>
-                    ⚡ 当日热点概念
-                    <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10, marginLeft: 6 }}>按涨停数排序</span>
+                    📍 当日热点 <span style={{ color: '#8b949e', fontWeight: 'normal', fontSize: 10 }}>按涨停数排序</span>
                   </div>
                   {hotConcepts.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {hotConcepts.slice(0, 5).map((c: any, i: number) => (
                         <div key={c.name || c.code} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                           <span style={{ color: '#6e7681', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>

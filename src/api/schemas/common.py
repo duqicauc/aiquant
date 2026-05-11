@@ -51,11 +51,18 @@ class SectorPerformance(BaseModel):
 
 
 class ConceptTrend(BaseModel):
-    """Concept trend over multiple days (persistence indicator)."""
+    """Concept trend over multiple days (persistence indicator).
+    Distinguishes main_line (主线) vs strong_theme (强题材) vs hot_spot (热点).
+    """
     name: str
     rank: int
-    days: int = Field(description="Number of days appeared in top list (out of last 3)")
+    days: int = Field(description="Number of days appeared in tracked window")
     up_nums_total: int = Field(description="Total limit-up count over tracked days")
     cons_nums_total: int = Field(default=0, description="Total consecutive limit-up count")
     pct_chg_avg: float = Field(description="Average daily pct_chg over tracked days")
-    score: float = Field(description="Composite score = up_nums_total * days")
+    score: float = Field(description="Composite score")
+    category: str = Field(default="hot_spot", description="main_line|strong_theme|hot_spot")
+    raw_days: int = Field(default=0, description="Historical days on limit-up list from Tushare")
+    up_nums_avg: float = Field(default=0.0, description="Average daily up_nums over tracked days")
+    latest_rank: Optional[int] = Field(default=None, description="Latest day rank")
+    latest_up_nums: Optional[int] = Field(default=None, description="Latest day up_nums")
