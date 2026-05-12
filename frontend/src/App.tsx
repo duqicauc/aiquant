@@ -11,6 +11,7 @@ import {
   StarOutlined,
   ClockCircleOutlined,
   LogoutOutlined,
+  FundOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import AppRoutes from './router'
@@ -23,6 +24,8 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '总览驾驶舱' },
   { key: '/market', icon: <GlobalOutlined />, label: '市场分析' },
   { key: '/research', icon: <SearchOutlined />, label: '股票研究' },
+  { key: '/etf', icon: <FundOutlined />, label: 'ETF 研究' },
+  { key: '/etf-portfolio', icon: <WalletOutlined />, label: 'ETF 组合' },
   { key: '/strategy-pool', icon: <StarOutlined />, label: '战略股票池' },
   { key: '/prediction', icon: <RobotOutlined />, label: '选股中心' },
   { key: '/backtest', icon: <BarChartOutlined />, label: '回测中心' },

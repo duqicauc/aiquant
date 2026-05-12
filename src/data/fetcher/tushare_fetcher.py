@@ -792,3 +792,162 @@ class TushareFetcher(BaseFetcher):
         except Exception as e:
             log.debug(f"获取北向资金失败: {e}")
             return pd.DataFrame()
+
+    # ─── ETF / Fund Methods ───
+
+    def get_etf_list(self, market: str = "E", status: str = "L") -> pd.DataFrame:
+        """
+        获取场内 ETF 基金基础信息 (fund_basic)
+        积分≥2000
+
+        Args:
+            market: 交易市场 ('E'=场内, 'O'=场外)
+            status: 上市状态 ('L'=上市, 'D'=退市, 'P'=募集)
+
+        Returns:
+            DataFrame with columns:
+                ts_code, name, management, custodian, fund_type, status,
+                invest_type, type, benchmark, issue_date, delist_date,
+                list_date, issue_amount, m_fee, c_fee, first_amount,
+                last_amount, year_yld, total_nav, adj_nav, update_date 等
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            df = self.pro.fund_basic(market=market, status=status)
+            if df is not None and not df.empty:
+                log.info(f"获取ETF列表成功: {len(df)} 只")
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取ETF列表失败: {e}")
+            return pd.DataFrame()
+
+    def get_etf_daily(
+        self,
+        ts_code: str = None,
+        trade_date: str = None,
+        start_date: str = None,
+        end_date: str = None,
+    ) -> pd.DataFrame:
+        """
+        获取 ETF 日线行情 (fund_daily)
+        积分≥5000
+
+        Args:
+            ts_code: ETF代码，如 '510330.SH'
+            trade_date: 交易日期 (YYYYMMDD)
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (YYYYMMDD)
+
+        Returns:
+            DataFrame with columns:
+                ts_code, trade_date, open, high, low, close,
+                pre_close, change, pct_chg, vol, amount
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {}
+            if ts_code:
+                params["ts_code"] = ts_code
+            if trade_date:
+                params["trade_date"] = self.format_date(trade_date)
+            if start_date:
+                params["start_date"] = self.format_date(start_date)
+            if end_date:
+                params["end_date"] = self.format_date(end_date)
+
+            df = self.pro.fund_daily(**params)
+            if df is not None and not df.empty:
+                if "trade_date" in df.columns:
+                    df["trade_date"] = pd.to_datetime(df["trade_date"])
+                    df = df.sort_values("trade_date").reset_index(drop=True)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取ETF日线失败 ({ts_code}): {e}")
+            return pd.DataFrame()
+
+    def get_etf_nav(
+        self,
+        ts_code: str = None,
+        trade_date: str = None,
+        start_date: str = None,
+        end_date: str = None,
+    ) -> pd.DataFrame:
+        """
+        获取 ETF 基金净值 (fund_nav)
+        积分≥2000
+
+        Args:
+            ts_code: ETF代码
+            trade_date: 交易日期 (YYYYMMDD)
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame with columns:
+                ts_code, ann_date, nav_date, unit_nav, accum_nav, div_nav,
+                net_asset, total_asset, adj_nav, update_flag
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {}
+            if ts_code:
+                params["ts_code"] = ts_code
+            if trade_date:
+                params["nav_date"] = self.format_date(trade_date)
+            if start_date:
+                params["start_date"] = self.format_date(start_date)
+            if end_date:
+                params["end_date"] = self.format_date(end_date)
+
+            df = self.pro.fund_nav(**params)
+            if df is not None and not df.empty:
+                if "nav_date" in df.columns:
+                    df["nav_date"] = pd.to_datetime(df["nav_date"])
+                    df = df.sort_values("nav_date").reset_index(drop=True)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取ETF净值失败 ({ts_code}): {e}")
+            return pd.DataFrame()
+
+    def get_etf_share(
+        self,
+        ts_code: str = None,
+        trade_date: str = None,
+        start_date: str = None,
+        end_date: str = None,
+    ) -> pd.DataFrame:
+        """
+        获取 ETF 基金份额 (fund_share)
+        积分≥2000
+
+        Args:
+            ts_code: ETF代码
+            trade_date: 交易日期 (YYYYMMDD)
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame with columns:
+                ts_code, trade_date, fd_share, fd_share_change
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {}
+            if ts_code:
+                params["ts_code"] = ts_code
+            if trade_date:
+                params["trade_date"] = self.format_date(trade_date)
+            if start_date:
+                params["start_date"] = self.format_date(start_date)
+            if end_date:
+                params["end_date"] = self.format_date(end_date)
+
+            df = self.pro.fund_share(**params)
+            if df is not None and not df.empty:
+                if "trade_date" in df.columns:
+                    df["trade_date"] = pd.to_datetime(df["trade_date"])
+                    df = df.sort_values("trade_date").reset_index(drop=True)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取ETF份额失败 ({ts_code}): {e}")
+            return pd.DataFrame()

@@ -174,6 +174,24 @@ export const stockNoteApi = {
   list: () => client.get('/api/stock/notes'),
 }
 
+// ETF API
+export const etfApi = {
+  list: (params?: { fund_type?: string; benchmark_keyword?: string; min_amount?: number; max_expense?: number; sort_by?: string; sort_order?: string; page?: number; page_size?: number }) =>
+    client.get('/api/etf/list', { params }),
+  detail: (tsCode: string) => client.get(`/api/etf/${tsCode}/detail`),
+  kline: (tsCode: string, days = 120) =>
+    client.get(`/api/etf/${tsCode}/kline`, { params: { days } }),
+  technical: (tsCode: string, days = 60) =>
+    client.get(`/api/etf/${tsCode}/technical`, { params: { days } }),
+  signalsHistory: (tsCode: string, days = 60) =>
+    client.get(`/api/etf/${tsCode}/signals/history`, { params: { days } }),
+  signalsStats: (tsCode: string, days = 60) =>
+    client.get(`/api/etf/${tsCode}/signals/stats`, { params: { days } }),
+  hot: (period = '1d', topN = 20) =>
+    client.get('/api/etf/hot', { params: { period, top_n: topN } }),
+  backtest: (data: any) => client.post('/api/etf/portfolio/backtest', data),
+}
+
 // Health check
 export const healthApi = {
   check: () => client.get('/api/health'),

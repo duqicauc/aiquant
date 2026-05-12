@@ -6,6 +6,8 @@ import Prediction from '../pages/Prediction'
 import Backtest from '../pages/Backtest'
 import Trading from '../pages/Trading'
 import StrategyPool from '../pages/StrategyPool'
+import ETFResearch from '../pages/ETFResearch'
+import ETFPortfolio from '../pages/ETFPortfolio'
 
 import System from '../pages/System'
 import Scheduler from '../pages/Scheduler'
@@ -25,6 +27,8 @@ export default function AppRoutes() {
       <Route path="/strategy-pool" element={<StrategyPool />} />
       <Route path="/watchlist" element={<Navigate to="/prediction" replace />} />
       <Route path="/system" element={<System />} />
+      <Route path="/etf" element={<ETFResearch />} />
+      <Route path="/etf-portfolio" element={<ETFPortfolio />} />
       <Route path="/scheduler" element={<Scheduler />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
