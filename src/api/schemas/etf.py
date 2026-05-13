@@ -275,3 +275,62 @@ class ETFBacktestResponse(BaseModel):
     nav_curve: List[PortfolioNavItem]
     metrics: PortfolioMetrics
     rebalance_dates: List[str] = Field(default_factory=list)
+
+
+# ─── Industry Analysis ───
+
+class ETFThemeTopItem(BaseModel):
+    """主题内涨跌幅 TOP ETF"""
+    ts_code: str
+    name: str
+    pct_chg: Optional[float] = None
+    amount: Optional[float] = None
+
+
+class ETFIndustryTheme(BaseModel):
+    """单个主题的行业分析数据"""
+    category: str  # 大类：权益-宽基/权益-行业/权益-主题策略/权益-跨境/固收/另类
+    theme: str     # 子主题
+    etf_count: int
+    # Crowding
+    amount_ratio: Optional[float] = None
+    turnover_concentration: Optional[float] = None
+    share_change_ratio: Optional[float] = None
+    dispersion: Optional[float] = None
+    crowding_score: float
+    crowding_label: str
+    # Opportunity
+    win_rate: float
+    profit_loss_ratio: Optional[float] = None
+    risk_return_ratio: Optional[float] = None
+    avg_return: Optional[float] = None
+    opportunity_score: float
+    opportunity_label: str
+    # Reliability & multi-day metrics
+    reliability: float = Field(1.0, description="数据完整度 0-1")
+    momentum_5d: Optional[float] = Field(None, description="近5日平均收益率(%)")
+    deviation_ma20: Optional[float] = Field(None, description="相对MA20偏离度(%)")
+    amount_ratio_zscore: Optional[float] = Field(None, description="成交占比Z-score")
+    share_change_trend: Optional[float] = Field(None, description="近5日份额变动趋势(%)")
+    consistency_5d: Optional[float] = Field(None, description="近5日趋势一致性 0-1")
+    # Top ETFs
+    top_etfs: List[ETFThemeTopItem]
+
+
+class ETFIndustryCategory(BaseModel):
+    """大类聚合数据"""
+    category: str
+    etf_count: int
+    amount_ratio: float
+    crowding_score: float
+    opportunity_score: float
+    sub_themes: List[str]
+    top_etfs: List[ETFThemeTopItem]
+
+
+class ETFIndustryAnalysisResponse(BaseModel):
+    """行业分析响应"""
+    themes: List[ETFIndustryTheme]
+    categories: List[ETFIndustryCategory]
+    total_etfs: int
+    as_of_date: str

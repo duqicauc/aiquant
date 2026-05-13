@@ -190,6 +190,7 @@ export const etfApi = {
   hot: (period = '1d', topN = 20) =>
     client.get('/api/etf/hot', { params: { period, top_n: topN } }),
   backtest: (data: any) => client.post('/api/etf/portfolio/backtest', data),
+  industryAnalysis: () => client.get('/api/etf/industry-analysis'),
 }
 
 // Health check

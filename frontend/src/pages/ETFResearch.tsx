@@ -93,6 +93,55 @@ interface TechnicalData {
   bearish_score: number
 }
 
+interface ETFThemeTopItem {
+  ts_code: string
+  name: string
+  pct_chg?: number
+  amount?: number
+}
+
+interface ETFIndustryTheme {
+  category: string
+  theme: string
+  etf_count: number
+  amount_ratio: number
+  turnover_concentration: number
+  share_change_ratio: number
+  dispersion: number
+  crowding_score: number
+  crowding_label: string
+  win_rate: number
+  profit_loss_ratio: number
+  avg_return: number
+  risk_return_ratio: number
+  opportunity_score: number
+  opportunity_label: string
+  reliability: number
+  momentum_5d?: number
+  deviation_ma20?: number
+  amount_ratio_zscore?: number
+  share_change_trend?: number
+  consistency_5d?: number
+  top_etfs: ETFThemeTopItem[]
+}
+
+interface ETFIndustryCategory {
+  category: string
+  etf_count: number
+  amount_ratio: number
+  crowding_score: number
+  opportunity_score: number
+  sub_themes: string[]
+  top_etfs: ETFThemeTopItem[]
+}
+
+interface ETFIndustryAnalysisData {
+  themes: ETFIndustryTheme[]
+  categories: ETFIndustryCategory[]
+  total_etfs: number
+  as_of_date: string
+}
+
 const FUND_TYPE_OPTIONS = [
   { label: '全部', value: '' },
   { label: '股票型', value: '股票型' },
@@ -155,6 +204,11 @@ export default function ETFResearch() {
   const [hotETFs, setHotETFs] = useState<ETFItem[]>([])
   const [hotLoading, setHotLoading] = useState(false)
 
+  const [mainTab, setMainTab] = useState<'list' | 'industry'>('list')
+  const [industryData, setIndustryData] = useState<ETFIndustryAnalysisData | null>(null)
+  const [industryLoading, setIndustryLoading] = useState(false)
+  const [industrySortBy, setIndustrySortBy] = useState('opportunity_score')
+
   // ─── Fetch list ───
   const fetchList = async (currentPage = page) => {
     setLoading(true)
@@ -194,6 +248,19 @@ export default function ETFResearch() {
       // ignore
     } finally {
       setHotLoading(false)
+    }
+  }
+
+  // ─── Fetch industry analysis ───
+  const fetchIndustry = async () => {
+    setIndustryLoading(true)
+    try {
+      const res = await etfApi.industryAnalysis()
+      setIndustryData(res.data)
+    } catch (e: any) {
+      console.error('行业热力获取失败:', e)
+    } finally {
+      setIndustryLoading(false)
     }
   }
 
@@ -258,6 +325,12 @@ export default function ETFResearch() {
       fetchTechnical(selectedETF)
     }
   }, [detailTab])
+
+  useEffect(() => {
+    if (mainTab === 'industry' && !industryData) {
+      fetchIndustry()
+    }
+  }, [mainTab])
 
   // ─── Chart option ───
   const chartOption = useMemo(() => {
@@ -1173,6 +1246,536 @@ export default function ETFResearch() {
     )
   }
 
+  // ─── Industry Heat render ───
+  const renderIndustryHeat = () => {
+    if (industryLoading) {
+      return (
+        <Card style={{ background: '#161b22', borderColor: '#30363d', textAlign: 'center', padding: '4rem 0' }}>
+          <Spin tip="加载行业热力数据..." />
+        </Card>
+      )
+    }
+    if (!industryData || !industryData.themes || industryData.themes.length === 0) {
+      return (
+        <Card style={{ background: '#161b22', borderColor: '#30363d', textAlign: 'center', padding: '4rem 0' }}>
+          <Empty description={<span style={{ color: '#8b949e' }}>暂无行业热力数据</span>} />
+        </Card>
+      )
+    }
+
+    const themes = [...industryData.themes]
+    if (industrySortBy) {
+      themes.sort((a, b) => (b as any)[industrySortBy] - (a as any)[industrySortBy])
+    }
+
+    const categories = industryData.categories || []
+
+    const CATEGORY_LABELS: Record<string, string> = {
+      '权益-宽基': '📊 权益 · 宽基',
+      '权益-行业': '🏭 权益 · 行业',
+      '权益-主题策略': '🎯 权益 · 主题策略',
+      '权益-跨境': '🌍 权益 · 跨境',
+      '固收': '📜 固收',
+      '另类': '⚖️ 另类',
+    }
+
+    const getQuadrant = (cs: number, os: number) => {
+      if (cs < 40 && os >= 60) return 'green'
+      if (cs >= 70 && os < 40) return 'red'
+      if (cs >= 70 && os >= 60) return 'yellow'
+      return 'blue'
+    }
+
+    const getQuadrantLabel = (q: string) => {
+      if (q === 'green') return { label: '🟢 低拥挤 · 高机会', color: '#3fb950', desc: '推荐关注，性价比最优' }
+      if (q === 'red') return { label: '🔴 高拥挤 · 低机会', color: '#f85149', desc: '建议回避，过热风险' }
+      if (q === 'yellow') return { label: '🟡 高拥挤 · 高机会', color: '#d29922', desc: '趋势强劲，警惕回调' }
+      return { label: '🔵 低拥挤 · 低机会', color: '#58a6ff', desc: '观望等待，暂无信号' }
+    }
+
+    // ── Layer 1: Category-level scatter (dual-layer: sub-themes + categories) ──
+    const CATEGORY_COLORS: Record<string, string> = {
+      '权益-宽基': '#58a6ff',
+      '权益-行业': '#f0883e',
+      '权益-主题策略': '#a371f7',
+      '权益-跨境': '#3fb950',
+      '固收': '#d29922',
+      '另类': '#f85149',
+    }
+
+    const scatterOption = {
+      backgroundColor: 'transparent',
+      animation: false,
+      grid: { left: 50, right: 30, top: 30, bottom: 50 },
+      legend: {
+        data: ['子主题', '大类'],
+        textStyle: { color: '#8b949e', fontSize: 11 },
+        top: 5,
+        right: 10,
+        itemWidth: 10,
+        itemHeight: 10,
+      },
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: '#161b22',
+        borderColor: '#30363d',
+        textStyle: { color: '#c9d1d9', fontSize: 12 },
+        formatter: (p: any) => {
+          const d = p.data
+          const isCategory = p.seriesName === '大类'
+          const name = d[2]
+          const cs = d[0]
+          const os = d[1]
+          const etfCount = d[3]
+          const amountRatio = d[4]
+          const extra = d[6] || ''
+          return `<div style="font-weight:600">${isCategory ? '▣' : '○'} ${name}</div>
+<div>拥挤度: ${cs.toFixed(1)} | 机会: ${os.toFixed(1)}</div>
+<div>ETF数: ${etfCount} | 成交占比: ${amountRatio.toFixed(1)}%</div>
+${extra ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">${extra}</div>` : ''}`
+        },
+      },
+      xAxis: {
+        type: 'value',
+        name: '拥挤度',
+        nameTextStyle: { color: '#8b949e', fontSize: 11 },
+        min: 0, max: 100,
+        axisLine: { lineStyle: { color: '#30363d' } },
+        axisLabel: { color: '#8b949e', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#21262d' } },
+      },
+      yAxis: {
+        type: 'value',
+        name: '机会评分',
+        nameTextStyle: { color: '#8b949e', fontSize: 11 },
+        min: 0, max: 100,
+        axisLine: { lineStyle: { color: '#30363d' } },
+        axisLabel: { color: '#8b949e', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#21262d' } },
+      },
+      series: [
+        {
+          name: '子主题',
+          type: 'scatter',
+          symbolSize: (d: any[]) => Math.max(6, Math.sqrt(d[3]) * 2.5),
+          data: themes.map(t => [
+            t.crowding_score,
+            t.opportunity_score,
+            t.theme,
+            t.etf_count,
+            t.amount_ratio,
+            t.crowding_score,
+            t.category,
+          ]),
+          itemStyle: {
+            color: (p: any) => CATEGORY_COLORS[p.data[6]] || '#8b949e',
+            opacity: 0.25,
+            borderColor: '#161b22',
+            borderWidth: 1,
+          },
+          label: { show: false },
+          emphasis: {
+            focus: 'self',
+            label: {
+              show: true,
+              position: 'top',
+              formatter: (p: any) => p.data[2],
+              color: '#c9d1d9',
+              fontSize: 10,
+            },
+            itemStyle: { opacity: 0.7, borderWidth: 2 },
+          },
+        },
+        {
+          name: '大类',
+          type: 'scatter',
+          symbolSize: (d: any[]) => Math.max(22, Math.sqrt(d[3]) * 5),
+          data: categories.map(c => [
+            c.crowding_score,
+            c.opportunity_score,
+            CATEGORY_LABELS[c.category] || c.category,
+            c.etf_count,
+            c.amount_ratio,
+            c.crowding_score,
+            c.sub_themes.slice(0, 4).join(' · ') + (c.sub_themes.length > 4 ? '…' : ''),
+          ]),
+          itemStyle: {
+            color: (p: any) => {
+              const cs = p.data[0]
+              const os = p.data[1]
+              if (cs >= 70 && os < 40) return '#f85149'
+              if (cs < 40 && os >= 60) return '#3fb950'
+              if (cs >= 70 && os >= 60) return '#d29922'
+              return '#58a6ff'
+            },
+            opacity: 0.9,
+            borderColor: '#161b22',
+            borderWidth: 2,
+            shadowBlur: 8,
+            shadowColor: 'rgba(0,0,0,0.3)',
+          },
+          label: {
+            show: true,
+            position: 'top',
+            formatter: (p: any) => p.data[2],
+            color: '#c9d1d9',
+            fontSize: 12,
+            fontWeight: 600,
+          },
+          labelLayout: { hideOverlap: true },
+          emphasis: {
+            focus: 'self',
+            label: { show: true },
+            itemStyle: { shadowBlur: 16, shadowColor: 'rgba(0,0,0,0.5)' },
+          },
+        },
+      ],
+      graphic: [
+        { type: 'text', left: 55, top: 40, style: { text: '🟢 低拥挤·高机会', fill: '#3fb950', fontSize: 10 } },
+        { type: 'text', right: 35, top: 40, style: { text: '🔴 高拥挤·低机会', fill: '#f85149', fontSize: 10 } },
+        { type: 'text', left: 55, bottom: 10, style: { text: '🔵 低拥挤·低机会', fill: '#58a6ff', fontSize: 10 } },
+        { type: 'text', right: 35, bottom: 10, style: { text: '🟡 高拥挤·高机会', fill: '#d29922', fontSize: 10 } },
+      ],
+    }
+
+    // ── Layer 2: Dual ranking bar charts ──
+    const sortedByOpp = [...categories].sort((a, b) => b.opportunity_score - a.opportunity_score)
+    const sortedByCrowd = [...categories].sort((a, b) => b.crowding_score - a.crowding_score)
+
+    const barOptionCommon = {
+      backgroundColor: 'transparent',
+      animation: false,
+      grid: { left: 100, right: 40, top: 10, bottom: 20 },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#161b22',
+        borderColor: '#30363d',
+        textStyle: { color: '#c9d1d9', fontSize: 12 },
+      },
+      xAxis: {
+        type: 'value',
+        max: 100,
+        axisLine: { lineStyle: { color: '#30363d' } },
+        axisLabel: { color: '#8b949e', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#21262d' } },
+      },
+      yAxis: {
+        type: 'category',
+        axisLine: { lineStyle: { color: '#30363d' } },
+        axisLabel: { color: '#c9d1d9', fontSize: 12 },
+        splitLine: { show: false },
+      },
+    }
+
+    const opportunityBarOption = {
+      ...barOptionCommon,
+      series: [{
+        type: 'bar',
+        data: sortedByOpp.map(c => ({
+          value: c.opportunity_score,
+          itemStyle: {
+            color: c.opportunity_score >= 60 ? '#3fb950' : c.opportunity_score >= 35 ? '#d29922' : '#f85149',
+            borderRadius: [0, 4, 4, 0],
+          },
+        })),
+        barWidth: 16,
+        label: {
+          show: true,
+          position: 'right',
+          formatter: '{c}',
+          color: '#c9d1d9',
+          fontSize: 11,
+          fontFamily: 'monospace',
+        },
+      }],
+      yAxis: {
+        ...barOptionCommon.yAxis,
+        data: sortedByOpp.map(c => CATEGORY_LABELS[c.category] || c.category),
+      },
+    }
+
+    const crowdingBarOption = {
+      ...barOptionCommon,
+      series: [{
+        type: 'bar',
+        data: sortedByCrowd.map(c => ({
+          value: c.crowding_score,
+          itemStyle: {
+            color: c.crowding_score >= 70 ? '#f85149' : c.crowding_score >= 40 ? '#d29922' : '#3fb950',
+            borderRadius: [0, 4, 4, 0],
+          },
+        })),
+        barWidth: 16,
+        label: {
+          show: true,
+          position: 'right',
+          formatter: '{c}',
+          color: '#c9d1d9',
+          fontSize: 11,
+          fontFamily: 'monospace',
+        },
+      }],
+      yAxis: {
+        ...barOptionCommon.yAxis,
+        data: sortedByCrowd.map(c => CATEGORY_LABELS[c.category] || c.category),
+      },
+    }
+
+    // ── Layer 3: Quadrant recommendation cards ──
+    const quadrantThemes: Record<string, ETFIndustryTheme[]> = { green: [], red: [], yellow: [], blue: [] }
+    themes.forEach(t => {
+      const q = getQuadrant(t.crowding_score, t.opportunity_score)
+      quadrantThemes[q].push(t)
+    })
+
+    const QUADRANT_ORDER = ['green', 'red', 'yellow', 'blue'] as const
+
+    return (
+      <div>
+        {/* Layer 1: Category scatter */}
+        <Card
+          style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 16 }}
+          bodyStyle={{ padding: '16px 16px 8px' }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 14 }}>📍 大类拥挤度 × 机会矩阵</span>
+            <span style={{ color: '#8b949e', fontSize: 11 }}>气泡大小 = ETF数量 | 数据截止 {industryData.as_of_date}</span>
+          </div>
+          <ReactECharts option={scatterOption} style={{ height: 380 }} />
+        </Card>
+
+        {/* Layer 2: Dual ranking bar charts */}
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Card
+              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
+              bodyStyle={{ padding: '12px 16px' }}
+              title={<span style={{ color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>🏆 机会评分排行</span>}
+              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d', fontSize: 13, padding: '8px 16px' }}
+            >
+              <ReactECharts option={opportunityBarOption} style={{ height: 260 }} />
+            </Card>
+          </Col>
+          <Col span={12}>
+            <Card
+              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
+              bodyStyle={{ padding: '12px 16px' }}
+              title={<span style={{ color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>🔥 拥挤度排行</span>}
+              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d', fontSize: 13, padding: '8px 16px' }}
+            >
+              <ReactECharts option={crowdingBarOption} style={{ height: 260 }} />
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Layer 3: Four-quadrant recommendation cards */}
+        <Card
+          style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 16 }}
+          bodyStyle={{ padding: '16px' }}
+          title={<span style={{ color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>📋 四象限主题推荐</span>}
+          headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d', fontSize: 13, padding: '8px 16px' }}
+        >
+          <Row gutter={[12, 12]}>
+            {QUADRANT_ORDER.map(q => {
+              const info = getQuadrantLabel(q)
+              const group = quadrantThemes[q]
+              return (
+                <Col span={12} key={q}>
+                  <div style={{
+                    background: '#0d1117',
+                    borderRadius: 6,
+                    border: `1px solid ${info.color}33`,
+                    padding: '12px',
+                    height: '100%',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ color: info.color, fontWeight: 600, fontSize: 13 }}>{info.label}</span>
+                      <span style={{ color: '#8b949e', fontSize: 11 }}>{group.length} 个主题</span>
+                    </div>
+                    <div style={{ color: '#8b949e', fontSize: 11, marginBottom: 8 }}>{info.desc}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {group.slice(0, 8).map(theme => (
+                        <span
+                          key={theme.theme}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            background: `${info.color}15`,
+                            color: info.color,
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => { setSelectedETF(theme.top_etfs[0]?.ts_code || ''); setMainTab('list') }}
+                        >
+                          {theme.theme}
+                          <span style={{ color: '#8b949e', fontSize: 10 }}>({theme.etf_count})</span>
+                        </span>
+                      ))}
+                      {group.length > 8 && (
+                        <span style={{ color: '#8b949e', fontSize: 11 }}>+{group.length - 8}</span>
+                      )}
+                    </div>
+                    {/* Top ETF in this quadrant */}
+                    {group.length > 0 && group[0].top_etfs.length > 0 && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #21262d' }}>
+                        <div style={{ color: '#8b949e', fontSize: 10, marginBottom: 4 }}>代表 ETF</div>
+                        <div
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                          onClick={() => { setSelectedETF(group[0].top_etfs[0].ts_code); setMainTab('list') }}
+                        >
+                          <span style={{ color: '#58a6ff', fontSize: 12 }}>{group[0].top_etfs[0].name}</span>
+                          <span style={{ color: upColor(group[0].top_etfs[0].pct_chg), fontSize: 11, fontFamily: 'monospace' }}>
+                            {fmtPct(group[0].top_etfs[0].pct_chg)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Col>
+              )
+            })}
+          </Row>
+        </Card>
+
+        {/* Layer 4: Sub-theme detail cards grouped by category */}
+        {(() => {
+          const CATEGORY_ORDER = ['权益-宽基', '权益-行业', '权益-主题策略', '权益-跨境', '固收', '另类']
+          const grouped: Record<string, ETFIndustryTheme[]> = {}
+          themes.forEach(t => {
+            if (!grouped[t.category]) grouped[t.category] = []
+            grouped[t.category].push(t)
+          })
+          return CATEGORY_ORDER.map(cat => {
+            const group = grouped[cat]
+            if (!group || group.length === 0) return null
+            return (
+              <div key={cat} style={{ marginBottom: 20 }}>
+                <div style={{
+                  color: '#c9d1d9',
+                  fontSize: 15,
+                  fontWeight: 600,
+                  marginBottom: 12,
+                  padding: '8px 12px',
+                  background: '#21262d',
+                  borderRadius: 6,
+                  borderLeft: '3px solid #58a6ff',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <span>{CATEGORY_LABELS[cat] || cat}</span>
+                  <span style={{ color: '#8b949e', fontSize: 12, fontWeight: 400 }}>
+                    {group.reduce((s, t) => s + t.etf_count, 0)} 只
+                  </span>
+                </div>
+                <Row gutter={[12, 12]}>
+                  {group.map((theme) => {
+                    const crowdingColor = theme.crowding_score >= 70 ? '#f85149' : theme.crowding_score >= 40 ? '#d29922' : '#3fb950'
+                    const oppColor = theme.opportunity_score >= 60 ? '#3fb950' : theme.opportunity_score >= 35 ? '#d29922' : '#f85149'
+                    const q = getQuadrant(theme.crowding_score, theme.opportunity_score)
+                    const qInfo = getQuadrantLabel(q)
+                    return (
+                      <Col span={8} key={theme.theme}>
+                        <Card
+                          size="small"
+                          style={{ background: '#161b22', borderColor: `${qInfo.color}33`, height: '100%' }}
+                          headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: `${qInfo.color}33`, fontSize: 13, padding: '8px 12px', fontWeight: 600 }}
+                          bodyStyle={{ padding: '10px 12px' }}
+                          title={
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>{theme.theme}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {theme.reliability < 0.6 && (
+                                  <span style={{ color: '#d29922', fontSize: 10, background: '#d2992215', padding: '1px 4px', borderRadius: 3 }}>⚠️ 数据不足</span>
+                                )}
+                                <span style={{ color: '#8b949e', fontSize: 11, fontWeight: 400 }}>{theme.etf_count} 只</span>
+                              </div>
+                            </div>
+                          }
+                        >
+                          {/* Score row */}
+                          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                            <div style={{ flex: 1, background: '#0d1117', borderRadius: 4, padding: '6px 8px', textAlign: 'center' }}>
+                              <div style={{ color: '#8b949e', fontSize: 10 }}>拥挤度</div>
+                              <div style={{ color: crowdingColor, fontSize: 18, fontWeight: 700, fontFamily: 'monospace' }}>
+                                {theme.crowding_score.toFixed(1)}
+                              </div>
+                              <div style={{ color: crowdingColor, fontSize: 10 }}>{theme.crowding_label}</div>
+                            </div>
+                            <div style={{ flex: 1, background: '#0d1117', borderRadius: 4, padding: '6px 8px', textAlign: 'center' }}>
+                              <div style={{ color: '#8b949e', fontSize: 10 }}>机会评分</div>
+                              <div style={{ color: oppColor, fontSize: 18, fontWeight: 700, fontFamily: 'monospace' }}>
+                                {theme.opportunity_score.toFixed(1)}
+                              </div>
+                              <div style={{ color: oppColor, fontSize: 10 }}>{theme.opportunity_label}</div>
+                            </div>
+                          </div>
+
+                          {/* Metrics */}
+                          <div style={{ marginBottom: 8 }}>
+                            {[
+                              { label: '成交占比', value: theme.amount_ratio.toFixed(1) + '%', color: '#c9d1d9' },
+                              { label: '离散度', value: theme.dispersion.toFixed(2), color: '#c9d1d9' },
+                              { label: '平均收益', value: (theme.avg_return >= 0 ? '+' : '') + theme.avg_return.toFixed(2) + '%', color: theme.avg_return >= 0 ? '#f85149' : '#3fb950' },
+                              { label: '胜率', value: theme.win_rate.toFixed(1) + '%', color: '#c9d1d9' },
+                              { label: '盈亏比', value: theme.profit_loss_ratio.toFixed(2), color: '#c9d1d9' },
+                              { label: '风险收益比', value: theme.risk_return_ratio.toFixed(2), color: '#c9d1d9' },
+                              ...(theme.momentum_5d !== undefined ? [{ label: '5日动量', value: (theme.momentum_5d >= 0 ? '+' : '') + theme.momentum_5d.toFixed(2) + '%', color: theme.momentum_5d >= 0 ? '#f85149' : '#3fb950' }] : []),
+                              ...(theme.deviation_ma20 !== undefined ? [{ label: '偏离MA20', value: (theme.deviation_ma20 >= 0 ? '+' : '') + theme.deviation_ma20.toFixed(2) + '%', color: theme.deviation_ma20 >= 0 ? '#f85149' : '#3fb950' }] : []),
+                              ...(theme.amount_ratio_zscore !== undefined ? [{ label: '成交Z-score', value: theme.amount_ratio_zscore.toFixed(2), color: theme.amount_ratio_zscore >= 1.5 ? '#f85149' : theme.amount_ratio_zscore <= -1.5 ? '#3fb950' : '#c9d1d9' }] : []),
+                              ...(theme.consistency_5d !== undefined ? [{ label: '趋势一致性', value: (theme.consistency_5d * 100).toFixed(0) + '%', color: '#c9d1d9' }] : []),
+                            ].map(item => (
+                              <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #21262d' }}>
+                                <span style={{ color: '#8b949e', fontSize: 11 }}>{item.label}</span>
+                                <span style={{ color: item.color, fontSize: 12, fontFamily: 'monospace' }}>{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Top 3 ETFs */}
+                          {theme.top_etfs.length > 0 && (
+                            <div>
+                              <div style={{ color: '#8b949e', fontSize: 10, marginBottom: 4 }}>成交额 TOP3</div>
+                              {theme.top_etfs.map((etf, idx) => (
+                                <div
+                                  key={etf.ts_code}
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    padding: '4px 0',
+                                    borderBottom: idx < theme.top_etfs.length - 1 ? '1px solid #21262d' : 'none',
+                                    cursor: 'pointer',
+                                  }}
+                                  onClick={() => { setSelectedETF(etf.ts_code); setMainTab('list') }}
+                                >
+                                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                    <span style={{ color: '#8b949e', fontSize: 10, minWidth: 14 }}>{idx + 1}</span>
+                                    <span style={{ color: '#58a6ff', fontSize: 11 }}>{etf.name}</span>
+                                  </div>
+                                  <span style={{ color: upColor(etf.pct_chg), fontSize: 11, fontFamily: 'monospace' }}>
+                                    {fmtPct(etf.pct_chg)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      </Col>
+                    )
+                  })}
+                </Row>
+              </div>
+            )
+          })
+        })()}
+      </div>
+    )
+  }
+
   return (
     <div>
       <h2 style={{ color: '#c9d1d9', marginBottom: '1rem' }}>📊 ETF 研究</h2>
@@ -1186,6 +1789,37 @@ export default function ETFResearch() {
         />
       )}
 
+      {/* Main tab switch */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'inline-flex', background: '#21262d', borderRadius: 6, padding: 3, gap: 3 }}>
+          {[
+            { key: 'list', label: '📋 ETF列表', desc: '筛选与详情' },
+            { key: 'industry', label: '🔥 行业热力', desc: '拥挤度与机会分析' },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setMainTab(t.key as 'list' | 'industry')}
+              style={{
+                padding: '6px 18px',
+                borderRadius: 4,
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: mainTab === t.key ? 600 : 400,
+                color: mainTab === t.key ? '#c9d1d9' : '#8b949e',
+                background: mainTab === t.key ? '#30363d' : 'transparent',
+                transition: 'all 0.2s',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mainTab === 'industry' ? (
+        renderIndustryHeat()
+      ) : (
       <Row gutter={16}>
         {/* ─── Left: Filters ─── */}
         <Col span={5}>
@@ -1585,6 +2219,7 @@ export default function ETFResearch() {
           </Col>
         )}
       </Row>
+      )}
     </div>
   )
 }

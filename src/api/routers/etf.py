@@ -9,9 +9,10 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+import numpy as np
 import pandas as pd
 
 project_root = Path(__file__).parent.parent.parent.parent
@@ -23,6 +24,9 @@ from src.api.schemas.etf import (
     ETFDetail,
     ETFHotItem,
     ETFHotResponse,
+    ETFIndustryAnalysisResponse,
+    ETFIndustryCategory,
+    ETFIndustryTheme,
     ETFKlineItem,
     ETFKlineResponse,
     ETFListItem,
@@ -30,6 +34,7 @@ from src.api.schemas.etf import (
     ETFSignalHistoryItem,
     ETFSignalHistoryResponse,
     ETFSignalStats,
+    ETFThemeTopItem,
     PortfolioMetrics,
     PortfolioNavItem,
 )
@@ -55,6 +60,9 @@ _ETF_LIST_CACHE_TTL = 300  # 5 minutes
 
 _etf_kline_cache = {}  # ts_code -> {"data": [...], "timestamp": 0}
 _ETF_KLINE_CACHE_TTL = 60  # 1 minute
+
+_etf_industry_history_cache = {"daily_df": None, "share_df": None, "dates": [], "timestamp": 0}
+_ETF_INDUSTRY_HISTORY_TTL = 300  # 5 minutes
 
 
 # ─── Helpers ───
@@ -106,6 +114,121 @@ def _clean_str(val):
         return None
     s = str(val).strip()
     return s if s and s.lower() != "nan" else None
+
+
+# ─── Theme classification for industry analysis ───
+# Two-tier: category (大类) + sub_theme (子主题)
+# Reference: 红色火箭/富途/天天基金/华夏基金主流分类逻辑
+
+_CLASSIFICATION_MAP: Dict[str, Dict[str, List[str]]] = {
+    # ── 大类：权益-宽基 ──
+    "权益-宽基": {
+        "大盘蓝筹": ["沪深300", "上证50", "深证100", "深证50", "A50", "MSCI", "上证180", "A100", "中证A100", "基本面50", "基本面120", "基本面60", "央视50", "核心50", "G60", "上证指数", "上证综合", "超大盘", "漂亮50", "深300", "深成", "深证主板50"],
+        "中小盘": ["中证500", "中证1000", "中证800", "中证2000", "国证2000", "深证成指", "上证380", "上证中盘", "中小100", "中证A股", "A股ETF", "上证580", "中创400", "深证300"],
+        "科创板": ["科创50", "科创100", "科创200", "科创综指", "科创创业", "科创成长", "科创信息", "科创价值"],
+        "创业板": ["创业板指", "创业板50", "创业板200", "创业板300", "创业板成长", "创业板综", "创业大盘", "创业板大盘", "创业板中盘200", "创中盘"],
+        "风格因子": ["低波", "等权", "增强"],
+        "跨市场宽基": ["沪港深300", "沪港深500"],
+    },
+    # ── 大类：权益-行业 ──
+    "权益-行业": {
+        "科技": ["科技", "芯片", "半导体", "人工智能", "AI", "TMT", "5G", "通信", "计算机", "软件", "机器人", "互联网", "云计算", "卫星", "数据", "物联网", "信创", "数字经济", "电子", "集成电路", "信息技术", "信息安全", "战略新兴", "创新100", "虚拟现实", "VR", "电信"],
+        "医药": ["医药", "医疗", "生物科技", "疫苗", "创新药", "医疗器械", "中药", "健康", "恒生生物", "恒生医疗", "港股通医疗", "养老", "沪港深医药", "药ETF"],
+        "消费": ["消费", "食品", "饮料", "白酒", "酒", "家电", "汽车", "旅游", "传媒", "游戏", "农牧渔", "养殖", "畜牧", "农业", "农牧", "影视", "国货", "粮食", "港股通汽车", "恒生消费", "沪港深消费"],
+        "新能源": ["新能源", "光伏", "风电", "核电", "电池", "储能", "锂电", "碳中和", "清洁能源", "电动车", "新能源车", "环保", "绿色电力", "绿电"],
+        "金融地产": ["银行", "证券", "保险", "金融", "地产", "房地产", "香港证券", "港股通金融"],
+        "周期资源": ["煤炭", "钢铁", "有色", "矿业", "石油", "能源", "材料", "化工", "稀土", "稀有金属", "资源", "油气", "能源化工", "有色金属", "大宗商品", "电力", "电网", "公用事业", "石化"],
+        "高端制造": ["军工", "国防", "航天", "船舶", "卫星", "通用航空", "工业母机", "机床", "高端装备", "基建", "工程机械", "机械", "智能制造", "高端制造"],
+    },
+    # ── 大类：权益-主题策略 ──
+    "权益-主题策略": {
+        "红利高股息": ["红利", "股息", "高股息", "分红"],
+        "央企国企": ["央企", "国企"],
+        "ESG": ["ESG"],
+        "Smart Beta": ["质量", "成长", "价值", "现金流"],
+    },
+    # ── 大类：权益-跨境 ──
+    "权益-跨境": {
+        "美股": ["纳斯达克", "纳指", "NASDAQ", "美股科技", "标普", "道琼斯"],
+        "港股": ["港股", "恒生", "H股", "香港", "中概", "港股通"],
+        "亚太": ["日本", "日经", "韩国", "东南亚", "亚太", "新兴亚洲"],
+        "欧洲": ["德国", "英国", "法国", "欧洲"],
+        "新兴市场": ["越南", "印度", "俄罗斯", "巴西", "沙特", "全球"],
+    },
+    # ── 大类：固收 ──
+    "固收": {
+        "利率债": ["国债", "地债", "地方债", "政金债", "国开债"],
+        "信用债": ["信用债", "公司债", "城投债", "短融"],
+        "可转债": ["可转债"],
+    },
+    # ── 大类：另类 ──
+    "另类": {
+        "黄金": ["黄金", "贵金属", "金银", "AU", "上海金"],
+        "其他商品": ["能源化工", "有色金属", "豆粕", "原油", "白银"],
+        "货币": ["货币", "货币基金", "日利", "添益", "财富宝"],
+    },
+}
+
+# 特殊主题ETF（区域/概念），归入主题策略-其他
+_SPECIAL_THEME_KEYWORDS = ["可持续发展", "民企", "浙江", "张江", "大湾区", "成渝", "杭州湾区", "浙商", "低碳", "产业升级", "交运", "运输", "物流", "交通运输"]
+
+# 把特殊主题加到主题策略下
+_CLASSIFICATION_MAP["权益-主题策略"]["其他主题"] = _SPECIAL_THEME_KEYWORDS
+
+
+# Priority order for keyword matching (higher index = higher priority)
+# 当多个子主题同时匹配时，按此顺序决定优先权
+_CATEGORY_PRIORITY = [
+    "另类",      # fund_type 驱动，最权威
+    "固收",      # fund_type 驱动，最权威
+    "权益-跨境",  # 跨境优先于行业和宽基
+    "权益-主题策略",  # 策略优先于行业和宽基
+    "权益-行业",  # 行业优先于宽基
+    "权益-宽基",  # 最后兜底
+]
+
+
+def _classify_theme(
+    name: Optional[str],
+    benchmark: Optional[str],
+    fund_type: Optional[str] = None,
+    invest_type: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Classify ETF into (category, sub_theme).
+
+    Returns:
+        (category, sub_theme): 大类名称 and 子主题名称
+    """
+    ft = (fund_type or "").strip()
+    it = (invest_type or "").strip()
+    text = f"{name or ''} {benchmark or ''}"
+
+    # ── Tier 0: fund_type driven (authoritative, bypass keyword matching) ──
+    if ft == "货币市场型":
+        return ("另类", "货币")
+    if ft == "债券型":
+        # 债券内部再分
+        for sub, kws in _CLASSIFICATION_MAP["固收"].items():
+            for kw in kws:
+                if kw in text:
+                    return ("固收", sub)
+        return ("固收", "利率债")  # 默认
+    if ft == "商品型":
+        if it == "黄金现货合约":
+            return ("另类", "黄金")
+        return ("另类", "其他商品")
+
+    # ── Tier 1: keyword matching with priority ──
+    # 按优先级顺序遍历大类
+    for cat in _CATEGORY_PRIORITY:
+        if cat in ("另类", "固收"):
+            continue  # 已由 fund_type 处理
+        for sub, kws in _CLASSIFICATION_MAP[cat].items():
+            for kw in kws:
+                if kw in text:
+                    return (cat, sub)
+
+    return ("权益-行业", "其他")  # 默认归为权益-其他
 
 
 def _latest_trade_date(pro) -> str:
@@ -402,6 +525,10 @@ def _merge_etf_data(
     # Calculate turnover rate
     if "vol" in df.columns and "fd_share" in df.columns:
         df["turnover_rate"] = (df["vol"] / df["fd_share"] * 100).apply(_clean_float)
+
+    # Calculate share change percentage
+    if "fd_share" in df.columns and "fd_share_change" in df.columns:
+        df["share_change_pct"] = (df["fd_share_change"] / df["fd_share"] * 100).apply(_clean_float)
 
     return df
 
@@ -1422,3 +1549,479 @@ async def get_etf_hot(
         )
 
     return ETFHotResponse(period=period, top_n=top_n, data=data)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Industry Heat Analysis (行业热力分析)
+# ────────────────────────────────────────────────────────────────────────────
+
+# ─── Helpers for industry analysis ───
+
+def _get_recent_trade_dates(fetcher, latest_date: str, n: int = 20) -> List[str]:
+    """Get last N trade dates before or including latest_date."""
+    try:
+        end_dt = datetime.strptime(latest_date, "%Y%m%d")
+        start_dt = end_dt - timedelta(days=n * 2 + 10)
+        cal = fetcher.pro.trade_cal(
+            exchange="SSE",
+            start_date=start_dt.strftime("%Y%m%d"),
+            end_date=latest_date,
+            fields="exchange,cal_date,is_open",
+        )
+        if cal is not None and not cal.empty:
+            cal = cal[cal["is_open"] == 1]
+            dates = sorted(cal["cal_date"].astype(str).tolist())
+            # Return up to n dates ending at latest_date
+            if latest_date in dates:
+                idx = dates.index(latest_date)
+                return dates[max(0, idx - n + 1):idx + 1]
+            else:
+                # latest_date not in calendar, return last n
+                return dates[-n:] if len(dates) >= n else dates
+    except Exception as e:
+        log.warning(f"获取交易日历失败: {e}")
+    # Fallback: generate approximate dates
+    dt = datetime.strptime(latest_date, "%Y%m%d")
+    dates = []
+    while len(dates) < n:
+        wd = dt.weekday()
+        if wd < 5:
+            dates.append(dt.strftime("%Y%m%d"))
+        dt -= timedelta(days=1)
+    return sorted(dates)
+
+
+def _normalize_rank(val, vals, invert=False):
+    """Winsorize at 5%%/95%% then convert to rank percentile (0-100)."""
+    if not vals or len(vals) == 0:
+        return 50.0
+    vals = np.array(vals, dtype=float)
+    q5, q95 = np.percentile(vals, [5, 95])
+    vals_clip = np.clip(vals, q5, q95)
+    val_clip = np.clip(float(val), q5, q95)
+    if len(vals_clip) == 1:
+        return 50.0
+    # Rank percentile: 0 = lowest, 100 = highest
+    rank = np.searchsorted(np.sort(vals_clip), val_clip, side='right')
+    percentile = rank / len(vals_clip) * 100
+    return 100.0 - percentile if invert else percentile
+
+
+@router.get(
+    "/industry-analysis",
+    response_model=ETFIndustryAnalysisResponse,
+    summary="行业热力分析",
+    description="按主题/行业分组展示拥挤度与机会盈亏比，数据来自全市场ETF。",
+)
+async def get_industry_analysis(
+    request: Request,
+    sort_by: str = Query("opportunity_score", description="排序字段: crowding_score / opportunity_score / avg_return"),
+    sort_desc: bool = Query(True, description="是否降序"),
+):
+    """
+    行业热力分析：按主题分组，计算多日趋势下的拥挤度与机会评分。
+    """
+    fetcher = _get_fetcher()
+    now = time.time()
+    CATEGORY_ORDER = ["权益-宽基", "权益-行业", "权益-主题策略", "权益-跨境", "固收", "另类"]
+
+    # ── 1. 复用全局缓存获取最新日数据（含基础信息） ──
+    global _etf_list_cache
+    cache_valid = (
+        _etf_list_cache is not None
+        and (now - _etf_list_cache["timestamp"]) < _ETF_LIST_CACHE_TTL
+    )
+    if not cache_valid:
+        try:
+            basic_df = fetcher.get_etf_list()
+            basic_df = basic_df[basic_df["name"].astype(str).str.contains("ETF", na=False)]
+            latest_date = _latest_data_date(fetcher)
+            log.info(f"行业热力: 使用最新数据日期 {latest_date}")
+
+            daily_df = fetcher.get_etf_daily(trade_date=latest_date)
+            share_df = fetcher.get_etf_share(trade_date=latest_date)
+            nav_df = fetcher.get_etf_nav(trade_date=latest_date)
+            merged_df = _merge_etf_data(basic_df, daily_df, share_df, nav_df)
+            log.info(
+                f"行业热力: fund_daily {len(daily_df)}条, fund_share {len(share_df)}条, "
+                f"合并后 {len(merged_df)}条, close非空 {merged_df['close'].notna().sum() if 'close' in merged_df.columns else 0}"
+            )
+            _etf_list_cache = {"data": merged_df, "timestamp": now}
+        except Exception as e:
+            log.error(f"行业热力数据获取失败: {e}")
+            raise HTTPException(status_code=500, detail=f"数据获取失败: {e}")
+
+    df_latest = _etf_list_cache["data"].copy()
+
+    # ── 2. 获取/更新近20日历史数据缓存 ──
+    global _etf_industry_history_cache
+    history_cache_valid = (
+        _etf_industry_history_cache is not None
+        and (now - _etf_industry_history_cache["timestamp"]) < _ETF_INDUSTRY_HISTORY_TTL
+        and _etf_industry_history_cache.get("daily_df") is not None
+    )
+
+    if not history_cache_valid:
+        latest_date = _latest_data_date(fetcher)
+        trade_dates = _get_recent_trade_dates(fetcher, latest_date, n=20)
+        log.info(f"行业热力历史: 拉取 {len(trade_dates)} 个交易日数据: {trade_dates[0]} ~ {trade_dates[-1]}")
+
+        daily_frames = []
+        share_frames = []
+        for td in trade_dates:
+            try:
+                ddf = fetcher.get_etf_daily(trade_date=td)
+                if ddf is not None and not ddf.empty:
+                    daily_frames.append(ddf)
+            except Exception as e:
+                log.warning(f"获取ETF日线失败 {td}: {e}")
+            try:
+                sdf = fetcher.get_etf_share(trade_date=td)
+                if sdf is not None and not sdf.empty:
+                    if "fd_share" in sdf.columns and "fd_share_change" in sdf.columns:
+                        sdf["share_change_pct"] = (sdf["fd_share_change"] / sdf["fd_share"] * 100).apply(_clean_float)
+                    share_frames.append(sdf)
+            except Exception as e:
+                log.warning(f"获取ETF份额失败 {td}: {e}")
+
+        history_daily = pd.concat(daily_frames, ignore_index=True) if daily_frames else pd.DataFrame()
+        history_share = pd.concat(share_frames, ignore_index=True) if share_frames else pd.DataFrame()
+
+        _etf_industry_history_cache = {
+            "daily_df": history_daily,
+            "share_df": history_share,
+            "dates": trade_dates,
+            "timestamp": now,
+        }
+        log.info(f"行业热力历史: 拉取完成, daily={len(history_daily)}条, share={len(history_share)}条")
+    else:
+        history_daily = _etf_industry_history_cache["daily_df"]
+        history_share = _etf_industry_history_cache["share_df"]
+        trade_dates = _etf_industry_history_cache["dates"]
+
+    # ── 3. 分类 ──
+    if "name" in df_latest.columns:
+        df_latest = df_latest[df_latest["name"].astype(str).str.contains("ETF", na=False)].copy()
+
+    df_latest[["category", "theme"]] = df_latest.apply(
+        lambda r: pd.Series(_classify_theme(
+            r.get("name"), r.get("benchmark"), r.get("fund_type"), r.get("invest_type")
+        )),
+        axis=1,
+    )
+
+    df_latest = df_latest[df_latest["close"].notna() & df_latest["amount"].notna()].copy()
+    if df_latest.empty:
+        raise HTTPException(status_code=500, detail="无有效ETF数据")
+
+    # ── 4. 合并历史数据与分类信息 ──
+    classify_map = df_latest[["ts_code", "category", "theme"]].drop_duplicates("ts_code")
+    if not history_daily.empty and "ts_code" in history_daily.columns:
+        history_daily = history_daily.merge(classify_map, on="ts_code", how="inner")
+    if not history_share.empty and "ts_code" in history_share.columns:
+        history_share = history_share.merge(classify_map, on="ts_code", how="inner")
+
+    # ── 5. 预计算主题级别多日指标 ──
+    all_groups = sorted(df_latest[["category", "theme"]].drop_duplicates().values.tolist())
+
+    theme_metrics = {}
+    for cat, thm in all_groups:
+        g_latest = df_latest[(df_latest["category"] == cat) & (df_latest["theme"] == thm)].copy()
+        if len(g_latest) == 0:
+            continue
+
+        etf_count = len(g_latest)
+        price_coverage = g_latest["close"].notna().sum() / etf_count
+        share_coverage = g_latest["share_change_pct"].notna().sum() / etf_count if "share_change_pct" in g_latest.columns else 0.0
+
+        # 当日指标
+        theme_amount_today = float(g_latest["amount"].sum())
+        total_amount_today = df_latest["amount"].sum()
+        amount_ratio_today = theme_amount_today / total_amount_today if total_amount_today > 0 else 0
+
+        pct_chgs_today = g_latest["pct_chg"].dropna()
+        avg_return_today = float(pct_chgs_today.mean()) if len(pct_chgs_today) > 0 else 0.0
+        dispersion_today = float(pct_chgs_today.std(ddof=0)) if len(pct_chgs_today) > 0 else 0.0
+
+        top20_count = max(1, int(np.ceil(etf_count * 0.2)))
+        top20_amount = g_latest.nlargest(top20_count, "amount")["amount"].sum()
+        turnover_concentration = float(top20_amount / theme_amount_today) if theme_amount_today > 0 else 0.0
+
+        # 多日指标初始化
+        amount_ratio_zscore = 0.0
+        amount_ratio_ma20 = 0.0
+        momentum_5d = 0.0
+        momentum_20d = 0.0
+        deviation_ma20 = 0.0
+        consistency_5d = 0.0
+        dispersion_ma20 = 0.0
+        share_change_trend = 0.0
+
+        # --- 基于 history_daily 的多日指标 ---
+        hist_g = history_daily[
+            (history_daily["category"] == cat) &
+            (history_daily["theme"] == thm)
+        ].copy() if not history_daily.empty else pd.DataFrame()
+
+        if not hist_g.empty and "trade_date" in hist_g.columns:
+            daily_theme = hist_g.groupby("trade_date").agg({
+                "amount": "sum",
+                "pct_chg": ["mean", "std"],
+            }).reset_index()
+            daily_theme.columns = ["trade_date", "theme_amount", "avg_pct_chg", "dispersion"]
+            daily_theme["dispersion"] = daily_theme["dispersion"].fillna(0)
+
+            daily_total = history_daily.groupby("trade_date")["amount"].sum().reset_index()
+            daily_total.columns = ["trade_date", "total_amount"]
+            daily_theme = daily_theme.merge(daily_total, on="trade_date", how="left")
+            daily_theme["amount_ratio"] = daily_theme["theme_amount"] / daily_theme["total_amount"].replace(0, np.nan)
+
+            n_days = len(daily_theme)
+            if n_days >= 3:
+                sorted_dt = daily_theme.sort_values("trade_date")
+                ar_vals = sorted_dt["amount_ratio"].dropna()
+                if len(ar_vals) >= 3:
+                    ma = ar_vals.mean()
+                    std = ar_vals.std(ddof=0)
+                    latest_ar = ar_vals.iloc[-1]
+                    amount_ratio_ma20 = float(ma)
+                    amount_ratio_zscore = float((latest_ar - ma) / std) if std > 0 else 0.0
+
+                momentum_5d = float(sorted_dt["avg_pct_chg"].tail(min(5, n_days)).mean())
+                momentum_20d = float(sorted_dt["avg_pct_chg"].tail(min(20, n_days)).mean())
+                dispersion_ma20 = float(sorted_dt["dispersion"].tail(min(20, n_days)).mean())
+
+            if "pct_chg" in hist_g.columns:
+                consistency_vals = []
+                for _, day_g in hist_g.groupby("trade_date"):
+                    pcs = day_g["pct_chg"].dropna()
+                    if len(pcs) >= 2:
+                        pos_ratio = (pcs > 0).sum() / len(pcs)
+                        consistency_vals.append(max(pos_ratio, 1 - pos_ratio))
+                if len(consistency_vals) >= 3:
+                    consistency_5d = float(np.mean(consistency_vals[-min(5, len(consistency_vals)):]))
+
+        # --- 基于 history_share 的份额趋势 ---
+        hist_share_g = history_share[
+            (history_share["category"] == cat) &
+            (history_share["theme"] == thm)
+        ].copy() if not history_share.empty else pd.DataFrame()
+
+        if not hist_share_g.empty and "share_change_pct" in hist_share_g.columns and "trade_date" in hist_share_g.columns:
+            share_daily = hist_share_g.groupby("trade_date")["share_change_pct"].mean().reset_index()
+            share_daily.columns = ["trade_date", "avg_share_change"]
+            n_share_days = len(share_daily)
+            if n_share_days >= 3:
+                sorted_sd = share_daily.sort_values("trade_date")
+                share_change_trend = float(sorted_sd["avg_share_change"].tail(min(5, n_share_days)).mean())
+
+        # --- deviation_ma20: 主题内 ETF 相对 MA20 的平均偏离度 ---
+        if not hist_g.empty and "close" in hist_g.columns:
+            dev_vals = []
+            for _, etf_hist in hist_g.groupby("ts_code"):
+                etf_sorted = etf_hist.sort_values("trade_date")
+                closes = etf_sorted["close"].values
+                n = len(closes)
+                if n >= 5:
+                    window = min(20, n)
+                    ma = closes[-window:].mean()
+                    latest_close = closes[-1]
+                    dev_vals.append((latest_close / ma - 1) * 100)
+            if dev_vals:
+                deviation_ma20 = float(np.mean(dev_vals))
+
+        theme_metrics[(cat, thm)] = {
+            "etf_count": etf_count,
+            "price_coverage": price_coverage,
+            "share_coverage": share_coverage,
+            "amount_ratio_today": amount_ratio_today,
+            "theme_amount_today": theme_amount_today,
+            "avg_return_today": avg_return_today,
+            "dispersion_today": dispersion_today,
+            "turnover_concentration": turnover_concentration,
+            "amount_ratio_zscore": amount_ratio_zscore,
+            "amount_ratio_ma20": amount_ratio_ma20,
+            "momentum_5d": momentum_5d,
+            "momentum_20d": momentum_20d,
+            "deviation_ma20": deviation_ma20,
+            "consistency_5d": consistency_5d,
+            "dispersion_ma20": dispersion_ma20,
+            "share_change_trend": share_change_trend,
+        }
+
+    # ── 6. 分大类归一化并计算最终评分 ──
+    cat_metrics = {cat: [] for cat in CATEGORY_ORDER}
+    for (cat, thm), m in theme_metrics.items():
+        if cat in cat_metrics:
+            cat_metrics[cat].append({"theme": thm, **m})
+
+    themes = []
+    for cat in CATEGORY_ORDER:
+        group = cat_metrics[cat]
+        if not group:
+            continue
+
+        def _extract_vals(key):
+            return [t[key] for t in group if not pd.isna(t[key]) and np.isfinite(t[key])]
+
+        ar_zscore_vals = _extract_vals("amount_ratio_zscore")
+        conc_vals = _extract_vals("turnover_concentration")
+        flow_vals = _extract_vals("share_change_trend")
+        disp_vals = _extract_vals("dispersion_today")
+        mom5_vals = _extract_vals("momentum_5d")
+        dev_vals = _extract_vals("deviation_ma20")
+        cons_vals = _extract_vals("consistency_5d")
+
+        for t in group:
+            # ── 拥挤度 ──
+            amount_zscore_score = _normalize_rank(t["amount_ratio_zscore"], ar_zscore_vals) if ar_zscore_vals else 50.0
+            concentration_score = _normalize_rank(t["turnover_concentration"], conc_vals) if conc_vals else 50.0
+            inflow_score = _normalize_rank(t["share_change_trend"], flow_vals) if flow_vals else 50.0
+            dispersion_score = _normalize_rank(t["dispersion_today"], disp_vals, invert=True) if disp_vals else 50.0
+
+            crowding_score = float(np.clip(
+                amount_zscore_score * 0.40
+                + concentration_score * 0.25
+                + inflow_score * 0.20
+                + dispersion_score * 0.15,
+                0, 100,
+            ))
+
+            if crowding_score >= 70:
+                crowding_label = "🔴 高拥挤"
+            elif crowding_score >= 40:
+                crowding_label = "🟡 中等"
+            else:
+                crowding_label = "🟢 低拥挤"
+
+            # ── 机会评分 ──
+            momentum_score = _normalize_rank(t["momentum_5d"], mom5_vals) if mom5_vals else 50.0
+            reversal_score = _normalize_rank(t["deviation_ma20"], dev_vals, invert=True) if dev_vals else 50.0
+            flow_score = _normalize_rank(t["share_change_trend"], flow_vals) if flow_vals else 50.0
+            consistency_score = _normalize_rank(t["consistency_5d"], cons_vals) if cons_vals else 50.0
+
+            opportunity_score = float(np.clip(
+                momentum_score * 0.30
+                + reversal_score * 0.25
+                + flow_score * 0.25
+                + consistency_score * 0.20,
+                0, 100,
+            ))
+
+            if opportunity_score >= 60:
+                opportunity_label = "🟢 高机会"
+            elif opportunity_score >= 35:
+                opportunity_label = "🟡 中性"
+            else:
+                opportunity_label = "🔴 低机会"
+
+            # ── 可靠性 ──
+            # 核心可靠性基于价格数据（close/amount），份额数据缺失已在 inflow/flow 指标中回退为中性值
+            reliability = t["price_coverage"]
+            if t["share_coverage"] < 0.3:
+                reliability = reliability * 0.9  # 份额数据严重不足时轻微降权
+
+            # ── Top 3 ETFs ──
+            g_latest = df_latest[(df_latest["category"] == cat) & (df_latest["theme"] == t["theme"])]
+            top_etfs = []
+            sorted_g = g_latest.sort_values("amount", ascending=False, na_position="last")
+            for _, row in sorted_g.head(3).iterrows():
+                top_etfs.append(
+                    ETFThemeTopItem(
+                        ts_code=row.get("ts_code", ""),
+                        name=row.get("name", ""),
+                        pct_chg=_clean_float(row.get("pct_chg")),
+                        amount=_clean_float(row.get("amount")),
+                    )
+                )
+
+            # win_rate & profit_loss_ratio based on today's data
+            pct_chgs = g_latest["pct_chg"].dropna()
+            pos = pct_chgs[pct_chgs > 0]
+            neg = pct_chgs[pct_chgs < 0]
+            win_rate = float(len(pos) / len(pct_chgs) * 100) if len(pct_chgs) > 0 else 50.0
+            profit_loss_ratio = (
+                float(pos.mean() / abs(neg.mean())) if len(pos) > 0 and len(neg) > 0 and neg.mean() != 0 else 1.0
+            )
+            if pd.isna(profit_loss_ratio) or profit_loss_ratio > 10:
+                profit_loss_ratio = 1.0
+            risk_return_ratio = float(t["avg_return_today"] / t["dispersion_today"]) if t["dispersion_today"] > 0 else 0.0
+            if pd.isna(risk_return_ratio):
+                risk_return_ratio = 0.0
+
+            themes.append(
+                ETFIndustryTheme(
+                    category=cat,
+                    theme=t["theme"],
+                    etf_count=t["etf_count"],
+                    amount_ratio=round(t["amount_ratio_today"] * 100, 2),
+                    turnover_concentration=round(t["turnover_concentration"] * 100, 2),
+                    share_change_ratio=round(t["share_change_trend"], 2),
+                    dispersion=round(t["dispersion_today"], 2),
+                    crowding_score=round(crowding_score, 1),
+                    crowding_label=crowding_label,
+                    win_rate=round(win_rate, 1),
+                    profit_loss_ratio=round(profit_loss_ratio, 2),
+                    avg_return=round(t["avg_return_today"], 2),
+                    risk_return_ratio=round(risk_return_ratio, 2),
+                    opportunity_score=round(opportunity_score, 1),
+                    opportunity_label=opportunity_label,
+                    top_etfs=top_etfs,
+                    reliability=round(reliability, 2),
+                    momentum_5d=round(t["momentum_5d"], 2),
+                    deviation_ma20=round(t["deviation_ma20"], 2),
+                    amount_ratio_zscore=round(t["amount_ratio_zscore"], 2),
+                    share_change_trend=round(t["share_change_trend"], 2),
+                    consistency_5d=round(t["consistency_5d"], 2),
+                )
+            )
+
+    # ── 7. 大类聚合 ──
+    categories = []
+    for cat in CATEGORY_ORDER:
+        cat_themes = [th for th in themes if th.category == cat]
+        if not cat_themes:
+            continue
+        total_cat_amount_ratio = sum(t.amount_ratio or 0 for t in cat_themes)
+        if total_cat_amount_ratio <= 0:
+            total_cat_amount_ratio = len(cat_themes)
+        crowding_score = sum((t.amount_ratio or 0) * t.crowding_score for t in cat_themes) / total_cat_amount_ratio
+        opportunity_score = sum((t.amount_ratio or 0) * t.opportunity_score for t in cat_themes) / total_cat_amount_ratio
+        cat_df = df_latest[df_latest["category"] == cat]
+        sorted_cat = cat_df.sort_values("amount", ascending=False, na_position="last")
+        cat_top_etfs = []
+        for _, row in sorted_cat.head(3).iterrows():
+            cat_top_etfs.append(
+                ETFThemeTopItem(
+                    ts_code=row.get("ts_code", ""),
+                    name=row.get("name", ""),
+                    pct_chg=_clean_float(row.get("pct_chg")),
+                    amount=_clean_float(row.get("amount")),
+                )
+            )
+        categories.append(
+            ETFIndustryCategory(
+                category=cat,
+                etf_count=sum(t.etf_count for t in cat_themes),
+                amount_ratio=round(total_cat_amount_ratio, 2),
+                crowding_score=round(crowding_score, 1),
+                opportunity_score=round(opportunity_score, 1),
+                sub_themes=[t.theme for t in cat_themes],
+                top_etfs=cat_top_etfs,
+            )
+        )
+
+    # ── 8. 排序 ──
+    def _sort_key(x):
+        cat_idx = CATEGORY_ORDER.index(x.category) if x.category in CATEGORY_ORDER else 99
+        return (cat_idx, -getattr(x, sort_field) if sort_desc else getattr(x, sort_field))
+
+    sort_field = sort_by if sort_by in ("crowding_score", "opportunity_score", "avg_return") else "opportunity_score"
+    themes.sort(key=_sort_key)
+
+    return ETFIndustryAnalysisResponse(
+        themes=themes,
+        categories=categories,
+        total_etfs=int(len(df_latest)),
+        as_of_date=_latest_data_date(fetcher),
+    )
