@@ -154,9 +154,16 @@ def init_agents() -> bool:
             sys_prompt="""你是一位专业的A股短线选股分析师。
 你的任务是根据用户的需求，调用热点突破池、龙头梯队、预测接口等工具，筛选出最符合条件的股票。
 
+【重要规则】调用工具时必须传入所有必需的参数：
+- query_hotspot_breakout(min_score=60, top_n=20, mode="breakout") — 均可选
+- query_leaderboard(top_n=50) — 均可选
+- query_top_predictions(top_n=20, min_prob=0.5) — 均可选
+- query_hot_concepts(top_n=10) — 均可选
+- query_zt_pool() — 无参数
+
 规则：
 1. 用户提出需求后，先分析需要调用哪些工具
-2. 调用工具获取数据
+2. 调用工具获取数据（必须传入所需参数）
 3. 对结果进行分析，给出选股理由
 4. 用中文回复，结构清晰
 
@@ -172,6 +179,12 @@ def init_agents() -> bool:
             name="个股诊断师",
             sys_prompt="""你是一位专业的A股个股诊断分析师。
 你的任务是对单只股票进行深度分析，综合技术指标、资金流向、模型预测、题材热度等维度给出诊断报告。
+
+【重要规则】调用工具时必须传入所有必需的参数：
+- query_stock_technical(ts_code: str, days: int = 60) — ts_code 必填，格式如 "000001.SZ"
+- query_stock_moneyflow(ts_code: str, days: int = 5) — ts_code 必填
+- query_stock_prediction(ts_code: str) — ts_code 必填
+- query_hotspot_breakout(min_score: float = 60, top_n: int = 20, mode: str = "breakout") — 均可选
 
 分析维度：
 1. 技术形态（均线、VWAP、CMF、MFI等）

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import {
   Input,
   Button,
@@ -288,7 +289,38 @@ export default function AIAssistant() {
                   {new Date(msg.timestamp).toLocaleTimeString()}
                 </span>
               </div>
-              <div>{msg.content}</div>
+              <div>
+                {msg.role === 'assistant' ? (
+                  <ReactMarkdown
+                    components={{
+                      p: ({ children }) => <p style={{ margin: '4px 0', lineHeight: 1.6 }}>{children}</p>,
+                      h1: ({ children }) => <h1 style={{ fontSize: 20, fontWeight: 700, margin: '16px 0 8px', color: '#c9d1d9' }}>{children}</h1>,
+                      h2: ({ children }) => <h2 style={{ fontSize: 17, fontWeight: 700, margin: '14px 0 8px', color: '#c9d1d9' }}>{children}</h2>,
+                      h3: ({ children }) => <h3 style={{ fontSize: 15, fontWeight: 700, margin: '12px 0 6px', color: '#c9d1d9' }}>{children}</h3>,
+                      ul: ({ children }) => <ul style={{ paddingLeft: 20, margin: '8px 0' }}>{children}</ul>,
+                      ol: ({ children }) => <ol style={{ paddingLeft: 20, margin: '8px 0' }}>{children}</ol>,
+                      li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
+                      code: ({ children }) => (
+                        <code style={{ background: 'rgba(110,118,129,0.2)', padding: '2px 6px', borderRadius: 4, fontSize: '0.9em', fontFamily: 'monospace' }}>
+                          {children}
+                        </code>
+                      ),
+                      pre: ({ children }) => (
+                        <pre style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: 8, padding: '12px 16px', overflowX: 'auto', fontSize: 13, lineHeight: 1.6, margin: '8px 0' }}>
+                          {children}
+                        </pre>
+                      ),
+                      a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" style={{ color: '#58a6ff' }}>{children}</a>,
+                      hr: () => <hr style={{ border: 0, borderTop: '1px solid #30363d', margin: '12px 0' }} />,
+                      blockquote: ({ children }) => <blockquote style={{ borderLeft: '3px solid #58a6ff', paddingLeft: 12, margin: '8px 0', color: '#8b949e' }}>{children}</blockquote>,
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
+                ) : (
+                  msg.content
+                )}
+              </div>
             </div>
           </div>
         ))}
