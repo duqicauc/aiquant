@@ -29,9 +29,9 @@ async def query_market_overview() -> ToolResponse:
             "north_money": data.get("north_money"),
             "summary": data.get("summary"),
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 async def query_hot_concepts(top_n: int = 10) -> ToolResponse:
@@ -50,9 +50,9 @@ async def query_hot_concepts(top_n: int = 10) -> ToolResponse:
                 }
             )
         payload = {"date": result.get("date"), "concepts": concepts}
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 async def query_sector_fund_flow() -> ToolResponse:
@@ -70,9 +70,9 @@ async def query_sector_fund_flow() -> ToolResponse:
                     "top_stock": s.get("top_stock"),
                 }
             )
-        return ToolResponse(content=[TextBlock(text=_json_to_text({"sectors": sectors}))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text({"sectors": sectors}))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 def query_zt_pool() -> ToolResponse:
@@ -92,6 +92,8 @@ def query_zt_pool() -> ToolResponse:
                     "open_count": item.get("open_count"),
                 }
             )
-        return ToolResponse(content=[TextBlock(text=_json_to_text({"count": len(stocks), "stocks": stocks}))])
+        return ToolResponse(
+            content=[TextBlock(type="text", text=_json_to_text({"count": len(stocks), "stocks": stocks}))]
+        )
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])

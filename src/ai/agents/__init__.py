@@ -84,7 +84,7 @@ def _wrap_async_tool(func):
             from agentscope.message import TextBlock
             from agentscope.tool import ToolResponse
 
-            return ToolResponse(content=[TextBlock(text=f"工具执行错误: {e}")])
+            return ToolResponse(content=[TextBlock(type="text", text=f"工具执行错误: {e}")])
 
     wrapper.__name__ = func.__name__
     wrapper.__doc__ = func.__doc__

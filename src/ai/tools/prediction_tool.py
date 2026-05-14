@@ -31,7 +31,7 @@ async def query_stock_prediction(ts_code: str) -> ToolResponse:
                 break
 
         if not target:
-            return ToolResponse(content=[TextBlock(text=f"未找到 {ts_code} 的预测数据")])
+            return ToolResponse(content=[TextBlock(type="text", text=f"未找到 {ts_code} 的预测数据")])
 
         payload = {
             "ts_code": target.get("ts_code"),
@@ -42,9 +42,9 @@ async def query_stock_prediction(ts_code: str) -> ToolResponse:
             "pe_ttm": target.get("pe_ttm"),
             "update_date": target.get("update_date"),
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 async def query_top_predictions(top_n: int = 20, min_prob: float = 0.5) -> ToolResponse:
@@ -67,6 +67,8 @@ async def query_top_predictions(top_n: int = 20, min_prob: float = 0.5) -> ToolR
                     "industry": s.get("industry"),
                 }
             )
-        return ToolResponse(content=[TextBlock(text=_json_to_text({"count": len(stocks), "stocks": stocks}))])
+        return ToolResponse(
+            content=[TextBlock(type="text", text=_json_to_text({"count": len(stocks), "stocks": stocks}))]
+        )
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])

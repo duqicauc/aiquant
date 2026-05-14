@@ -33,7 +33,7 @@ def query_stock_kline(ts_code: str, days: int = 60) -> ToolResponse:
         provider = ArcticDataProvider()
         df = provider.read_daily_ohlcv(start, end)
         if df.empty:
-            return ToolResponse(content=[TextBlock(text="无数据")])
+            return ToolResponse(content=[TextBlock(type="text", text="无数据")])
 
         df = df[df["ts_code"] == ts_code].sort_values("trade_date").tail(days)
         records = []
@@ -50,10 +50,12 @@ def query_stock_kline(ts_code: str, days: int = 60) -> ToolResponse:
                 }
             )
         return ToolResponse(
-            content=[TextBlock(text=_json_to_text({"ts_code": ts_code, "count": len(records), "data": records}))]
+            content=[
+                TextBlock(type="text", text=_json_to_text({"ts_code": ts_code, "count": len(records), "data": records}))
+            ]
         )
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 def query_stock_technical(ts_code: str, days: int = 60) -> ToolResponse:
@@ -71,9 +73,9 @@ def query_stock_technical(ts_code: str, days: int = 60) -> ToolResponse:
         data_obj = json.loads(text)
         data = data_obj.get("data", [])
         if not data:
-            return ToolResponse(content=[TextBlock(text="数据不足")])
+            return ToolResponse(content=[TextBlock(type="text", text="数据不足")])
         if len(data) < 20:
-            return ToolResponse(content=[TextBlock(text="数据不足20天")])
+            return ToolResponse(content=[TextBlock(type="text", text="数据不足20天")])
 
         import pandas as pd
 
@@ -100,7 +102,7 @@ def query_stock_technical(ts_code: str, days: int = 60) -> ToolResponse:
         prev = data[-2] if len(data) >= 2 else latest
         trend = "上涨" if latest["close"] > prev["close"] else "下跌"
         ma20 = df["close"].rolling(20).mean().iloc[-1]
-        above_ma20 = latest["close"] > ma20
+        above_ma20 = bool(latest["close"] > ma20)
 
         payload = {
             "ts_code": ts_code,
@@ -111,9 +113,9 @@ def query_stock_technical(ts_code: str, days: int = 60) -> ToolResponse:
             "ma20": round(float(ma20), 2) if pd.notna(ma20) else None,
             "technical_signals": signals,
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 def query_stock_moneyflow(ts_code: str, days: int = 5) -> ToolResponse:
@@ -137,7 +139,7 @@ def query_stock_moneyflow(ts_code: str, days: int = 5) -> ToolResponse:
             end_date=end.strftime("%Y%m%d"),
         )
         if df is None or df.empty:
-            return ToolResponse(content=[TextBlock(text="无资金流向数据")])
+            return ToolResponse(content=[TextBlock(type="text", text="无资金流向数据")])
 
         df = df.sort_values("trade_date").tail(days)
         records = []
@@ -159,6 +161,6 @@ def query_stock_moneyflow(ts_code: str, days: int = 5) -> ToolResponse:
             "avg_daily_net": round(total_net / len(records), 2) if records else 0,
             "detail": records,
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])

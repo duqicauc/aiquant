@@ -58,9 +58,9 @@ async def query_hotspot_breakout(
             "count": len(stocks),
             "stocks": stocks,
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
 
 
 async def query_leaderboard(
@@ -105,6 +105,6 @@ async def query_leaderboard(
             "date": result.get("date"),
             "groups": groups,
         }
-        return ToolResponse(content=[TextBlock(text=_json_to_text(payload))])
+        return ToolResponse(content=[TextBlock(type="text", text=_json_to_text(payload))])
     except Exception as e:
-        return ToolResponse(content=[TextBlock(text=f"查询失败: {e}")])
+        return ToolResponse(content=[TextBlock(type="text", text=f"查询失败: {e}")])
