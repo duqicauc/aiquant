@@ -13,6 +13,7 @@ import {
   ClockCircleOutlined,
   LogoutOutlined,
   FundOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import AppRoutes from './router'
@@ -23,6 +24,7 @@ const { Sider, Content } = Layout
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '总览驾驶舱' },
+  { key: '/ai', icon: <CommentOutlined />, label: '🤖 AI 助手' },
   { key: '/market', icon: <GlobalOutlined />, label: '市场分析' },
   { key: '/research', icon: <SearchOutlined />, label: '股票研究' },
   { key: '/etf', icon: <FundOutlined />, label: 'ETF 研究' },
