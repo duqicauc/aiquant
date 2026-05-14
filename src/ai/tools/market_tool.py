@@ -37,7 +37,7 @@ async def query_market_overview() -> ToolResponse:
 async def query_hot_concepts(top_n: int = 10) -> ToolResponse:
     """查询当前热点题材板块，按涨停家数排序"""
     try:
-        result = await get_hot_concepts(top_n=top_n)
+        result = await get_hot_concepts(date=None, top_n=top_n)
         concepts = []
         for c in result.get("data", [])[:top_n]:
             concepts.append(

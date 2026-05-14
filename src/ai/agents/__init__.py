@@ -30,7 +30,7 @@ def _get_model() -> Optional[OpenAIChatModel]:
         return OpenAIChatModel(
             model_name="deepseek-chat",
             api_key=api_key,
-            base_url="https://api.deepseek.com/v1",
+            client_kwargs={"base_url": "https://api.deepseek.com/v1"},
             stream=False,
         )
 

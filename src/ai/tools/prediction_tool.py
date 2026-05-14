@@ -56,9 +56,7 @@ async def query_top_predictions(top_n: int = 20, min_prob: float = 0.5) -> ToolR
         min_prob: 最低概率阈值
     """
     try:
-        result = await get_latest_predictions(
-            top_n=top_n, filters={"min_prob": min_prob}
-        )
+        result = await get_latest_predictions(top_n=top_n, min_prob=min_prob)
         stocks = []
         for s in result.get("data", [])[:top_n]:
             stocks.append(

@@ -75,11 +75,19 @@ async def ai_chat(
         from agentscope.message import Msg
 
         msg = Msg(name="user", role="user", content=message)
-        response = agent(msg)
+        response = await agent(msg)
+
+        # response.content 是 ContentBlock 列表，提取文本
+        text_parts = []
+        for block in response.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif hasattr(block, "text"):
+                text_parts.append(block.text)
 
         return {
             "agent": agent_type,
-            "response": response.content if hasattr(response, "content") else str(response),
+            "response": "\n".join(text_parts) if text_parts else str(response),
             "conversation_id": conversation_id,
         }
     except Exception as e:

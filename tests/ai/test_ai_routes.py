@@ -1,5 +1,7 @@
 """
 AI Agent API 路由单元测试 — 测试 FastAPI 端点（无需 LLM）
+
+使用 monkeypatch 删除环境变量，确保测试在任何环境下都稳定。
 """
 
 from fastapi.testclient import TestClient
@@ -9,42 +11,58 @@ from src.api.main import app
 client = TestClient(app)
 
 
-class TestAIAgentEndpoints:
-    """测试 /api/ai 端点"""
+def _reset_agent_state(monkeypatch):
+    """辅助函数：清除环境变量并重置 Agent 全局状态。"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from src.ai import agents as agents_mod
 
-    def test_list_agents_without_key(self):
+    agents_mod._agents_initialized = False
+    agents_mod._agent_registry.clear()
+
+
+class TestAIAgentEndpoints:
+    """测试 /api/ai 端点（模拟无 API Key 场景）"""
+
+    def test_list_agents_without_key(self, monkeypatch):
         """无 API Key 时返回可用 agents 列表但标记 unavailable"""
+        _reset_agent_state(monkeypatch)
         resp = client.get("/api/ai/agents")
         assert resp.status_code == 200
         data = resp.json()
         assert "agents" in data
         assert "available" in data
-        # 无 key 时应该 unavailable
         assert data["available"] is False
 
-    def test_chat_without_key_returns_503(self):
+    def test_chat_without_key_returns_503(self, monkeypatch):
         """无 API Key 时 chat 返回 503"""
+        _reset_agent_state(monkeypatch)
         resp = client.post("/api/ai/chat", params={"message": "帮我选股"})
         assert resp.status_code == 503
         assert "不可用" in resp.json()["detail"]
 
-    def test_selector_without_key_returns_503(self):
+    def test_selector_without_key_returns_503(self, monkeypatch):
         """无 API Key 时 selector 返回 503"""
+        _reset_agent_state(monkeypatch)
         resp = client.post("/api/ai/selector", params={"query": "帮我找科技股"})
         assert resp.status_code == 503
 
-    def test_diagnose_without_key_returns_503(self):
+    def test_diagnose_without_key_returns_503(self, monkeypatch):
         """无 API Key 时 diagnose 返回 503"""
+        _reset_agent_state(monkeypatch)
         resp = client.post("/api/ai/diagnose", params={"ts_code": "000001.SZ"})
         assert resp.status_code == 503
 
-    def test_report_without_key_returns_503(self):
+    def test_report_without_key_returns_503(self, monkeypatch):
         """无 API Key 时 report 返回 503"""
+        _reset_agent_state(monkeypatch)
         resp = client.post("/api/ai/report")
         assert resp.status_code == 503
 
-    def test_code_without_key_returns_503(self):
+    def test_code_without_key_returns_503(self, monkeypatch):
         """无 API Key 时 code 返回 503"""
+        _reset_agent_state(monkeypatch)
         resp = client.post("/api/ai/code", params={"question": "怎么写 pandas"})
         assert resp.status_code == 503
 

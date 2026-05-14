@@ -66,8 +66,8 @@ def query_stock_technical(ts_code: str, days: int = 60) -> ToolResponse:
     """
     try:
         resp = query_stock_kline(ts_code, days)
-        # ToolResponse content 是 TextBlock 列表，提取 text
-        text = resp.content[0].text if resp.content else "{}"
+        # ToolResponse content 是 dict 列表（TypedDict），提取 text
+        text = resp.content[0].get("text", "{}") if resp.content else "{}"
         data_obj = json.loads(text)
         data = data_obj.get("data", [])
         if not data:
