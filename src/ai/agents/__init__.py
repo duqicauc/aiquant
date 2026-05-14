@@ -67,13 +67,18 @@ def _get_formatter():
 
 
 def _wrap_async_tool(func):
-    """将异步工具包装为同步工具（AgentScope 工具需同步）。"""
+    """将异步工具包装为同步工具（AgentScope 工具需同步）。
+    如果 func 本身是同步函数，则直接调用。"""
+    import inspect
+
+    is_async = inspect.iscoroutinefunction(func)
 
     def wrapper(**kwargs):
         try:
+            if not is_async:
+                return func(**kwargs)
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 在已有事件循环中（如 FastAPI），使用 nest_asyncio 或新线程
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor() as pool:
