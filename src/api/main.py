@@ -13,7 +13,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.api.routers import auth, admin, backtest, macro, market, prediction, scheduler, stock, system, trading, watchlist
-from src.api.routers import etf, hotspot, weak_to_strong, limit_premium_predict
+from src.api.routers import etf, hotspot, weak_to_strong, limit_premium_predict, ai_agent
 
 
 @asynccontextmanager
@@ -61,6 +61,7 @@ app.include_router(etf.router, prefix="/api/etf", tags=["ETF"])
 app.include_router(hotspot.router, prefix="/api/market", tags=["Market"])
 app.include_router(weak_to_strong.router, prefix="/api/market", tags=["Market"])
 app.include_router(limit_premium_predict.router, prefix="/api/market", tags=["Market"])
+app.include_router(ai_agent.router, prefix="/api/ai", tags=["AI Agent"])
 
 
 @app.get("/api/health")

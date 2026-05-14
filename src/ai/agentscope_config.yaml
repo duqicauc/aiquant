@@ -1,0 +1,20 @@
+# AgentScope 模型配置
+# 支持的 provider: deepseek, openai, anthropic, dashscope
+# 通过环境变量覆盖 API Key
+
+model_configs:
+  - config_name: deepseek_cfg
+    model_type: openai
+    model_name: deepseek-chat
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com/v1
+
+  - config_name: openai_cfg
+    model_type: openai
+    model_name: gpt-4o-mini
+    api_key: ${OPENAI_API_KEY}
+
+  - config_name: anthropic_cfg
+    model_type: anthropic
+    model_name: claude-3-5-sonnet-20241022
+    api_key: ${ANTHROPIC_API_KEY}

@@ -7,12 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.api.dependencies import get_model_monitor
+from src.api.routers.auth import get_current_user_optional, get_current_user
+from src.scheduler.models import User
 
 router = APIRouter()
 
@@ -129,7 +131,7 @@ ALERT_CONFIG_DEFAULT = {
 }
 
 
-def _get_alert_config() -> dict:
+def _get_alert_config(user_id: int = 1) -> dict:
     """从 SQLite user_settings 读取 alert_config"""
     import json
     import sqlite3
@@ -139,7 +141,8 @@ def _get_alert_config() -> dict:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT setting_value FROM user_settings WHERE user_id = 1 AND setting_key = 'alert_config' ORDER BY id DESC LIMIT 1"
+            "SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'alert_config' ORDER BY id DESC LIMIT 1",
+            (user_id,),
         )
         row = cursor.fetchone()
         conn.close()
@@ -150,7 +153,7 @@ def _get_alert_config() -> dict:
     return ALERT_CONFIG_DEFAULT.copy()
 
 
-def _save_alert_config(config: dict):
+def _save_alert_config(user_id: int, config: dict):
     """保存 alert_config 到 SQLite user_settings"""
     import json
     import sqlite3
@@ -160,30 +163,31 @@ def _save_alert_config(config: dict):
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
     # 先删除旧配置
-    cursor.execute("DELETE FROM user_settings WHERE user_id = 1 AND setting_key = 'alert_config'")
+    cursor.execute("DELETE FROM user_settings WHERE user_id = ? AND setting_key = 'alert_config'", (user_id,))
     # 插入新配置
     cursor.execute(
         "INSERT INTO user_settings (user_id, setting_key, setting_value, created_at) VALUES (?, ?, ?, ?)",
-        (1, "alert_config", json.dumps(config), datetime.now()),
+        (user_id, "alert_config", json.dumps(config), datetime.now()),
     )
     conn.commit()
     conn.close()
 
 
 @router.get("/alert-config")
-async def get_alert_config():
-    """获取当前用户的预警配置"""
-    return _get_alert_config()
+async def get_alert_config(user: User = Depends(get_current_user_optional)):
+    """获取当前用户的预警配置（支持未登录使用默认配置）"""
+    user_id = user.id if user else 1
+    return _get_alert_config(user_id)
 
 
 @router.post("/alert-config")
-async def save_alert_config(config: dict):
-    """保存预警配置"""
+async def save_alert_config(config: dict, user: User = Depends(get_current_user)):
+    """保存预警配置（需登录）"""
     try:
         # 只保存已知字段
         allowed = set(ALERT_CONFIG_DEFAULT.keys())
         filtered = {k: v for k, v in config.items() if k in allowed}
-        _save_alert_config(filtered)
+        _save_alert_config(user.id, filtered)
         return {"success": True, "message": "配置已保存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")

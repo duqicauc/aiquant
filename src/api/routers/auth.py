@@ -4,16 +4,38 @@
 """
 import os
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel
 
 from src.scheduler.models import get_session_factory, User
+from src.utils.logger import log
 
 router = APIRouter()
+
+# ─── 简单内存限流（登录接口防暴力破解）───
+_login_attempts: Dict[str, list] = {}  # ip -> [timestamp, ...]
+_MAX_ATTEMPTS = 10  # 10分钟内最多10次
+_WINDOW_SECONDS = 600  # 10分钟窗口
+
+
+def _check_rate_limit(request: Request) -> bool:
+    """检查登录限流，返回 True 表示允许，False 表示拒绝。"""
+    client_ip = request.client.host if request.client else "unknown"
+    now = datetime.utcnow().timestamp()
+    attempts = _login_attempts.get(client_ip, [])
+    # 清理过期记录
+    attempts = [t for t in attempts if now - t < _WINDOW_SECONDS]
+    if len(attempts) >= _MAX_ATTEMPTS:
+        _login_attempts[client_ip] = attempts
+        log.warning(f"登录限流触发: {client_ip}")
+        return False
+    attempts.append(now)
+    _login_attempts[client_ip] = attempts
+    return True
 
 # JWT 配置
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "aiquant-dev-secret-key-change-in-production")
@@ -124,8 +146,11 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
 # ---------------------------------------------------------------------------
 
 @router.post("/login", response_model=LoginResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """用户登录"""
+    if not _check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="登录次数过多，请10分钟后再试")
+
     session_factory = get_session_factory()
     with session_factory() as session:
         user = session.query(User).filter(User.username == req.username).first()
