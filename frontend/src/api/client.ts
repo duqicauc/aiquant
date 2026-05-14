@@ -55,6 +55,12 @@ export const marketApi = {
     client.get('/api/market/concept-heat', { params: { ...(date ? { date } : {}), top_n: topN } }),
   factorRadar: (lookbackShort = 5, lookbackLong = 20) =>
     client.get('/api/market/factor-radar', { params: { lookback_short: lookbackShort, lookback_long: lookbackLong } }),
+  hotspotBreakout: (params?: { date?: string; min_score?: number; require_zt?: boolean; top_n?: number; mode?: string }) =>
+    client.get('/api/market/hotspot-breakout', { params }),
+  weakToStrong: (params?: { date?: string; min_score?: number; top_n?: number }) =>
+    client.get('/api/market/weak-to-strong', { params }),
+  limitPremiumPredict: (params?: { date?: string; min_score?: number; top_n?: number }) =>
+    client.get('/api/market/limit-premium-predict', { params }),
 }
 
 // Stock API

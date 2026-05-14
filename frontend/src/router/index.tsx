@@ -8,6 +8,7 @@ import Trading from '../pages/Trading'
 import StrategyPool from '../pages/StrategyPool'
 import ETFResearch from '../pages/ETFResearch'
 import ETFPortfolio from '../pages/ETFPortfolio'
+import HotspotPool from '../pages/HotspotPool'
 
 import System from '../pages/System'
 import Scheduler from '../pages/Scheduler'
@@ -29,6 +30,7 @@ export default function AppRoutes() {
       <Route path="/system" element={<System />} />
       <Route path="/etf" element={<ETFResearch />} />
       <Route path="/etf-portfolio" element={<ETFPortfolio />} />
+      <Route path="/hotspot-pool" element={<HotspotPool />} />
       <Route path="/scheduler" element={<Scheduler />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
