@@ -3,6 +3,7 @@ import { Card, Row, Col, Tag, Spin, Badge, Tooltip, Select } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import { marketApi, predictionApi, tradingApi, stockNoteApi } from '../api/client'
+import AIAssistant from '../components/AIAssistant'
 
 // Mock data types for new features (will be replaced by real API later)
 interface StrikeZoneItem {
@@ -374,6 +375,9 @@ export default function Overview() {
 
   return (
     <div>
+      {/* ─── AI 智能助手 ─── */}
+      <AIAssistant />
+
       <Spin spinning={loading}>
         {/* ─── 顶部：横向工作流 ─── */}
         <h3 style={{ color: '#c9d1d9', marginBottom: '0.75rem', fontSize: '1.05rem' }}>📋 今日工作流</h3>

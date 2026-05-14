@@ -199,6 +199,20 @@ export const etfApi = {
   industryAnalysis: () => client.get('/api/etf/industry-analysis'),
 }
 
+// AI Agent API
+export const aiAgentApi = {
+  listAgents: () => client.get('/api/ai/agents'),
+  chat: (message: string, agentType?: string, conversationId?: string) =>
+    client.post('/api/ai/chat', null, { params: { message, agent_type: agentType, conversation_id: conversationId } }),
+  selector: (query: string) =>
+    client.post('/api/ai/selector', null, { params: { query } }),
+  diagnose: (tsCode: string, question?: string) =>
+    client.post('/api/ai/diagnose', null, { params: { ts_code: tsCode, question } }),
+  report: () => client.post('/api/ai/report'),
+  codeAssist: (question: string) =>
+    client.post('/api/ai/code', null, { params: { question } }),
+}
+
 // Health check
 export const healthApi = {
   check: () => client.get('/api/health'),
