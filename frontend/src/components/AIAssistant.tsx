@@ -36,10 +36,20 @@ const QUICK_ACTIONS = [
   { key: 'diagnose', label: '🔍 诊断', icon: <MedicineBoxOutlined />, prompt: '诊断一下 000001.SZ' },
 ]
 
+const STORAGE_KEY = 'aiquant_ai_chat_history'
+
 export default function AIAssistant() {
   const [isOpen, setIsOpen] = useState(false)
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) return JSON.parse(saved)
+    } catch {
+      // ignore
+    }
+    return []
+  })
   const [loading, setLoading] = useState(false)
   const [, setError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -50,6 +60,14 @@ export default function AIAssistant() {
 
   useEffect(() => {
     scrollToBottom()
+  }, [messages])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+    } catch {
+      // ignore
+    }
   }, [messages])
 
   const handleSend = async (text?: string) => {
