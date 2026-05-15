@@ -1,27 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Card, Row, Col, Tag, Spin, Badge, Tooltip, Select } from 'antd'
-import { useNavigate } from 'react-router-dom'
+import { Card, Row, Col, Spin, Badge, Select } from 'antd'
 import ReactECharts from 'echarts-for-react'
-import { marketApi, predictionApi, tradingApi, stockNoteApi } from '../api/client'
-import AIAssistant from '../components/AIAssistant'
-
-// Mock data types for new features (will be replaced by real API later)
-interface StrikeZoneItem {
-  ts_code: string
-  name: string
-  prob: number
-  market_stage: string
-  trigger_reason: string
-  left_side_signal?: string
-}
-
-interface WatchlistAlert {
-  ts_code: string
-  name: string
-  alert_type: 'left_side_window' | 'breakout_ma20' | 'volume_surge' | 'stop_loss_near'
-  message: string
-  severity: 'info' | 'warning' | 'danger'
-}
+import { marketApi } from '../api/client'
 
 interface SystemAlert {
   id: string
@@ -31,23 +11,13 @@ interface SystemAlert {
 }
 
 export default function Overview() {
-  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
-  const [loadingSecondary, setLoadingSecondary] = useState(false)
   const [marketData, setMarketData] = useState<any>(null)
   const [breadthData, setBreadthData] = useState<any>(null)
-  const [pipelineStatus, setPipelineStatus] = useState<any>(null)
-  const [noteStats, setNoteStats] = useState({ researched: 0, watched: 0, excluded: 0 })
-  const [tradingSummary, setTradingSummary] = useState<any>(null)
-  const [sectorData, setSectorData] = useState<any[]>([])
   const [hotConcepts, setHotConcepts] = useState<any[]>([])
   const [conceptTrend, setConceptTrend] = useState<any[]>([])
   const [conceptTrendDays, setConceptTrendDays] = useState(3)
-
-  // New states for subjective-quant integration
-  const [strikeZone, setStrikeZone] = useState<StrikeZoneItem[]>([])
-  const [watchlistAlerts, setWatchlistAlerts] = useState<WatchlistAlert[]>([])
-  const [systemAlerts, setSystemAlerts] = useState<SystemAlert[]>([])
+  const [systemAlerts] = useState<SystemAlert[]>([])
 
   useEffect(() => {
     fetchCore()
@@ -80,75 +50,13 @@ export default function Overview() {
 
   // 次要数据：后台加载，避免阻塞首屏
   const fetchSecondary = async () => {
-    setLoadingSecondary(true)
     try {
-      const [pRes, nRes, tRes, sRes, hRes] = await Promise.all([
-        predictionApi.pipelineStatus().catch(() => ({ data: null })),
-        stockNoteApi.list().catch(() => ({ data: { items: [] } })),
-        tradingApi.summary().catch(() => ({ data: null })),
-        marketApi.sectors().catch(() => ({ data: [] })),
+      const [hRes] = await Promise.all([
         marketApi.hotConcepts().catch(() => ({ data: [] })),
       ])
-
-      setPipelineStatus(pRes.data)
-      setTradingSummary(tRes.data)
-      setSectorData(sRes.data || [])
       setHotConcepts(hRes.data?.data || [])
-
-      const notes = nRes.data?.items || []
-      setNoteStats({
-        researched: notes.filter((n: any) => n.note_type === 'researched').length,
-        watched: notes.filter((n: any) => n.note_type === 'watched').length,
-        excluded: notes.filter((n: any) => n.note_type === 'excluded').length,
-      })
-
-      // 击球区：3L全符合的 top 标的
-      try {
-        const szRes = await predictionApi.strategyPool({ min_prob: 0.7, allowed_stages: '拉升初期,拉升中期', top_n: 5 })
-        const szData = szRes.data?.data || []
-        setStrikeZone(szData.map((r: any) => ({
-          ts_code: r.ts_code,
-          name: r.name,
-          prob: r.prob,
-          market_stage: r.market_stage,
-          trigger_reason: '高概率 + 拉升阶段',
-          left_side_signal: r.left_side_signals?.[0] || '',
-        })))
-      } catch {
-        setStrikeZone([])
-      }
-
-      // 观察池异动：基于 watched 笔记生成简化提示
-      try {
-        const watched = notes.filter((n: any) => n.note_type === 'watched')
-        setWatchlistAlerts(watched.slice(0, 5).map((n: any) => ({
-          ts_code: n.ts_code,
-          name: n.name || n.ts_code,
-          alert_type: 'left_side_window',
-          message: `在观察池中: ${n.note || '无备注'}`,
-          severity: 'info',
-        })))
-      } catch {
-        setWatchlistAlerts([])
-      }
-
-      // 系统预警：基于 pipeline 状态生成
-      try {
-        const alerts: SystemAlert[] = []
-        if (pRes.data?.last_run_status === 'failed') {
-          alerts.push({ id: 'pipeline', level: 'warning', message: 'Pipeline 最近一次运行失败', time: pRes.data?.last_run_time || '' })
-        }
-        if (tRes.data?.total_pnl_pct !== undefined && tRes.data.total_pnl_pct < -5) {
-          alerts.push({ id: 'pnl', level: 'error', message: `组合浮亏 ${tRes.data.total_pnl_pct.toFixed(1)}%`, time: '最新' })
-        }
-        setSystemAlerts(alerts)
-      } catch {
-        setSystemAlerts([])
-      }
     } catch {
       // ignore
-    } finally {
-      setLoadingSecondary(false)
     }
   }
 
@@ -160,24 +68,10 @@ export default function Overview() {
   const totalAmount = marketData?.total_amount
   const northMoney = marketData?.north_money
   const upRatio = breadthData?.up_ratio ?? 50
-  const szClose = marketData?.indices?.['上证指数']?.close?.toFixed(2) || '-'
   const amountMa5 = marketData?.amount_ma5
   const amountMa20 = marketData?.amount_ma20
   const volumeRatio5d = marketData?.volume_ratio_5d
 
-  // Helper: prob color
-  const probColor = (p: number) => p >= 0.7 ? '#3fb950' : p >= 0.5 ? '#d29922' : '#8b949e'
-  const stageColor = (stage: string) => {
-    if (stage.includes('拉升')) return '#3fb950'
-    if (stage.includes('筑底')) return '#58a6ff'
-    if (stage.includes('顶部')) return '#d29922'
-    return '#f85149'
-  }
-  const alertSeverityColor = (s: string) => {
-    if (s === 'danger') return '#f85149'
-    if (s === 'warning') return '#d29922'
-    return '#58a6ff'
-  }
   const systemAlertColor = (level: string) => {
     if (level === 'error') return '#f85149'
     if (level === 'warning') return '#d29922'
@@ -318,230 +212,12 @@ export default function Overview() {
     return '📊 市场分化，关注主线板块与资金流向'
   }, [breadthData])
 
-  const steps = [
-    {
-      num: 1,
-      title: '市场环境判断',
-      icon: '🌤️',
-      path: '/market',
-      status: marketData ? 'done' : 'pending',
-      short: marketData ? (
-        <span>{regime} {regimeScore}分 | 上证 {szClose}</span>
-      ) : '加载中...',
-    },
-    {
-      num: 2,
-      title: 'AI选股（模型预测）',
-      icon: '🤖',
-      path: '/prediction',
-      status: pipelineStatus?.has_run_today ? 'done' : 'pending',
-      short: pipelineStatus?.has_run_today ? (
-        <span>已预测 {pipelineStatus?.latest_prediction_count || 0} 只</span>
-      ) : (
-        <span style={{ color: '#f85149' }}>Pipeline 未执行</span>
-      ),
-    },
-    {
-      num: 3,
-      title: '深度验证（股票研究）',
-      icon: '🔍',
-      path: '/research',
-      status: noteStats.researched > 0 ? 'done' : 'pending',
-      short: <span>已研究 {noteStats.researched} 只</span>,
-    },
-    {
-      num: 4,
-      title: '跟踪监控（股票池）',
-      icon: '📊',
-      path: '/watchlist',
-      status: pipelineStatus?.has_run_today ? 'done' : 'pending',
-      short: pipelineStatus?.has_run_today ? (
-        <span>{pipelineStatus?.latest_prediction_count || 0} 只待跟踪</span>
-      ) : '等待预测生成...',
-    },
-    {
-      num: 5,
-      title: '交易执行',
-      icon: '💼',
-      path: '/trading',
-      status: tradingSummary?.total_positions > 0 ? 'done' : 'pending',
-      short: tradingSummary ? (
-        <span>持仓 {tradingSummary.total_positions || 0} 只 | 收益 {(tradingSummary.total_pnl_pct || 0).toFixed(1)}%</span>
-      ) : '暂无持仓',
-    },
-  ]
-
   const indexEntries = marketData?.indices ? Object.entries(marketData.indices) : []
 
   return (
     <div>
-      {/* ─── AI 智能助手 ─── */}
-      <AIAssistant />
-
       <Spin spinning={loading}>
-        {/* ─── 顶部：横向工作流 ─── */}
-        <h3 style={{ color: '#c9d1d9', marginBottom: '0.75rem', fontSize: '1.05rem' }}>📋 今日工作流</h3>
-        <div style={{ display: 'flex', gap: 12, marginBottom: '1.5rem' }}>
-          {steps.map((step) => (
-            <Card
-              key={step.num}
-              style={{
-                background: step.status === 'done' ? 'rgba(63,185,80,0.05)' : '#161b22',
-                borderColor: step.status === 'done' ? 'rgba(63,185,80,0.35)' : '#30363d',
-                cursor: 'pointer',
-                flex: 1,
-                minWidth: 0,
-              }}
-              bodyStyle={{ padding: '10px 12px' }}
-              onClick={() => navigate(step.path)}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <span style={{ fontSize: 18, lineHeight: 1 }}>{step.status === 'done' ? '✅' : step.icon}</span>
-                <span style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
-                  Step {step.num}
-                </span>
-                {step.status === 'done' && (
-                  <Tag color="success" style={{ marginLeft: 'auto', fontSize: 10, lineHeight: '14px', padding: '0 4px' }}>已完成</Tag>
-                )}
-              </div>
-              <div style={{ color: '#c9d1d9', fontSize: 13, fontWeight: 500, marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {step.title}
-              </div>
-              <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.4 }}>
-                {step.short}
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        {/* ─── 新增：今日击球区 + 观察池异动 ─── */}
-        <Row gutter={[16, 16]} style={{ marginBottom: '1.5rem' }}>
-          {/* 今日击球区 */}
-          <Col xs={24} lg={16}>
-            <Card
-              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
-              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
-              title={
-                <span>
-                  🎯 今日精选
-                  <Tag color="success" style={{ marginLeft: 8, fontSize: 11 }}>
-                    {strikeZone.length} 只符合条件
-                  </Tag>
-                </span>
-              }
-            >
-              {strikeZone.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {strikeZone.map((item) => (
-                    <div
-                      key={item.ts_code}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        padding: '10px 12px',
-                        background: '#0d1117',
-                        borderRadius: 6,
-                        border: '1px solid #30363d',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => navigate(`/research?code=${item.ts_code}`)}
-                    >
-                      <div style={{ minWidth: 100 }}>
-                        <div style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 14 }}>{item.name}</div>
-                        <div style={{ color: '#8b949e', fontSize: 11 }}>{item.ts_code}</div>
-                      </div>
-                      {/* 中期概率 */}
-                      <div style={{ display: 'flex', gap: 6, minWidth: 80, alignItems: 'center' }}>
-                        <Tooltip title="中期概率">
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: probColor(item.prob), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold' }}>
-                              {(item.prob * 100).toFixed(0)}%
-                            </div>
-                          </div>
-                        </Tooltip>
-                      </div>
-                      {/* 阶段 + 理由 */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                          <Tag style={{ margin: 0, fontSize: 11, background: stageColor(item.market_stage) + '20', color: stageColor(item.market_stage), borderColor: stageColor(item.market_stage) + '40' }}>
-                            {item.market_stage}
-                          </Tag>
-                          {item.left_side_signal && (
-                            <Tag style={{ margin: 0, fontSize: 11, background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.3)' }}>
-                              {item.left_side_signal}
-                            </Tag>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 12, color: '#8b949e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {item.trigger_reason}
-                        </div>
-                      </div>
-                      <div style={{ color: '#8b949e', fontSize: 18 }}>›</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ color: '#8b949e', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
-                  暂无击球区标的，请耐心等待高置信度信号
-                </div>
-              )}
-            </Card>
-          </Col>
-
-          {/* 观察池异动 */}
-          <Col xs={24} lg={8}>
-            <Card
-              style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
-              headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
-              title={
-                <span>
-                  👁️ 观察池异动
-                  <Tag color="processing" style={{ marginLeft: 8, fontSize: 11 }}>
-                    {watchlistAlerts.length} 条更新
-                  </Tag>
-                </span>
-              }
-            >
-              {watchlistAlerts.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {watchlistAlerts.map((alert, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        padding: '8px 10px',
-                        background: '#0d1117',
-                        borderRadius: 4,
-                        borderLeft: `3px solid ${alertSeverityColor(alert.severity)}`,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => navigate(`/research?code=${alert.ts_code}`)}
-                    >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                          <span style={{ color: '#c9d1d9', fontWeight: 500, fontSize: 13 }}>{alert.name}</span>
-                          <span style={{ fontSize: 10, color: alertSeverityColor(alert.severity), background: alertSeverityColor(alert.severity) + '15', padding: '1px 6px', borderRadius: 4 }}>
-                            {alert.severity === 'danger' ? '紧急' : alert.severity === 'warning' ? '关注' : '提示'}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 12, color: '#8b949e', lineHeight: 1.4 }}>{alert.message}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ color: '#8b949e', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
-                  观察池暂无异动
-                </div>
-              )}
-            </Card>
-          </Col>
-        </Row>
-
-        {/* ─── 下方：市场速览 ─── */}
+        {/* ─── 市场速览 ─── */}
         <h3 style={{ color: '#c9d1d9', marginBottom: '0.75rem', fontSize: '1.05rem' }}>📈 市场速览</h3>
         <Row gutter={[16, 16]}>
           {/* 市场概况 */}
