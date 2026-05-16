@@ -184,7 +184,7 @@ function MonitorTab() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {recentFailures.map((f) => (
               <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', background: '#3d0e0e', borderRadius: 4, border: '1px solid #f85149' }}>
-                <Tag color="error" size="small">失败</Tag>
+                <Tag color="error">失败</Tag>
                 <span style={{ color: '#c9d1d9', fontSize: 13 }}>{f.job_name || f.job_id}</span>
                 <span style={{ color: '#8b949e', fontSize: 12 }}>{f.run_time ? new Date(f.run_time).toLocaleString('zh-CN') : '-'}</span>
                 {f.stderr_preview && <span style={{ color: '#f85149', fontSize: 11 }}>{f.stderr_preview.slice(0, 100)}</span>}
@@ -618,19 +618,19 @@ function SchedulerTab() {
               <Col span={12}><Text style={{ color: '#8b949e' }}>时间:</Text> {detailContent.run_time ? new Date(detailContent.run_time as string).toLocaleString('zh-CN') : '-'}</Col>
               <Col span={12}><Text style={{ color: '#8b949e' }}>耗时:</Text> {detailContent.duration_ms ? `${((detailContent.duration_ms as number) / 1000).toFixed(1)}s` : '-'}</Col>
             </Row>
-            {detailContent.stdout && (
+            {!!detailContent.stdout && (
               <div style={{ marginBottom: 12 }}>
                 <Text style={{ color: '#8b949e', fontWeight: 'bold' }}>STDOUT:</Text>
                 <pre style={{ background: '#161b22', padding: 12, borderRadius: 6, color: '#c9d1d9', fontSize: 12, maxHeight: 300, overflow: 'auto', border: '1px solid #30363d' }}>{detailContent.stdout as string}</pre>
               </div>
             )}
-            {detailContent.stderr && (
+            {!!detailContent.stderr && (
               <div style={{ marginBottom: 12 }}>
                 <Text style={{ color: '#f85149', fontWeight: 'bold' }}>STDERR:</Text>
                 <pre style={{ background: '#161b22', padding: 12, borderRadius: 6, color: '#f85149', fontSize: 12, maxHeight: 300, overflow: 'auto', border: '1px solid #30363d' }}>{detailContent.stderr as string}</pre>
               </div>
             )}
-            {detailContent.exception && (
+            {!!detailContent.exception && (
               <div>
                 <Text style={{ color: '#f85149', fontWeight: 'bold' }}>异常:</Text>
                 <pre style={{ background: '#161b22', padding: 12, borderRadius: 6, color: '#f85149', fontSize: 12, maxHeight: 300, overflow: 'auto', border: '1px solid #30363d' }}>{detailContent.exception as string}</pre>

@@ -1148,7 +1148,7 @@ export default function Market() {
                   <Button
                     size="small"
                     loading={factorRadarLoading}
-                    onClick={loadFactorRadar}
+                    onClick={() => loadFactorRadar()}
                     style={{ background: '#21262d', borderColor: '#30363d', color: '#c9d1d9' }}
                   >
                     🔄 刷新
@@ -1273,7 +1273,7 @@ export default function Market() {
                           <div key={f.key} style={{ padding: '8px 10px', background: '#0d1117', borderRadius: 4, borderLeft: `3px solid ${f.color}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span style={{ color: '#c9d1d9', fontSize: 12, fontWeight: 500 }}>{f.name}</span>
-                              <Tag size="small" style={{ margin: 0, fontSize: 10, background: f.color + '15', color: f.color, borderColor: f.color + '30' }}>
+                              <Tag style={{ margin: 0, fontSize: 10, background: f.color + '15', color: f.color, borderColor: f.color + '30' }}>
                                 IC {f.ic_long > 0 ? '+' : ''}{f.ic_long?.toFixed(3)} | {f.status}
                               </Tag>
                             </div>

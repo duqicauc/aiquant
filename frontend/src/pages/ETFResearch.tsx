@@ -580,7 +580,7 @@ export default function ETFResearch() {
       title: '类型',
       dataIndex: 'fund_type',
       render: (v?: string) => (
-        <Tag size="small" style={{ fontSize: 11, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
+        <Tag style={{ fontSize: 11, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
           {v || '-'}
         </Tag>
       ),

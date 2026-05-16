@@ -17,6 +17,8 @@ interface Position {
   ts_code: string
   name: string
   trades: TradeEntry[]
+  buy_price?: number
+  shares?: number
   stop_loss_price?: number
   target_price?: number
   current_price?: number
@@ -169,7 +171,7 @@ export default function Trading() {
           <br />
           <span style={{ color: '#8b949e', fontSize: 12 }}>{record.name || '-'}</span>
           {record.trades.length > 1 && (
-            <Tag size="small" style={{ marginLeft: 4, fontSize: 10, background: '#1f4d7a', color: '#58a6ff', borderColor: '#30363d' }}>
+            <Tag style={{ marginLeft: 4, fontSize: 10, background: '#1f4d7a', color: '#58a6ff', borderColor: '#30363d' }}>
               {record.trades.length}笔
             </Tag>
           )}
@@ -335,7 +337,7 @@ export default function Trading() {
                     <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 80 }}>成本 {trade.buy_price.toFixed(2)}</span>
                     <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 60 }}>{trade.shares}股</span>
                     <span style={{ color: '#6e7681', fontSize: 11, minWidth: 90 }}>{trade.buy_date}</span>
-                    <Tag size="small" style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
+                    <Tag style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
                       {trade.strategy_tag || 'manual'}
                     </Tag>
                     {trade.note && <span style={{ color: '#6e7681', fontSize: 11 }}>{trade.note}</span>}

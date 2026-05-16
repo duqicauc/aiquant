@@ -440,7 +440,7 @@ export default function HotspotPool() {
               valueStyle={{ color: sr.color, fontSize: '1.25rem', fontWeight: 700 }} />
             <div style={{ fontSize: '0.7rem', color: sr.color, marginTop: 4 }}>
               {sentiment.sealed_count} / {sentiment.limit_up_total} 封住
-              <Tag size="small" style={{ marginLeft: 6, fontSize: '0.65rem', background: sr.color + '20', color: sr.color, borderColor: sr.color + '40' }}>{sr.label}</Tag>
+              <Tag style={{ marginLeft: 6, fontSize: '0.65rem', background: sr.color + '20', color: sr.color, borderColor: sr.color + '40' }}>{sr.label}</Tag>
             </div>
           </Card>
         </Col>

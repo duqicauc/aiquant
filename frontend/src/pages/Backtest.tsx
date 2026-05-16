@@ -155,14 +155,14 @@ export default function Backtest() {
                         >
                           <span style={{ fontSize: 14 }}>{t.action === 'buy' ? '🟢' : '🔴'}</span>
                           <span style={{ color: stockColorMap[t.ts_code], fontWeight: 500, fontSize: 13, minWidth: 80 }}>{t.name || t.ts_code}</span>
-                          <Tag size="small" style={{ fontSize: 11, background: t.action === 'buy' ? '#23863620' : '#f8514920', color: t.action === 'buy' ? '#3fb950' : '#f85149', borderColor: 'transparent' }}>
+                          <Tag style={{ fontSize: 11, background: t.action === 'buy' ? '#23863620' : '#f8514920', color: t.action === 'buy' ? '#3fb950' : '#f85149', borderColor: 'transparent' }}>
                             {t.action === 'buy' ? '买入' : '卖出'}
                           </Tag>
                           <span style={{ color: '#c9d1d9', fontSize: 13 }}>{t.price.toFixed(2)}元</span>
                           <span style={{ color: '#8b949e', fontSize: 12 }}>{t.shares}股</span>
                           <span style={{ color: '#c9d1d9', fontSize: 12, fontWeight: 500 }}>¥{(t.amount / 10000).toFixed(1)}万</span>
                           {t.strategy_tag && (
-                            <Tag size="small" style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
+                            <Tag style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
                               {t.strategy_tag}
                             </Tag>
                           )}

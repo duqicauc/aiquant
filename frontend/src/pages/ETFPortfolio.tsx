@@ -120,7 +120,7 @@ export default function ETFPortfolio() {
   }
 
   const loadPreset = (preset: typeof PRESETS[0]) => {
-    setPortfolio({ ...preset.weights })
+    setPortfolio({ ...preset.weights } as unknown as Record<string, number>)
   }
 
   const runBacktest = async () => {

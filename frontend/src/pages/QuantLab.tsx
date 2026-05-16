@@ -19,6 +19,7 @@ interface Transaction {
   shares: number
   amount: number
   commission?: number
+  profit?: number
   reason?: string
   strategy_tag?: string
 }
@@ -251,7 +252,7 @@ function PositionsPanel({ positions, summary, loading, onRefresh }: {
           <br />
           <span style={{ color: '#8b949e', fontSize: 12 }}>{record.name || '-'}</span>
           {record.trades.length > 1 && (
-            <Tag size="small" style={{ marginLeft: 4, fontSize: 10, background: '#1f4d7a', color: '#58a6ff', borderColor: '#30363d' }}>
+            <Tag style={{ marginLeft: 4, fontSize: 10, background: '#1f4d7a', color: '#58a6ff', borderColor: '#30363d' }}>
               {record.trades.length}笔
             </Tag>
           )}
@@ -350,7 +351,7 @@ function PositionsPanel({ positions, summary, loading, onRefresh }: {
                     <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 80 }}>成本 {trade.buy_price.toFixed(2)}</span>
                     <span style={{ color: '#c9d1d9', fontSize: 12, minWidth: 60 }}>{trade.shares}股</span>
                     <span style={{ color: '#6e7681', fontSize: 11, minWidth: 90 }}>{trade.buy_date}</span>
-                    <Tag size="small" style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
+                    <Tag style={{ fontSize: 10, background: '#21262d', borderColor: '#30363d', color: '#8b949e' }}>
                       {trade.strategy_tag || 'manual'}
                     </Tag>
                     {trade.note && <span style={{ color: '#6e7681', fontSize: 11 }}>{trade.note}</span>}
@@ -543,13 +544,15 @@ function StrategyManagementTab({ onRunBacktest, onOptimize }: { onRunBacktest: (
   const [form] = Form.useForm()
   const [paramSchema, setParamSchema] = useState<Record<string, StrategyParamField>>({})
 
-  useEffect(() => {
-    let cancelled = false
+  const fetchStrategies = useCallback(() => {
     strategyApi.list()
-      .then((res) => { if (!cancelled) setStrategies((res.data || []) as StrategyItem[]) })
-      .catch(() => { if (!cancelled) message.error('加载策略列表失败') })
-    return () => { cancelled = true }
+      .then((res) => setStrategies((res.data || []) as StrategyItem[]))
+      .catch(() => message.error('加载策略列表失败'))
   }, [])
+
+  useEffect(() => {
+    fetchStrategies()
+  }, [fetchStrategies])
 
   const loadSchema = useCallback(async (type: string) => {
     try {
@@ -969,7 +972,7 @@ function BacktestResultsTab() {
                             const isBuy = t.action?.toString().toUpperCase() === 'BUY'
                             return (
                               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: isBuy ? 'rgba(248,81,73,0.06)' : 'rgba(35,134,54,0.06)', borderRadius: 4, borderLeft: `3px solid ${isBuy ? '#f85149' : '#3fb950'}`, flexWrap: 'wrap' }}>
-                                <Tag size="small" style={{ fontSize: 11, margin: 0, padding: '0 6px', background: isBuy ? '#f8514930' : '#3fb95030', color: isBuy ? '#f85149' : '#3fb950', borderColor: 'transparent' }}>{isBuy ? '买入' : '卖出'}</Tag>
+                                <Tag style={{ fontSize: 11, margin: 0, padding: '0 6px', background: isBuy ? '#f8514930' : '#3fb95030', color: isBuy ? '#f85149' : '#3fb950', borderColor: 'transparent' }}>{isBuy ? '买入' : '卖出'}</Tag>
                                 <span style={{ color: '#c9d1d9', fontWeight: 600, fontSize: 13, minWidth: 70 }}>{t.name || t.ts_code}</span>
                                 <span style={{ color: '#8b949e', fontSize: 11 }}>{t.ts_code}</span>
                                 <span style={{ color: '#c9d1d9', fontSize: 13 }}>{typeof t.price === 'number' ? t.price.toFixed(2) : '-'}元</span>
@@ -982,7 +985,7 @@ function BacktestResultsTab() {
                                   <span style={{ color: t.profit > 0 ? '#f85149' : '#3fb950', fontSize: 12, fontWeight: 500 }}>{t.profit > 0 ? '▲ ' : '▼ '}{t.profit.toFixed(0)}</span>
                                 )}
                                 {t.reason && (
-                                  <Tag size="small" style={{ fontSize: 10, margin: 0, background: '#21262d', borderColor: '#30363d', color: '#d29922' }}>{t.reason}</Tag>
+                                  <Tag style={{ fontSize: 10, margin: 0, background: '#21262d', borderColor: '#30363d', color: '#d29922' }}>{t.reason}</Tag>
                                 )}
                               </div>
                             )
@@ -1018,7 +1021,7 @@ function ParamOptimizeTab({ preselectStrategy }: { preselectStrategy?: StrategyI
   const [paramGrid, setParamGrid] = useState<Record<string, number[]>>({})
   const [scanning, setScanning] = useState(false)
   const [, setJobId] = useState<string>('')
-  const [progress, setProgress] = useState<Record<string, unknown> | null>(null)
+  const [progress, setProgress] = useState<any>(null)
   const [, setResults] = useState<Record<string, unknown>[]>([])
   const [scanHistory, setScanHistory] = useState<Record<string, unknown>[]>([])
 
@@ -1162,7 +1165,7 @@ function ParamOptimizeTab({ preselectStrategy }: { preselectStrategy?: StrategyI
           { title: '任务ID', dataIndex: 'job_id', key: 'job_id', render: (v: string) => <span style={{ fontSize: 11, color: '#8b949e' }}>{v.slice(0, 8)}...</span> },
           { title: '策略', dataIndex: 'strategy_name', key: 'strategy_name' },
           { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={v === 'success' ? 'green' : v === 'failed' ? 'red' : v === 'running' ? 'blue' : 'default'}>{v}</Tag> },
-          { title: '日期范围', key: 'range', render: (_: unknown, r: Record<string, unknown>) => <span style={{ fontSize: 12 }}>{r.start_date} ~ {r.end_date}</span> },
+          { title: '日期范围', key: 'range', render: (_: unknown, r: Record<string, unknown>) => <span style={{ fontSize: 12 }}>{r.start_date as string} ~ {r.end_date as string}</span> },
           { title: '完成度', key: 'progress', render: (_: unknown, r: Record<string, unknown>) => <span style={{ fontSize: 12 }}>{r.completed != null ? `${r.completed}/${r.total_combinations}` : '-'}</span> },
           { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v?: string) => <span style={{ fontSize: 12, color: '#8b949e' }}>{v ? v.slice(0, 10) : '-'}</span> },
         ]} />
@@ -1197,9 +1200,9 @@ function ParamGridInput({ onChange }: { label: string; onChange: (vals: number[]
         }} />
       ) : (
         <div style={{ display: 'flex', gap: 4 }}>
-          <InputNumber size="small" placeholder="min" style={{ width: 60 }} onChange={(v) => { setMin(v || 0); if (v != null && max != null && step != null) { const vals: number[] = []; for (let i = v; i <= max; i += step) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
-          <InputNumber size="small" placeholder="max" style={{ width: 60 }} onChange={(v) => { setMax(v || 0); if (min != null && v != null && step != null) { const vals: number[] = []; for (let i = min; i <= v; i += step) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
-          <InputNumber size="small" placeholder="step" style={{ width: 60 }} onChange={(v) => { setStep(v || 1); if (min != null && max != null && v != null) { const vals: number[] = []; for (let i = min; i <= max; i += v) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
+          <InputNumber size="small" placeholder="min" style={{ width: 60 }} onChange={(v: any) => { const nv = Number(v); setMin(nv); if (nv != null && max != null && step != null) { const vals: number[] = []; for (let i = nv; i <= max; i += step) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
+          <InputNumber size="small" placeholder="max" style={{ width: 60 }} onChange={(v: any) => { const nv = Number(v); setMax(nv); if (min != null && nv != null && step != null) { const vals: number[] = []; for (let i = min; i <= nv; i += step) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
+          <InputNumber size="small" placeholder="step" style={{ width: 60 }} onChange={(v: any) => { const nv = Number(v); setStep(nv); if (min != null && max != null && nv != null) { const vals: number[] = []; for (let i = min; i <= max; i += nv) vals.push(Math.round(i * 100) / 100); emit(vals) } }} />
         </div>
       )}
     </div>

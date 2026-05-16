@@ -48,6 +48,7 @@ interface WatchlistRecord {
   ts_code: string
   name: string
   prob: number
+  probability?: number
   close: number
   pct_chg?: number
   industry?: string
@@ -193,7 +194,7 @@ export default function Prediction() {
     // 加载观察池列表
     stockNoteApi.list().then((res) => {
       const notes = res.data?.items || []
-      const codes = new Set(notes.filter((n: any) => n.note_type === 'watched').map((n: any) => n.ts_code))
+      const codes = new Set<string>(notes.filter((n: any) => n.note_type === 'watched').map((n: any) => n.ts_code))
       setWatchedCodes(codes)
     }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -555,7 +556,7 @@ export default function Prediction() {
       title: '推荐历史', key: 'rec', width: 130,
       render: (_: any, r: WatchlistRecord) => {
         const h = r.rec_history
-        const fmt = (d: string) => d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
+        const fmt = (d: string | null | undefined) => d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '-'
         const labelColor = h.max_consecutive >= 3 ? '#f85149' : h.count_top100 >= 3 ? '#d29922' : h.count_top100 > 0 ? '#58a6ff' : '#8b949e'
         return (
           <Tooltip title={

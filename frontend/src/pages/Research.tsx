@@ -50,6 +50,7 @@ interface MoneyflowData {
   main_force?: any
   retail_contrarian?: any
   capital_trend?: any
+  daily_data?: any
   pattern?: {
     pattern: string
     pattern_en: string
@@ -71,6 +72,7 @@ interface DiagnosisData {
   ts_code: string
   name?: string
   overall_score?: number
+  market_stage?: string
   recommendation?: string
   basic_info?: Record<string, any>
   technical?: Record<string, any>
@@ -1124,8 +1126,8 @@ export default function Research() {
                   <Card
                     style={{
                       background: '#0d1117',
-                      borderColor: diagnosis.overall_score >= 60 ? 'rgba(63,185,80,0.35)' :
-                        diagnosis.overall_score >= 40 ? 'rgba(210,153,34,0.35)' : 'rgba(248,81,73,0.35)',
+                      borderColor: (diagnosis.overall_score ?? 0) >= 60 ? 'rgba(63,185,80,0.35)' :
+                        (diagnosis.overall_score ?? 0) >= 40 ? 'rgba(210,153,34,0.35)' : 'rgba(248,81,73,0.35)',
                       marginBottom: '1rem',
                     }}
                     bodyStyle={{ padding: '16px 20px' }}
@@ -1133,21 +1135,21 @@ export default function Research() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                       <div style={{
                         width: 56, height: 56, borderRadius: '50%',
-                        background: diagnosis.overall_score >= 60 ? 'rgba(63,185,80,0.15)' :
-                          diagnosis.overall_score >= 40 ? 'rgba(210,153,34,0.15)' : 'rgba(248,81,73,0.15)',
+                        background: (diagnosis.overall_score ?? 0) >= 60 ? 'rgba(63,185,80,0.15)' :
+                          (diagnosis.overall_score ?? 0) >= 40 ? 'rgba(210,153,34,0.15)' : 'rgba(248,81,73,0.15)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: 24,
-                        color: diagnosis.overall_score >= 60 ? '#3fb950' :
-                          diagnosis.overall_score >= 40 ? '#d29922' : '#f85149',
+                        color: (diagnosis.overall_score ?? 0) >= 60 ? '#3fb950' :
+                          (diagnosis.overall_score ?? 0) >= 40 ? '#d29922' : '#f85149',
                       }}>
-                        {diagnosis.overall_score >= 60 ? '🚀' : diagnosis.overall_score >= 40 ? '⚖️' : '📉'}
+                        {(diagnosis.overall_score ?? 0) >= 60 ? '🚀' : (diagnosis.overall_score ?? 0) >= 40 ? '⚖️' : '📉'}
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
                           <span style={{ fontSize: 18, fontWeight: 'bold', color: '#c9d1d9' }}>
                             {diagnosis.market_stage || '未知'}
                           </span>
-                          <Tag color={diagnosis.overall_score >= 60 ? '#238636' : diagnosis.overall_score >= 40 ? '#d29922' : '#da3633'} style={{ fontSize: '0.85rem' }}>
+                          <Tag color={(diagnosis.overall_score ?? 0) >= 60 ? '#238636' : (diagnosis.overall_score ?? 0) >= 40 ? '#d29922' : '#da3633'} style={{ fontSize: '0.85rem' }}>
                             评分 {diagnosis.overall_score ?? 0}/100
                           </Tag>
                           <Tag color="#58a6ff" style={{ fontSize: '0.85rem' }}>
@@ -2003,14 +2005,14 @@ export default function Research() {
                           type="primary"
                           size="small"
                           onClick={() => {
-                            const plan = diagnosis.swing_plan
+                            const plan = diagnosis.swing_plan || {}
                             const text = `【条件单参数】${tsCode} ${stockName}
-理想买入价: ${plan.entry?.suggested_price || '-'}
-止损位: ${plan.exit?.stop_loss || '-'}
-止盈策略: ${plan.exit?.take_profit_strategy || '-'}
-初始仓位: ${plan.position?.initial_position || '-'}
-最大仓位: ${plan.position?.max_position || '-'}
-动态止盈: ${plan.exit?.trailing_stop || '-'}`
+理想买入价: ${(plan as any).entry?.suggested_price || '-'}
+止损位: ${(plan as any).exit?.stop_loss || '-'}
+止盈策略: ${(plan as any).exit?.take_profit_strategy || '-'}
+初始仓位: ${(plan as any).position?.initial_position || '-'}
+最大仓位: ${(plan as any).position?.max_position || '-'}
+动态止盈: ${(plan as any).exit?.trailing_stop || '-'}`
                             navigator.clipboard.writeText(text).then(() => {
                               alert('条件单参数已复制到剪贴板')
                             })
