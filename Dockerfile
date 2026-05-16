@@ -16,21 +16,31 @@ RUN VITE_API_BASE='' npm run build
 # ─── Stage 2: Python 运行时 ───
 FROM python:3.12-slim
 
-# 安装系统依赖（含 Nginx、ta-lib 编译工具）
+# 替换为国内 apt 源加速构建
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.cloud.tencent.com/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|http://deb.debian.org/debian-security|https://mirrors.cloud.tencent.com/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+# 安装系统依赖（含 Nginx、编译工具）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
-    libta-lib0-dev \
     nginx \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# 配置 pip 国内镜像加速 Python 依赖下载
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
 # 安装 Python 依赖
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    fastapi uvicorn \
+# 修复 requirements.txt 中 PyPI 上已不可用/版本号错误的依赖
+RUN sed -i 's/^pandas-ta/# pandas-ta/' requirements.txt && \
+    sed -i 's/vectorbt>=1.9.0/vectorbt>=0.26.0/' requirements.txt && \
+    sed -i 's/mplfinance>=0.12.10/mplfinance>=0.12.10b0/' requirements.txt && \
+    pip install --no-cache-dir -r requirements.txt \
+    fastapi uvicorn bcrypt \
     && rm -rf /root/.cache/pip
 
 # 复制后端代码
