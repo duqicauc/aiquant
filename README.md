@@ -80,21 +80,47 @@ cp env_template.txt .env
 #   API 文档: http://localhost:8000/docs
 ```
 
-### 方式二: 腾讯云轻量服务器一键部署 ⭐
+### 方式二: Docker 部署（推荐 ⭐）
 
+**本地开发**
 ```bash
-# 1. 购买腾讯云轻量服务器（推荐 2核4G 及以上，Ubuntu 22.04）
-# 2. 在控制台防火墙中放通 TCP 80 端口
-# 3. SSH 登录服务器，执行:
+# 一键启动（前后端统一容器）
+docker compose up --build
 
-wget -O deploy.sh https://raw.githubusercontent.com/javaadu/aiquant/main/scripts/deploy/tencent_lighthouse.sh
+# 访问: http://localhost
+```
+
+**腾讯云轻量服务器**
+```bash
+# 1. 购买服务器（推荐 2核4G+，Ubuntu 22.04）
+# 2. 放通防火墙 TCP 80 端口
+# 3. SSH 登录后执行:
+
+wget -O deploy.sh https://raw.githubusercontent.com/javaadu/aiquant/main/scripts/deploy/tencent_lighthouse_docker.sh
 chmod +x deploy.sh
 ./deploy.sh
 
 # 部署完成后访问: http://<服务器公网IP>
 ```
 
-部署架构: **Nginx + FastAPI + React 静态文件 + SQLite**
+**Docker 优势**: 环境完全一致、无需安装 Node/Python、一键更新
+
+```bash
+# 常用命令
+docker compose up -d          # 后台启动
+docker compose logs -f        # 查看日志
+docker compose restart        # 重启
+docker compose down           # 停止
+git pull && docker compose up -d --build   # 更新代码
+```
+
+### 方式三: 裸机部署（传统）
+
+```bash
+wget -O deploy.sh https://raw.githubusercontent.com/javaadu/aiquant/main/scripts/deploy/tencent_lighthouse.sh
+chmod +x deploy.sh
+./deploy.sh
+```
 
 ### 3. 一键训练模型（使用25年历史数据）
 

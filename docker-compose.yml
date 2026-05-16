@@ -1,39 +1,28 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  aiquant-api:
-    build: .
-    container_name: aiquant-api
-    command: >
-      bash -c "python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+  aiquant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aiquant
     ports:
-      - "8000:8000"
+      - "80:80"
     volumes:
+      # 数据持久化（SQLite、缓存、预测结果、回测结果）
       - ./data:/app/data
+      # 日志持久化
       - ./logs:/app/logs
-      - ./.env:/app/.env
+      # 环境变量（外部挂载，方便修改不重建镜像）
+      - ./.env:/app/.env:ro
     environment:
       - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost/api/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
+      start_period: 10s
       retries: 3
-
-  aiquant-dashboard:
-    build: .
-    container_name: aiquant-dashboard
-    command: >
-      bash -c "python3 src/dashboard/app.py"
-    ports:
-      - "8050:8050"
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./.env:/app/.env
-    environment:
-      - PYTHONPATH=/app
-    restart: unless-stopped
-    depends_on:
-      - aiquant-api
