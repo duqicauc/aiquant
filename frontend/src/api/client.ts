@@ -99,6 +99,21 @@ export const backtestApi = {
   report: (id: string) => client.get(`/api/backtest/${id}/report`),
   daily: (id: string) => client.get(`/api/backtest/${id}/daily`),
   transactions: (id: string) => client.get(`/api/backtest/${id}/transactions`),
+  metrics: (id: string) => client.get(`/api/backtest/${id}/metrics`),
+}
+
+// Strategy API
+export const strategyApi = {
+  list: () => client.get('/api/strategy/strategies'),
+  create: (data: any) => client.post('/api/strategy/strategies', data),
+  get: (id: string) => client.get(`/api/strategy/strategies/${id}`),
+  update: (id: string, data: any) => client.put(`/api/strategy/strategies/${id}`, data),
+  delete: (id: string) => client.delete(`/api/strategy/strategies/${id}`),
+  schema: (type: string) => client.get(`/api/strategy/strategies/schema/${type}`),
+  backtest: (id: string, data: any) => client.post(`/api/strategy/strategies/${id}/backtest`, data),
+  scan: (id: string, data: any) => client.post(`/api/strategy/strategies/${id}/scan`, data),
+  scanProgress: (jobId: string) => client.get(`/api/strategy/strategies/scan/${jobId}`),
+  scanJobs: () => client.get('/api/strategy/strategies/scan'),
 }
 
 // Watchlist API

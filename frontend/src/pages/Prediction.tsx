@@ -1,6 +1,6 @@
 import {
   Card, Table, Tag, Row, Col, Select, Button, Space, Tooltip,
-  Tabs, Empty, Statistic
+  Tabs, Statistic
 } from 'antd'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -133,7 +133,6 @@ function UsageGuide() {
         <div style={{ color: '#c9d1d9', fontSize: '0.8rem', lineHeight: 1.6, marginTop: 8 }}>
           <div><strong>今日推荐</strong>：展示模型最新交易日推荐的股票，按预测概率排序。</div>
           <div style={{ marginTop: 4 }}><strong>跟踪验证</strong>：默认展示上一个交易日的推荐，查看实际收益表现（1天/5天）。</div>
-          <div style={{ marginTop: 4 }}><strong>起爆精选</strong>：扫描近N天内推荐后出现起爆/突破信号的股票，用于深度分析是否追入。</div>
           <div style={{ marginTop: 4 }}><strong>概率分位</strong>：按当日全市场概率从高到低排序，Top 10% 为极高置信度。</div>
         </div>
       )}
@@ -171,12 +170,6 @@ export default function Prediction() {
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false)
   const [showBullStageOnly, setShowBullStageOnly] = useState(false)
   const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
-
-  // ── Tab: Explosion ──
-  const [explosionData, setExplosionData] = useState<any[]>([])
-  const [explosionLoading, setExplosionLoading] = useState(false)
-  const [explosionDays, setExplosionDays] = useState(7)
-  const [explosionSignal, setExplosionSignal] = useState<string>('all')
 
   // ── Tab: History ──
   const [historyData, setHistoryData] = useState<WatchlistRecord[]>([])
@@ -254,25 +247,6 @@ export default function Prediction() {
       .finally(() => setTrackLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, trackTopN, minProb, sortBy])
-
-  // ── Fetch explosion stocks ──
-  const fetchExplosion = () => {
-    setExplosionLoading(true)
-    watchlistApi
-      .explosion(explosionDays, explosionSignal === 'all' ? undefined : explosionSignal)
-      .then((res) => {
-        setExplosionData(res.data?.data || [])
-      })
-      .catch(() => {})
-      .finally(() => setExplosionLoading(false))
-  }
-
-  useEffect(() => {
-    if (activeTab === 'explosion') {
-      fetchExplosion()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, explosionDays, explosionSignal])
 
   // ── Fetch history ──
   const fetchHistory = () => {
@@ -689,94 +663,8 @@ export default function Prediction() {
     },
   ]
 
-  // ── Explosion columns ──
-  const explosionColumns = [
-    {
-      title: '股票', key: 'stock', width: 140,
-      render: (_: any, r: any) => (
-        <div>
-          <a style={{ color: '#58a6ff', cursor: 'pointer', fontSize: '0.875rem' }} onClick={() => navigate(`/research?code=${r.ts_code}`)}>
-            {r.ts_code}
-          </a>
-          <div style={{ color: '#8b949e', fontSize: '0.75rem' }}>{r.name || '-'}</div>
-          <div style={{ color: '#6e7681', fontSize: '0.7rem' }}>{r.industry || '-'}</div>
-        </div>
-      ),
-    },
-    {
-      title: '预测日期', key: 'pred_date', width: 90,
-      render: (_: any, r: any) => <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>{formatDate(r.prediction_date)}</span>,
-    },
-    {
-      title: '预测概率', key: 'prob', width: 80,
-      render: (_: any, r: any) => {
-        const pct = (r.prob * 100).toFixed(1)
-        return <Tag color={parseFloat(pct) > 70 ? 'green' : parseFloat(pct) > 50 ? 'blue' : 'default'}>{pct}%</Tag>
-      },
-    },
-    {
-      title: '信号', key: 'signal', width: 90,
-      render: (_: any, r: any) => (
-        <Space size={2}>
-          {r.is_explosion && <Tag color="red" style={{ fontSize: '0.7rem', padding: '0 4px' }}>🚀 起爆</Tag>}
-          {r.is_breakout && <Tag color="blue" style={{ fontSize: '0.7rem', padding: '0 4px' }}>📈 突破</Tag>}
-        </Space>
-      ),
-    },
-    {
-      title: '起爆详情', key: 'detail', width: 150,
-      render: (_: any, r: any) => <span style={{ color: '#c9d1d9', fontSize: '0.75rem' }}>{r.breakout_detail || '-'}</span>,
-    },
-    {
-      title: '首次入选', key: 'first_entry', width: 85,
-      render: (_: any, r: any) => {
-        const d = r.first_entry_date
-        const fmt = (s: string) => s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : '-'
-        const probText = r.first_entry_prob ? ` (概率 ${(r.first_entry_prob * 100).toFixed(1)}%)` : ''
-        return (
-          <Tooltip title={d ? `首次入选: ${fmt(d)}${probText}` : '未入选'}>
-            <div>
-              <span style={{ fontSize: '0.8rem', color: d ? '#58a6ff' : '#8b949e' }}>{fmt(d || '')}</span>
-              {d && <div style={{ fontSize: '0.65rem', color: '#6e7681' }}>{r.holding_days}天</div>}
-            </div>
-          </Tooltip>
-        )
-      },
-    },
-    {
-      title: '持有收益', key: 'cum_ret', width: 85,
-      render: (_: any, r: any) => {
-        const v = r.cumulative_return
-        if (v === undefined || v === null) return <span style={{ color: '#8b949e' }}>-</span>
-        return (
-          <Tooltip title={r.max_drawdown !== undefined ? `最大回撤: ${r.max_drawdown.toFixed(1)}%` : ''}>
-            <span style={{ color: v >= 0 ? '#f85149' : '#3fb950', fontWeight: 500, fontSize: '0.8rem' }}>
-              {v >= 0 ? '+' : ''}{v.toFixed(1)}%
-            </span>
-          </Tooltip>
-        )
-      },
-    },
-    {
-      title: '预测后收益', key: 'return', width: 90,
-      render: (_: any, r: any) => {
-        const v = r.total_return
-        return <span style={{ color: (v ?? 0) >= 0 ? '#f85149' : '#3fb950', fontWeight: 500 }}>{v >= 0 ? '+' : ''}{v?.toFixed(2)}%</span>
-      },
-    },
-    {
-      title: '操作', key: 'action', width: 80,
-      render: (_: any, r: any) => (
-        <Button size="small" onClick={() => navigate(`/research?code=${r.ts_code}`)}
-          style={{ background: '#1f4d7a', borderColor: '#30363d', color: '#c9d1d9', fontSize: '0.7rem' }}>深度研究</Button>
-      ),
-    },
-  ]
-
   const explosionCount = trackData.filter((d) => d.is_explosion).length
   const breakoutCount = trackData.filter((d) => d.is_breakout).length
-
-
 
   // ── JSX Return ──
   return (
@@ -1021,51 +909,6 @@ export default function Prediction() {
                     size="small"
                     rowKey={(r: any) => r.ts_code}
                   />
-                </Card>
-              </div>
-            ),
-          },
-          {
-            key: 'explosion',
-            label: '🚀 起爆精选',
-            children: (
-              <div>
-                {/* Time window filter */}
-                <Card size="small" style={{ background: '#0d1117', borderColor: '#30363d', marginBottom: '1rem' }} bodyStyle={{ padding: '10px 16px' }}>
-                  <Row gutter={[16, 8]}>
-                    <Col span={6}>
-                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>时间窗口</div>
-                      <Select value={explosionDays} onChange={(v) => setExplosionDays(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
-                        <Option value={3}>近3天</Option>
-                        <Option value={7}>近7天</Option>
-                        <Option value={14}>近14天</Option>
-                        <Option value={30}>近30天</Option>
-                      </Select>
-                    </Col>
-                    <Col span={6}>
-                      <div style={{ color: '#8b949e', fontSize: '0.75rem', marginBottom: 4 }}>信号类型</div>
-                      <Select value={explosionSignal} onChange={(v) => setExplosionSignal(v)} style={{ width: '100%' }} dropdownStyle={{ background: '#21262d' }}>
-                        <Option value="all">全部信号</Option>
-                        <Option value="explosion">只看起爆 🚀</Option>
-                        <Option value="breakout">只看突破 📈</Option>
-                      </Select>
-                    </Col>
-                  </Row>
-                </Card>
-
-                <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
-                  {explosionData.length === 0 && !explosionLoading ? (
-                    <Empty description={<span style={{ color: '#8b949e' }}>近{explosionDays}天内暂无起爆/突破信号的股票</span>} />
-                  ) : (
-                    <Table
-                      dataSource={explosionData}
-                      columns={explosionColumns}
-                      loading={explosionLoading}
-                      pagination={{ pageSize: 20 }}
-                      size="small"
-                      rowKey={(r: any) => `${r.ts_code}-${r.prediction_date}`}
-                    />
-                  )}
                 </Card>
               </div>
             ),

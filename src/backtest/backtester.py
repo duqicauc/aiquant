@@ -118,9 +118,12 @@ class StrategyBacktester:
         log.info("=" * 80)
 
         capital = self.initial_capital
-        holdings = {}  # {ts_code: {qty, cost, buy_date, peak_price}}
+        holdings = {}  # {ts_code: {qty, cost, buy_date, peak_price, name}}
         transactions = []
         daily_values = []
+
+        # Build global name map from all prediction files
+        name_map = {}
 
         for i, date in enumerate(trade_dates):
             signal_date = trade_dates[i - 1] if i > 0 else date
@@ -130,6 +133,14 @@ class StrategyBacktester:
             if pred_df.empty:
                 log.warning(f"  {signal_date} 无预测结果")
                 continue
+
+            # Build name map for this date
+            if "ts_code" in pred_df.columns and "name" in pred_df.columns:
+                for _, r in pred_df.iterrows():
+                    code = r.get("ts_code")
+                    name = r.get("name")
+                    if pd.notna(code) and pd.notna(name) and str(name).strip():
+                        name_map[str(code)] = str(name)
 
             top10 = pred_df.head(self.top_n_buy)
             target_codes = set(top10["ts_code"].tolist())
@@ -168,8 +179,9 @@ class StrategyBacktester:
                     amount = sell_price * qty
                     capital += amount
                     profit = (sell_price - cost) * qty
+                    stock_name = name_map.get(ts_code, ts_code)
                     transactions.append({
-                        "date": date, "ts_code": ts_code, "action": "SELL",
+                        "date": date, "ts_code": ts_code, "name": stock_name, "action": "SELL",
                         "price": sell_price, "qty": qty, "amount": amount,
                         "profit": profit, "reason": f"止损({profit_pct:.1f}%)"
                     })
@@ -192,8 +204,9 @@ class StrategyBacktester:
                                     amount = sell_price * qty
                                     capital += amount
                                     profit = (sell_price - cost) * qty
+                                    stock_name = name_map.get(ts_code, ts_code)
                                     transactions.append({
-                                        "date": date, "ts_code": ts_code, "action": "SELL",
+                                        "date": date, "ts_code": ts_code, "name": stock_name, "action": "SELL",
                                         "price": sell_price, "qty": qty, "amount": amount,
                                         "profit": profit, "reason": "MA5退出(跌出Top50)"
                                     })
@@ -232,14 +245,16 @@ class StrategyBacktester:
                     continue
 
                 capital -= total_cost
+                stock_name = name_map.get(ts_code, ts_code)
                 holdings[ts_code] = {
                     "qty": qty,
                     "cost": buy_price,
                     "buy_date": date,
                     "peak_price": buy_price,
+                    "name": stock_name,
                 }
                 transactions.append({
-                    "date": date, "ts_code": ts_code, "action": "BUY",
+                    "date": date, "ts_code": ts_code, "name": stock_name, "action": "BUY",
                     "price": buy_price, "qty": qty, "amount": total_cost,
                     "profit": 0, "reason": "进入Top10"
                 })

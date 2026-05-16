@@ -18,6 +18,46 @@ class Base(DeclarativeBase):
 
 
 # ============================================================================
+# 策略管理相关表
+# ============================================================================
+
+class Strategy(Base):
+    """策略模板表"""
+
+    __tablename__ = "strategies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    strategy_type: Mapped[str] = mapped_column(String(50), default="standard")  # standard / realistic / vbt
+    params_json: Mapped[str] = mapped_column(Text, default="{}")  # JSON 序列化的参数字典
+    prediction_dir: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BacktestJob(Base):
+    """回测任务表（单次回测 + 网格扫描）"""
+
+    __tablename__ = "backtest_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    strategy_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("strategies.id"), nullable=True)
+    job_type: Mapped[str] = mapped_column(String(20), default="single")  # single / scan
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending / running / success / failed
+    start_date: Mapped[str] = mapped_column(String(8), nullable=False)
+    end_date: Mapped[str] = mapped_column(String(8), nullable=False)
+    params_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    scan_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 网格扫描配置 JSON
+    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 结果摘要 JSON
+    result_dir: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+# ============================================================================
 # 调度器相关表
 # ============================================================================
 
