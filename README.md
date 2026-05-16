@@ -1,11 +1,14 @@
-# AIQuant v3.0 - 专业量化交易系统 🚀
+# AIQuant v5.0 - 专业量化交易系统 🚀
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/yourusername/aiquant)
-[![Python](https://img.shields.io/badge/python-3.8+-green.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/javaadu/aiquant)
+[![Python](https://img.shields.io/badge/python-3.12-green.svg)](https://www.python.org/)
+[![Node](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
 
-> 基于机器学习的A股量化选股系统，集数据采集、特征工程、模型训练、自动预测、风险控制于一体
+> 基于机器学习的A股量化选股系统，集数据采集、特征工程、模型训练、自动预测、策略回测、风险控制于一体
+>
+> 🖥️ **全新 Web 界面**: React 19 + Vite + Ant Design 6 + ECharts，专业级量化投研体验
 
 ---
 
@@ -14,18 +17,34 @@
 ### 📊 完整的量化交易工作流
 - **数据采集** - Tushare Pro深度集成，25年历史数据
 - **样本生成** - 正负样本自动筛选，3000+高质量样本
-- **特征工程** - 34天滚动窗口，多维度技术指标
-- **模型训练** - XGBoost时间序列分割，避免未来函数
-- **模型验证** - Walk-Forward验证，评估稳定性
+- **特征工程** - 34天滚动窗口，多维度技术指标（80+ Tushare 原子因子）
+- **模型训练** - XGBoost/LightGBM/CatBoost 时间序列分割，避免未来函数
+- **模型验证** - Walk-Forward验证，5折时间序列 CV
 - **股票评分** - 每周自动预测，Top 50推荐
-- **风险管理** - 多层筛选，智能风控
+- **风险管理** - 多层筛选，智能风控，硬止损机制
+
+### 🖥️ 全新 Web 界面（React 19 + FastAPI）
+- **市场分析** - 实时行情、板块热度、资金流向
+- **股票研究** - 单股诊断、财务分析、技术信号
+- **预测系统** - 今日推荐、跟踪验证、概率分位
+- **量化实验室** - 策略管理、回测结果、参数调优
+- **运维中心** - 任务调度、系统监控、日志审计
+- **AI 助手** - 智能问答、策略解读、报告生成
+- **深色主题** - 专业终端风格，聚宽/米筐级视觉体验
 
 ### 🤖 自动化系统
 - **定期预测** - 每周自动选股，生成详细报告
 - **模型更新** - 定期检查，自动重训练
 - **预测回顾** - 自动评估历史胜率
-- **网络监控** - 自动检测VPN中断并恢复
-- **任务调度** - 一键启动所有自动化任务
+- **网络监控** - 自动检测网络中断并恢复
+- **任务调度** - APScheduler 驱动的定时任务系统
+
+### 🔄 策略回测引擎
+- **标准化回测** - StrategyBacktester，参数化策略配置
+- **参数调优** - 网格扫描 + 最优组合高亮
+- **结果可视化** - 净值曲线、动态回撤、交易明细、Markdown 报告
+- **多回测对比** - 净值曲线叠加、指标对比表
+- **交易成本** - 滑点、手续费、印花税全纳入
 
 ### 🛡️ 企业级特性
 - **配置管理** - 集中式YAML配置，一改全改
@@ -39,22 +58,45 @@
 
 ## 🚀 快速开始
 
-### 1. 环境准备
+### 方式一: 本地开发
 
 ```bash
-# 克隆项目
-git clone https://github.com/yourusername/aiquant.git
+# 1. 克隆项目
+git clone https://github.com/javaadu/aiquant.git
 cd aiquant
 
-# 安装依赖
+# 2. 安装 Python 依赖
 pip install -r requirements.txt
 
-# 配置环境变量
+# 3. 配置环境变量
 cp env_template.txt .env
-# 编辑 .env，填入你的 TUSHARE_TOKEN
+# 编辑 .env，填入你的 TUSHARE_TOKEN（https://tushare.pro/register）
+
+# 4. 启动完整系统（API + 前端）
+./start_all.sh
+
+# 访问:
+#   Web 界面: http://localhost:5173
+#   API 文档: http://localhost:8000/docs
 ```
 
-### 2. 一键训练模型（使用25年历史数据）
+### 方式二: 腾讯云轻量服务器一键部署 ⭐
+
+```bash
+# 1. 购买腾讯云轻量服务器（推荐 2核4G 及以上，Ubuntu 22.04）
+# 2. 在控制台防火墙中放通 TCP 80 端口
+# 3. SSH 登录服务器，执行:
+
+wget -O deploy.sh https://raw.githubusercontent.com/javaadu/aiquant/main/scripts/deploy/tencent_lighthouse.sh
+chmod +x deploy.sh
+./deploy.sh
+
+# 部署完成后访问: http://<服务器公网IP>
+```
+
+部署架构: **Nginx + FastAPI + React 静态文件 + SQLite**
+
+### 3. 一键训练模型（使用25年历史数据）
 
 ```bash
 # 启动模型训练（包含网络监控保护）
@@ -66,25 +108,6 @@ tail -f logs/retrain_*.log
 ```
 
 预计耗时：**3-6小时**（处理5000+股票 × 25年数据）
-
-### 3. 预测股票
-
-```bash
-# 使用训练好的模型预测当前市场
-python scripts/score_current_stocks.py
-
-# 查看结果
-cat data/predictions/*/prediction_report_*.txt
-```
-
-输出：Top 50 推荐股票 + 详细分析报告
-
-### 4. 启动自动化系统（可选）
-
-```bash
-# 每周自动预测 + 定期模型更新
-python scripts/scheduler.py
-```
 
 ---
 
@@ -536,79 +559,97 @@ data/
 ```
 aiquant/
 ├── config/                      # 配置文件
-│   ├── settings.yaml           # 集中式配置 🆕
+│   ├── settings.yaml           # 集中式配置
 │   ├── config.py               # 配置加载
 │   ├── database.py             # 数据库配置
-│   └── data_source.py          # 数据源配置
+│   ├── models.yaml             # 模型参数配置
+│   └── market_regime.yaml      # 市场状态配置
 │
-├── src/                        # 核心源代码（39个Python文件）
-│   │                           # 可复用的业务逻辑模块，被scripts导入使用
+├── src/                        # 核心源代码
+│   ├── api/                    # FastAPI REST API
+│   │   ├── main.py             # API 入口
+│   │   └── routers/            # 路由模块
+│   │       ├── auth.py, admin.py, market.py, stock.py
+│   │       ├── prediction.py, backtest.py, strategy.py
+│   │       ├── trading.py, watchlist.py, scheduler.py
+│   │       ├── system.py, etf.py, hotspot.py
+│   │       ├── weak_to_strong.py, limit_premium_predict.py
+│   │       └── ai_agent.py
+│   │
 │   ├── data/                   # 数据管理模块
-│   │   ├── fetcher/           # 数据获取（TushareFetcher等）
-│   │   ├── storage/           # 数据存储（CacheManager等）
-│   │   └── data_manager.py    # 统一数据访问接口
+│   │   ├── fetcher/           # 数据获取
+│   │   ├── storage/           # 数据存储
+│   │   └── data_manager.py    # 统一数据访问
 │   │
 │   ├── strategy/               # 策略模块
-│   │   ├── screening/         # 筛选器
-│   │   │   ├── positive_sample_screener.py
-│   │   │   └── negative_sample_screener_v2.py
+│   │   ├── screening/         # 正负样本筛选器
 │   │   ├── portfolio/         # 组合管理
 │   │   └── timing/            # 择时策略
 │   │
-│   ├── models/                 # 模型模块
-│   ├── utils/                  # 工具函数（日志、日期、限流等）
+│   ├── models/                 # 机器学习模型
+│   ├── features/               # 特征工程
+│   ├── backtest/               # 回测引擎
+│   │   ├── backtester.py      # StrategyBacktester
+│   │   └── engine_adapter.py  # 引擎适配层
+│   │
 │   ├── analysis/               # 分析模块
-│   ├── backtest/               # 回测模块
+│   ├── monitoring/             # 监控模块
+│   ├── scheduler/              # 任务调度（APScheduler）
+│   │   ├── models.py          # Strategy/BacktestJob ORM
+│   │   └── service.py         # SchedulerService
+│   │
+│   ├── utils/                  # 工具函数
 │   └── visualization/          # 可视化模块
 │
-├── scripts/                    # 可执行脚本（27个Python脚本）
-│   │                           # 项目入口，导入src模块完成具体任务
-│   ├── prepare_positive_samples.py      # 正样本
-│   ├── prepare_negative_samples_v2.py   # 负样本V2
-│   ├── check_sample_quality.py          # 质量检查
-│   ├── train_xgboost_timeseries.py      # 模型训练
-│   ├── walk_forward_validation.py       # Walk-Forward验证 🆕
-│   ├── score_current_stocks.py          # 股票评分 🆕
-│   ├── weekly_prediction.py             # 周预测 🆕
-│   ├── review_predictions.py            # 预测回顾 🆕
-│   ├── check_model_update.py            # 模型更新检查 🆕
-│   ├── scheduler.py                     # 任务调度 🆕
-│   ├── update_model_pipeline.sh         # 模型更新流程
-│   ├── update_model_pipeline_with_monitor.sh  # 带监控的更新 🆕
-│   └── utils/
-│       ├── network_monitor.py           # 网络监控 🆕
-│       └── data_backup_manager.py       # 数据备份管理 🆕
+├── frontend/                   # React 19 前端
+│   ├── src/
+│   │   ├── api/client.ts      # Axios API 客户端
+│   │   ├── pages/             # 页面组件
+│   │   │   ├── QuantLab.tsx   # 量化实验室（策略回测）
+│   │   │   ├── OpsCenter.tsx  # 运维中心
+│   │   │   ├── Prediction.tsx # 预测系统
+│   │   │   ├── Overview.tsx   # 市场概览
+│   │   │   ├── Market.tsx     # 市场分析
+│   │   │   ├── Research.tsx   # 股票研究
+│   │   │   ├── AIAssistantPage.tsx
+│   │   │   └── ...
+│   │   ├── router/index.tsx   # React Router
+│   │   └── index.css          # 全局样式
+│   ├── dist/                  # 构建产物（生产）
+│   ├── package.json
+│   └── vite.config.ts
 │
-├── data/                       # 数据目录（0个Python文件，只有数据）
-│   │                           # 所有数据文件，不包含任何代码
-│   ├── training/              # 模型训练相关数据
-│   │   ├── samples/          # 训练样本（CSV、JSON）
-│   │   ├── features/         # 特征数据（CSV）
-│   │   ├── models/           # 训练好的模型（JSON）
-│   │   ├── metrics/          # 评估指标（JSON）
-│   │   └── charts/           # 可视化图表（PNG、HTML）
-│   │
-│   ├── prediction/            # 实际预测相关数据
-│   │   ├── results/         # 预测结果（CSV、TXT）
-│   │   ├── metadata/        # 预测元数据（JSON）
-│   │   ├── analysis/        # 准确率分析（CSV、JSON、TXT）
-│   │   └── history/         # 历史预测归档
-│   │
+├── scripts/                    # 可执行脚本
+│   ├── prepare_positive_samples.py
+│   ├── prepare_negative_samples_v2.py
+│   ├── train_xgboost_timeseries.py
+│   ├── walk_forward_validation.py
+│   ├── score_current_stocks.py
+│   ├── weekly_prediction.py
+│   ├── scheduler.py
+│   ├── deploy/                # 部署脚本 🆕
+│   │   ├── tencent_lighthouse.sh
+│   │   └── update.sh
+│   └── utils/
+│
+├── data/                       # 数据目录
+│   ├── training/              # 训练数据
+│   ├── prediction/            # 预测结果
+│   ├── results/               # 回测结果
+│   ├── database/              # SQLite 数据库
+│   │   └── aiquant.db
 │   └── cache/                 # 数据缓存
-│       └── quant_data.db     # SQLite缓存数据库
 │
 ├── logs/                       # 日志文件
-│   ├── aiquant.log           # 主日志
-│   ├── retrain_*.log         # 训练日志
-│   └── network_monitor_*.log  # 监控日志 🆕
-│
 ├── docs/                       # 文档目录
-├── tests/                      # 测试代码（待补充）
-│   └── __init__.py            # 目前基本为空，需要添加测试
+├── tests/                      # 测试代码
 ├── notebooks/                  # Jupyter notebooks
-├── requirements.txt            # 依赖列表
-├── .env                        # 环境变量
-└── README.md                   # 本文件
+├── requirements.txt            # Python 依赖
+├── Dockerfile                  # Docker 镜像
+├── start_all.sh               # 本地一键启动
+├── stop_all.sh                # 本地一键停止
+├── app.py                     # Streamlit 面板（已废弃）
+└── README.md                  # 本文件
 ```
 
 ---
@@ -833,7 +874,7 @@ Get-Content -Path ".\logs\aiquant.log" -Tail 10 -Encoding UTF8
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/aiquant.git
+git clone https://github.com/javaadu/aiquant.git
 
 # 创建分支
 git checkout -b feature/your-feature
@@ -856,41 +897,60 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 📞 联系方式
 
-- **作者**: Your Name
-- **邮箱**: your.email@example.com
-- **GitHub**: https://github.com/yourusername/aiquant
-- **文档**: https://aiquant.readthedocs.io
+- **作者**: javaadu
+- **GitHub**: https://github.com/javaadu/aiquant
 
 ---
 
 ## 🎯 路线图
 
-### v3.0 (当前版本) ✅
+### v5.0 (当前版本) ✅
+- [x] React 19 + Vite + Ant Design 6 全新 Web 界面
+- [x] FastAPI REST API 后端（12+ 路由模块）
+- [x] 策略管理（CRUD + 参数配置 + 回测执行）
+- [x] 回测引擎（标准化策略 + 参数网格扫描）
+- [x] 回测结果可视化（净值曲线、回撤、交易明细、Markdown 报告）
+- [x] 运维中心（任务调度、系统监控、日志审计）
+- [x] AI 助手（智能问答、策略解读）
 - [x] 25年历史数据训练
-- [x] 配置管理系统
-- [x] 数据备份系统
+- [x] 配置管理系统（YAML）
+- [x] 数据备份系统（SQLite + CSV）
 - [x] 网络监控与恢复
-- [x] 自动化调度系统
+- [x] 自动化调度系统（APScheduler）
 - [x] Walk-Forward验证
 - [x] 预测报告生成
+- [x] 腾讯云轻量服务器一键部署
 
-### v3.1 (计划中)
-- [ ] Web界面
-- [ ] 实时监控面板
-- [ ] 更多技术指标
-- [ ] 多策略支持
-- [ ] 组合优化
+### v5.1 (计划中)
+- [ ] HTTPS + 域名配置向导
+- [ ] 多因子模型（深度集成）
+- [ ] 实时行情 WebSocket 推送
+- [ ] 组合优化（马科维茨 / 风险平价）
+- [ ] 更多技术指标（100+）
 
-### v4.0 (未来)
-- [ ] 深度学习模型
-- [ ] 情绪分析
-- [ ] 新闻事件驱动
-- [ ] 高频交易支持
-- [ ] 云端部署
+### v6.0 (未来)
+- [ ] 深度学习模型（LSTM/Transformer）
+- [ ] 情绪分析（新闻/舆情）
+- [ ] 事件驱动策略
+- [ ] 高频数据支持
+- [ ] 多账户实盘交易
 
 ---
 
 ## 📊 更新日志
+
+### v5.0.0 (2026-05)
+- **全新界面**: React 19 + Vite + Ant Design 6 + ECharts 专业级 Web 界面
+- **新增**: 量化实验室（策略管理 + 回测结果 + 参数调优）
+- **新增**: StrategyBacktester 标准化回测引擎
+- **新增**: 参数网格扫描 + 最优组合高亮
+- **新增**: 回测结果可视化（净值曲线、动态回撤、交易明细、Markdown 报告）
+- **新增**: 运维中心（任务调度、系统监控、日志审计）
+- **新增**: FastAPI 策略管理 API（CRUD + 单次回测 + 网格扫描）
+- **新增**: 腾讯云轻量服务器一键部署脚本
+- **新增**: 生产环境一键更新脚本
+- **改进**: 净值/回撤分开展示，参考聚宽/米筐视觉效果
+- **改进**: 交易记录带股票名称，红涨绿跌 A 股惯例
 
 ### v3.0.0 (2025-12-24)
 - **重大更新**: 使用2000年以来25年历史数据
