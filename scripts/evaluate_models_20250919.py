@@ -8,13 +8,14 @@
     python scripts/evaluate_models_20250919.py
 """
 
-import sys
 import os
+import sys
 import warnings
-import pandas as pd
-import numpy as np
 from datetime import timedelta
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -24,7 +25,6 @@ from sklearn.metrics import roc_auc_score
 
 from src.data.data_manager import DataManager
 from src.utils.logger import log
-
 
 # 评估日期配置
 PREDICTION_DATE = "20250919"  # 预测日期
@@ -197,7 +197,6 @@ def train_model(df_features, model_params):
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
     # 验证集评估
-    y_pred = model.predict(X_val)
     y_prob = model.predict_proba(X_val)[:, 1]
     auc = roc_auc_score(y_val, y_prob)
 

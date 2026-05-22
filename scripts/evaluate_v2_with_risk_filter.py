@@ -11,15 +11,15 @@ V2.1.0模型评估 - 带风险过滤后处理
 4. 排除距离历史高点过近的股票（可能遇阻）
 """
 
-import sys
-import json
 import argparse
+import json
+import sys
 import warnings
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import xgboost as xgb
 
 # 抑制警告
@@ -30,8 +30,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.logger import log
 from src.data.data_manager import DataManager
+from src.utils.logger import log
 
 
 def load_model(version):
@@ -626,9 +626,10 @@ def main():
     log.info(f"\n带过滤 Top {args.top_n} 股票（按调整后概率）:")
     for i, (_, row) in enumerate(df_top_filtered.head(10).iterrows()):
         risk_info = f"[{row['risk_reasons']}]" if row["risk_reasons"] else ""
-        log.info(
-            f"  {row['ts_code']} {row['name']}: 调整后{row['adjusted_probability']:.4f} (原始{row['raw_probability']:.4f}, 风险{row['risk_score']:.2f}) {risk_info}"
-        )
+        ap = row["adjusted_probability"]
+        rp = row["raw_probability"]
+        rs = row["risk_score"]
+        log.info(f"  {row['ts_code']} {row['name']}: 调整后{ap:.4f} (原始{rp:.4f}, 风险{rs:.2f}) {risk_info}")
 
     # 评估带过滤结果
     df_eval_filtered = evaluate_predictions(dm, df_top_filtered, args.eval_date, "v2.1.0_filtered")
@@ -650,9 +651,9 @@ def main():
         log.info(
             f"| 平均收益率 | {stats_raw['avg_return']:.2f}% | {stats_filtered['avg_return']:.2f}% | {avg_diff:+.2f}% |"
         )
-        log.info(
-            f"| 中位数收益 | {stats_raw['median_return']:.2f}% | {stats_filtered['median_return']:.2f}% | {median_diff:+.2f}% |"
-        )
+        raw_med = stats_raw["median_return"]
+        fil_med = stats_filtered["median_return"]
+        log.info(f"| 中位数收益 | {raw_med:.2f}% | {fil_med:.2f}% | {median_diff:+.2f}% |")
         log.info(f"| 胜率 | {stats_raw['win_rate']:.1f}% | {stats_filtered['win_rate']:.1f}% | {win_diff:+.1f}% |")
         log.info(f"| 最高收益 | {stats_raw['max_return']:.2f}% | {stats_filtered['max_return']:.2f}% | - |")
         log.info(f"| 最低收益 | {stats_raw['min_return']:.2f}% | {stats_filtered['min_return']:.2f}% | - |")
@@ -691,9 +692,8 @@ def main():
             avg_return_out = df_filtered_out["return_pct"].mean()
             log.info(f"  这些股票的平均收益: {avg_return_out:.2f}%")
             for _, row in df_filtered_out.iterrows():
-                log.info(
-                    f"    {row['ts_code']} {row['name']}: 收益{row['return_pct']:.2f}%, 风险[{row.get('risk_reasons', '')}]"
-                )
+                rr = row.get("risk_reasons", "")
+                log.info(f"    {row['ts_code']} {row['name']}: 收益{row['return_pct']:.2f}%, 风险[{rr}]")
 
     log.info(f"\n过滤后新进入Top50的股票: {len(filtered_in)} 只")
     if filtered_in:

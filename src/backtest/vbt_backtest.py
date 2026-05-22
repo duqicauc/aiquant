@@ -40,10 +40,12 @@ class VBTBacktest:
         prediction_dir: str,
         initial_capital: float = 10_000_000,
         per_stock_amount: float = 300_000,
+        prediction_prefix: str = "predictions_",
     ):
         self.prediction_dir = Path(prediction_dir)
         self.initial_capital = initial_capital
         self.per_stock_amount = per_stock_amount
+        self.prediction_prefix = prediction_prefix
         self.provider = ArcticDataProvider()
 
         if vbt is None:
@@ -51,8 +53,8 @@ class VBTBacktest:
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
-        for suffix in ["_all", "_top100", "_top50", ""]:
-            path = self.prediction_dir / f"predictions_{date}{suffix}.csv"
+        for suffix in ["_all", "_top100", "_top50", "_top20", ""]:
+            path = self.prediction_dir / f"{self.prediction_prefix}{date}{suffix}.csv"
             if path.exists():
                 return pd.read_csv(path)
         return pd.DataFrame()
@@ -134,7 +136,13 @@ class VBTBacktest:
 
         # 构建预测得分矩阵 (dates x assets)
         pred_df["trade_date"] = pd.to_datetime(pred_df["trade_date"])
-        pred_pivot = pred_df.pivot(index="trade_date", columns="ts_code", values="prob")
+        if "prob_cal" in pred_df.columns:
+            prob_col = "prob_cal"
+        elif "prob_fused" in pred_df.columns:
+            prob_col = "prob_fused"
+        else:
+            prob_col = "prob"
+        pred_pivot = pred_df.pivot(index="trade_date", columns="ts_code", values=prob_col)
         pred_pivot = pred_pivot.reindex(index=price_pivot.index, columns=price_pivot.columns)
         pred_pivot = pred_pivot.fillna(-np.inf)
 
@@ -171,7 +179,6 @@ class VBTBacktest:
         trades = portfolio.trades
 
         result = {
-            "portfolio": portfolio,
             "total_return": float(total_return),
             "sharpe_ratio": float(sharpe) if not pd.isna(sharpe) else 0,
             "max_drawdown": float(max_dd) if not pd.isna(max_dd) else 0,

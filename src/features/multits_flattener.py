@@ -61,6 +61,16 @@ def flatten_multits(
     if missing_idx:
         raise ValueError(f"flatten_multits: 缺少必要列 {missing_idx}")
 
+    # 检测并处理重复索引（某些样本在特征提取时可能被重复处理）
+    dup_mask = df.duplicated(subset=idx_cols, keep=False)
+    n_dups = dup_mask.sum()
+    if n_dups > 0:
+        log.warning(
+            f"  发现 {n_dups} 行重复索引 (sample_id + days_to_t1)，"
+            f" 涉及 {df[dup_mask]['sample_id'].nunique()} 个样本，自动去重保留第一条"
+        )
+        df = df.drop_duplicates(subset=idx_cols, keep="first")
+
     df_indexed = df.set_index(idx_cols)[feature_cols]
     df_unstacked = df_indexed.unstack("days_to_t1")
 

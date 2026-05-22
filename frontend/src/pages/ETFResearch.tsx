@@ -91,6 +91,13 @@ interface TechnicalData {
   overall_signal: string
   bullish_score: number
   bearish_score: number
+  opportunity?: {
+    opportunity_score: number
+    recommendation: string
+    confidence: number
+    dimensions: Record<string, { score: number; breakdown: Record<string, any> }>
+    weights: Record<string, number>
+  }
 }
 
 interface ETFThemeTopItem {
@@ -789,21 +796,26 @@ export default function ETFResearch() {
             {
               key: 'score',
               label: '综合评分',
-              children: detailData ? (
+              children: technicalData?.opportunity ? (
                 <div>
                   <Row gutter={12}>
                     <Col span={16}>
                       <Card style={{ background: '#161b22', borderColor: '#30363d' }}>
                         <ReactECharts
                           option={(() => {
-                            const dims = ['收益', '成本', '风险', '流动性', '规模']
-                            const vals = [
-                              Math.min(100, Math.max(0, 50 + (detailData.change_20d || 0) * 2.5)),
-                              Math.min(100, Math.max(0, (2 - (detailData.total_expense || 0)) / 2 * 100)),
-                              Math.min(100, Math.max(0, (30 + (detailData.max_drawdown || 0)) / 30 * 100)),
-                              Math.min(100, Math.max(0, (detailData.avg_amount_20d || 0) / 500000 * 100)),
-                              Math.min(100, Math.max(0, (detailData.estimated_scale || 0) / 5000000 * 100)),
-                            ]
+                            const opp = technicalData.opportunity!
+                            const dims = Object.keys(opp.dimensions).map(k => {
+                              const names: Record<string, string> = {
+                                trend_momentum: '趋势动量',
+                                volume_price: '量价结构',
+                                technical_pattern: '技术形态',
+                                capital_flow: '资金流',
+                                volatility_risk: '波动风险',
+                                mean_reversion: '均值回归',
+                              }
+                              return names[k] || k
+                            })
+                            const vals = Object.values(opp.dimensions).map(d => d.score)
                             return {
                               backgroundColor: 'transparent',
                               animation: false,
@@ -816,7 +828,7 @@ export default function ETFResearch() {
                               },
                               series: [{
                                 type: 'radar',
-                                data: [{ value: vals, name: detailData.ts_code }],
+                                data: [{ value: vals, name: detailData?.ts_code || '' }],
                                 lineStyle: { color: '#58a6ff', width: 2 },
                                 itemStyle: { color: '#58a6ff' },
                                 areaStyle: { color: '#58a6ff', opacity: 0.2 },
@@ -830,40 +842,84 @@ export default function ETFResearch() {
                     <Col span={8}>
                       <Card
                         size="small"
-                        title="评分明细"
+                        title="统一机会评分"
                         style={{ background: '#161b22', borderColor: '#30363d', height: '100%' }}
                         headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d' }}
                       >
-                        <div style={{ marginBottom: 12 }}>
-                          <div style={{ color: '#8b949e', fontSize: 12 }}>收益评分 (20日涨幅)</div>
-                          <div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 500 }}>
-                            {fmtNum(Math.min(100, Math.max(0, 50 + (detailData.change_20d || 0) * 2.5)), 1)}
+                        <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                          <div style={{ color: '#8b949e', fontSize: 12 }}>总分</div>
+                          <div style={{
+                            color: technicalData.opportunity.opportunity_score >= 75 ? '#f85149' :
+                                   technicalData.opportunity.opportunity_score >= 70 ? '#d29922' :
+                                   technicalData.opportunity.opportunity_score >= 60 ? '#58a6ff' : '#8b949e',
+                            fontSize: 36, fontWeight: 700,
+                          }}>
+                            {technicalData.opportunity.opportunity_score.toFixed(1)}
                           </div>
-                        </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <div style={{ color: '#8b949e', fontSize: 12 }}>成本评分 (总费率)</div>
-                          <div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 500 }}>
-                            {fmtNum(Math.min(100, Math.max(0, (2 - (detailData.total_expense || 0)) / 2 * 100)), 1)}
+                          <Tag
+                            color={technicalData.opportunity.recommendation === '强烈买入' ? 'red' :
+                                   technicalData.opportunity.recommendation === '买入' ? 'orange' :
+                                   technicalData.opportunity.recommendation === '关注' ? 'blue' :
+                                   technicalData.opportunity.recommendation === '观望' ? 'default' : 'gray'}
+                            style={{ fontSize: 14, padding: '4px 12px', marginTop: 8 }}
+                          >
+                            {technicalData.opportunity.recommendation}
+                          </Tag>
+                          <div style={{ color: '#6e7681', fontSize: 11, marginTop: 6 }}>
+                            置信度: {(technicalData.opportunity.confidence * 100).toFixed(0)}%
                           </div>
+                          {/* 双轨制展示 */}
+                          {(technicalData.opportunity as any).trend_strength_score !== undefined && (
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 10 }}>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ color: '#8b949e', fontSize: 10 }}>趋势强度</div>
+                                <div style={{ color: '#d29922', fontSize: 14, fontWeight: 600, fontFamily: 'monospace' }}>
+                                  {((technicalData.opportunity as any).trend_strength_score as number).toFixed(1)}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'center' }}>
+                                <div style={{ color: '#8b949e', fontSize: 10 }}>风险折扣</div>
+                                <div style={{ color: '#58a6ff', fontSize: 14, fontWeight: 600, fontFamily: 'monospace' }}>
+                                  {(((technicalData.opportunity as any).risk_discount as number) * 100).toFixed(0)}%
+                                </div>
+                              </div>
+                              {((technicalData.opportunity as any).trend_strength_bonus as number) > 0 && (
+                                <div style={{ textAlign: 'center' }}>
+                                  <div style={{ color: '#8b949e', fontSize: 10 }}>趋势加成</div>
+                                  <div style={{ color: '#3fb950', fontSize: 14, fontWeight: 600, fontFamily: 'monospace' }}>
+                                    +{((technicalData.opportunity as any).trend_strength_bonus as number).toFixed(1)}
+                                  </div>
+                                </div>
+                              )}
+                              {((technicalData.opportunity as any).synergy_bonus as number) > 0 && (
+                                <div style={{ textAlign: 'center' }}>
+                                  <div style={{ color: '#8b949e', fontSize: 10 }}>共振加成</div>
+                                  <div style={{ color: '#3fb950', fontSize: 14, fontWeight: 600, fontFamily: 'monospace' }}>
+                                    +{((technicalData.opportunity as any).synergy_bonus as number).toFixed(1)}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <div style={{ color: '#8b949e', fontSize: 12 }}>风险评分 (最大回撤)</div>
-                          <div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 500 }}>
-                            {fmtNum(Math.min(100, Math.max(0, (30 + (detailData.max_drawdown || 0)) / 30 * 100)), 1)}
-                          </div>
-                        </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <div style={{ color: '#8b949e', fontSize: 12 }}>流动性评分 (20日均成交额)</div>
-                          <div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 500 }}>
-                            {fmtNum(Math.min(100, Math.max(0, (detailData.avg_amount_20d || 0) / 50000 * 100)), 1)}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ color: '#8b949e', fontSize: 12 }}>规模评分 (估算规模)</div>
-                          <div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 500 }}>
-                            {fmtNum(Math.min(100, Math.max(0, (detailData.estimated_scale || 0) / 500000 * 100)), 1)}
-                          </div>
-                        </div>
+                        {Object.entries(technicalData.opportunity.dimensions).map(([key, dim]) => {
+                          const names: Record<string, string> = {
+                            trend_momentum: '趋势动量', volume_price: '量价结构',
+                            technical_pattern: '技术形态', capital_flow: '资金流',
+                            volatility_risk: '波动风险', mean_reversion: '均值回归',
+                          }
+                          return (
+                            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #21262d' }}>
+                              <span style={{ color: '#8b949e', fontSize: 12 }}>{names[key] || key}</span>
+                              <span style={{
+                                color: dim.score >= 75 ? '#f85149' : dim.score >= 70 ? '#d29922' : dim.score >= 60 ? '#58a6ff' : '#8b949e',
+                                fontSize: 14, fontWeight: 600, fontFamily: 'monospace',
+                              }}>
+                                {dim.score.toFixed(1)}
+                              </span>
+                            </div>
+                          )
+                        })}
                       </Card>
                     </Col>
                   </Row>
@@ -1280,9 +1336,9 @@ export default function ETFResearch() {
     }
 
     const getQuadrant = (cs: number, os: number) => {
-      if (cs < 40 && os >= 60) return 'green'
-      if (cs >= 70 && os < 40) return 'red'
-      if (cs >= 70 && os >= 60) return 'yellow'
+      if (cs < 40 && os >= 55) return 'green'
+      if (cs >= 70 && os < 45) return 'red'
+      if (cs >= 70 && os >= 55) return 'yellow'
       return 'blue'
     }
 
@@ -1404,8 +1460,8 @@ ${extra ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">${extra}</di
               const cs = p.data[0]
               const os = p.data[1]
               if (cs >= 70 && os < 40) return '#f85149'
-              if (cs < 40 && os >= 60) return '#3fb950'
-              if (cs >= 70 && os >= 60) return '#d29922'
+              if (cs < 40 && os >= 55) return '#3fb950'
+              if (cs >= 70 && os >= 55) return '#d29922'
               return '#58a6ff'
             },
             opacity: 0.9,
@@ -1474,7 +1530,7 @@ ${extra ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">${extra}</di
         data: sortedByOpp.map(c => ({
           value: c.opportunity_score,
           itemStyle: {
-            color: c.opportunity_score >= 60 ? '#3fb950' : c.opportunity_score >= 35 ? '#d29922' : '#f85149',
+            color: c.opportunity_score >= 70 ? '#3fb950' : c.opportunity_score >= 45 ? '#d29922' : '#f85149',
             borderRadius: [0, 4, 4, 0],
           },
         })),
@@ -1640,7 +1696,75 @@ ${extra ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">${extra}</di
           </Row>
         </Card>
 
-        {/* Layer 4: Sub-theme detail cards grouped by category */}
+        {/* Layer 4: Relative strength ranking */}
+        <Card
+          style={{ background: '#161b22', borderColor: '#30363d', marginBottom: 16 }}
+          bodyStyle={{ padding: '16px' }}
+          title={<span style={{ color: '#c9d1d9', fontSize: 14, fontWeight: 600 }}>📊 相对强弱排名（相对市场平均偏离）</span>}
+          headStyle={{ color: '#c9d1d9', background: '#21262d', borderColor: '#30363d', fontSize: 13, padding: '8px 16px' }}
+        >
+          {(() => {
+            const avgOpp = themes.reduce((s, t) => s + t.opportunity_score, 0) / themes.length
+            const avgCrowd = themes.reduce((s, t) => s + t.crowding_score, 0) / themes.length
+            const stdOpp = Math.sqrt(themes.reduce((s, t) => s + Math.pow(t.opportunity_score - avgOpp, 2), 0) / themes.length) || 1
+            const stdCrowd = Math.sqrt(themes.reduce((s, t) => s + Math.pow(t.crowding_score - avgCrowd, 2), 0) / themes.length) || 1
+            const ranked = themes.map(t => ({
+              ...t,
+              oppZ: (t.opportunity_score - avgOpp) / stdOpp,
+              crowdZ: (t.crowding_score - avgCrowd) / stdCrowd,
+              compositeZ: (t.opportunity_score - avgOpp) / stdOpp - (t.crowding_score - avgCrowd) / stdCrowd,
+            })).sort((a, b) => b.compositeZ - a.compositeZ)
+            return (
+              <div>
+                <div style={{ color: '#6e7681', fontSize: 11, marginBottom: 12 }}>
+                  市场平均: 机会分={avgOpp.toFixed(1)} 拥挤度={avgCrowd.toFixed(1)} | 计算公式: (机会偏离 - 拥挤偏离)
+                </div>
+                <Row gutter={[12, 12]}>
+                  {ranked.slice(0, 6).map(t => {
+                    const q = getQuadrant(t.crowding_score, t.opportunity_score)
+                    const qInfo = getQuadrantLabel(q)
+                    return (
+                      <Col span={8} key={t.theme}>
+                        <Card
+                          size="small"
+                          style={{ background: '#0d1117', borderColor: `${qInfo.color}33`, height: '100%' }}
+                          bodyStyle={{ padding: '10px 12px' }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ color: '#c9d1d9', fontSize: 13, fontWeight: 600 }}>{t.theme}</span>
+                            <span style={{ color: t.compositeZ >= 0 ? '#3fb950' : '#f85149', fontSize: 16, fontWeight: 700, fontFamily: 'monospace' }}>
+                              {t.compositeZ >= 0 ? '+' : ''}{t.compositeZ.toFixed(2)}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <div style={{ flex: 1, textAlign: 'center', background: '#161b22', borderRadius: 4, padding: '4px 0' }}>
+                              <div style={{ color: '#8b949e', fontSize: 10 }}>机会偏离</div>
+                              <div style={{ color: t.oppZ >= 0 ? '#3fb950' : '#f85149', fontSize: 13, fontWeight: 600, fontFamily: 'monospace' }}>
+                                {t.oppZ >= 0 ? '+' : ''}{t.oppZ.toFixed(2)}
+                              </div>
+                            </div>
+                            <div style={{ flex: 1, textAlign: 'center', background: '#161b22', borderRadius: 4, padding: '4px 0' }}>
+                              <div style={{ color: '#8b949e', fontSize: 10 }}>拥挤偏离</div>
+                              <div style={{ color: t.crowdZ >= 0 ? '#f85149' : '#3fb950', fontSize: 13, fontWeight: 600, fontFamily: 'monospace' }}>
+                                {t.crowdZ >= 0 ? '+' : ''}{t.crowdZ.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#8b949e', fontSize: 10 }}>机会{t.opportunity_score.toFixed(1)} | 拥挤{t.crowding_score.toFixed(1)}</span>
+                            <span style={{ color: qInfo.color, fontSize: 10 }}>{qInfo.label}</span>
+                          </div>
+                        </Card>
+                      </Col>
+                    )
+                  })}
+                </Row>
+              </div>
+            )
+          })()}
+        </Card>
+
+        {/* Layer 5: Sub-theme detail cards grouped by category */}
         {(() => {
           const CATEGORY_ORDER = ['权益-宽基', '权益-行业', '权益-主题策略', '权益-跨境', '固收', '另类']
           const grouped: Record<string, ETFIndustryTheme[]> = {}
@@ -1674,7 +1798,7 @@ ${extra ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">${extra}</di
                 <Row gutter={[12, 12]}>
                   {group.map((theme) => {
                     const crowdingColor = theme.crowding_score >= 70 ? '#f85149' : theme.crowding_score >= 40 ? '#d29922' : '#3fb950'
-                    const oppColor = theme.opportunity_score >= 60 ? '#3fb950' : theme.opportunity_score >= 35 ? '#d29922' : '#f85149'
+                    const oppColor = theme.opportunity_score >= 70 ? '#3fb950' : theme.opportunity_score >= 45 ? '#d29922' : '#f85149'
                     const q = getQuadrant(theme.crowding_score, theme.opportunity_score)
                     const qInfo = getQuadrantLabel(q)
                     return (

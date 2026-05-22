@@ -190,14 +190,30 @@ class ETFTechnicalIndicator(BaseModel):
     signal: str
 
 
+class ETFDimensionScore(BaseModel):
+    """单维度评分详情"""
+    score: float
+    breakdown: dict
+
+
+class ETFOpportunityScore(BaseModel):
+    """统一机会评分"""
+    opportunity_score: float
+    recommendation: str
+    confidence: float
+    dimensions: Dict[str, ETFDimensionScore]
+    weights: Dict[str, float]
+
+
 class ETFTechnicalResponse(BaseModel):
-    """技术指标响应"""
+    """技术指标响应（含统一机会评分）"""
     ts_code: str
     latest_close: float
     indicators: dict
     overall_signal: str
     bullish_score: int
     bearish_score: int
+    opportunity: ETFOpportunityScore
 
 
 class ETFSignalHistoryItem(BaseModel):
@@ -288,7 +304,7 @@ class ETFThemeTopItem(BaseModel):
 
 
 class ETFIndustryTheme(BaseModel):
-    """单个主题的行业分析数据"""
+    """单个主题的行业分析数据（统一评分版）"""
     category: str  # 大类：权益-宽基/权益-行业/权益-主题策略/权益-跨境/固收/另类
     theme: str     # 子主题
     etf_count: int
@@ -299,13 +315,16 @@ class ETFIndustryTheme(BaseModel):
     dispersion: Optional[float] = None
     crowding_score: float
     crowding_label: str
-    # Opportunity
+    # Opportunity (统一评分)
     win_rate: float
     profit_loss_ratio: Optional[float] = None
     risk_return_ratio: Optional[float] = None
     avg_return: Optional[float] = None
     opportunity_score: float
     opportunity_label: str
+    # Unified scoring dimensions (aggregated from individual ETF scores)
+    unified_dimensions: Optional[Dict[str, ETFDimensionScore]] = None
+    dispersion_adjustment: Optional[float] = None
     # Reliability & multi-day metrics
     reliability: float = Field(1.0, description="数据完整度 0-1")
     momentum_5d: Optional[float] = Field(None, description="近5日平均收益率(%)")

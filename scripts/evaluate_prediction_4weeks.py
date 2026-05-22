@@ -5,11 +5,12 @@
 使用方法:
     python scripts/evaluate_prediction_4weeks.py --prediction-date 20250919
 """
-import sys
 import argparse
-import pandas as pd
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import pandas as pd
 
 # 添加项目根目录到路径
 PROJECT_ROOT = Path(__file__).parent.parent

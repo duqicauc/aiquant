@@ -22,6 +22,8 @@ from src.api.schemas.etf import (
     ETFBacktestRequest,
     ETFBacktestResponse,
     ETFDetail,
+    ETFDimensionScore,
+    ETFOpportunityScore,
     ETFHotItem,
     ETFHotResponse,
     ETFIndustryAnalysisResponse,
@@ -40,6 +42,11 @@ from src.api.schemas.etf import (
 )
 from src.data.fetcher.tushare_fetcher import TushareFetcher
 from src.utils.logger import log
+from src.analysis.etf_scorer import (
+    calc_etf_opportunity_score,
+    calc_theme_opportunity_score,
+    recommendation_label,
+)
 
 router = APIRouter()
 
@@ -63,6 +70,14 @@ _ETF_KLINE_CACHE_TTL = 60  # 1 minute
 
 _etf_industry_history_cache = {"daily_df": None, "share_df": None, "dates": [], "timestamp": 0}
 _ETF_INDUSTRY_HISTORY_TTL = 300  # 5 minutes
+
+# ETF 统一评分缓存（单只标的）
+_etf_score_cache = {}  # ts_code -> {"score": dict, "timestamp": 0}
+_ETF_SCORE_CACHE_TTL = 120  # 2 minutes
+
+# 主题级统一评分缓存
+_theme_score_cache = {}  # "category|theme" -> {"score": dict, "timestamp": 0}
+_THEME_SCORE_CACHE_TTL = 180  # 3 minutes
 
 
 # ─── Helpers ───
@@ -1153,6 +1168,42 @@ async def get_etf_technical(
         else:
             overall = "观望"
 
+        # ─── Unified Opportunity Score (Tushare 成熟数据优先) ───
+        try:
+            # 并行获取 Tushare 成熟数据
+            share_df = fetcher.get_etf_share(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            factor_df = fetcher.get_stk_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            moneyflow_df = fetcher.get_moneyflow(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            daily_basic_df = fetcher.get_etf_daily_basic(ts_code=ts_code, start_date=start_date, end_date=end_date)
+
+            opp_result = calc_etf_opportunity_score(
+                df,
+                df_factor=factor_df if not factor_df.empty else None,
+                df_moneyflow=moneyflow_df if not moneyflow_df.empty else None,
+                df_share=share_df if not share_df.empty else None,
+                df_daily_basic=daily_basic_df if not daily_basic_df.empty else None,
+            )
+            opp_dimensions = {
+                k: ETFDimensionScore(score=v["score"], breakdown=v["breakdown"])
+                for k, v in opp_result["dimensions"].items()
+            }
+            opportunity = ETFOpportunityScore(
+                opportunity_score=opp_result["opportunity_score"],
+                recommendation=opp_result["recommendation"],
+                confidence=opp_result["confidence"],
+                dimensions=opp_dimensions,
+                weights=opp_result["weights"],
+            )
+        except Exception as e:
+            log.warning(f"ETF {ts_code} 统一评分计算失败: {e}")
+            opportunity = ETFOpportunityScore(
+                opportunity_score=50.0,
+                recommendation="观望",
+                confidence=0.0,
+                dimensions={},
+                weights={},
+            )
+
         return {
             "ts_code": ts_code,
             "latest_close": _clean_float(latest_close),
@@ -1190,6 +1241,7 @@ async def get_etf_technical(
             "overall_signal": overall,
             "bullish_score": bullish_count,
             "bearish_score": bearish_count,
+            "opportunity": opportunity,
         }
     except HTTPException:
         raise
@@ -1894,24 +1946,78 @@ async def get_industry_analysis(
             else:
                 crowding_label = "🟢 低拥挤"
 
-            # ── 机会评分 ──
-            momentum_score = _normalize_rank(t["momentum_5d"], mom5_vals) if mom5_vals else 50.0
-            reversal_score = _normalize_rank(t["deviation_ma20"], dev_vals, invert=True) if dev_vals else 50.0
-            flow_score = _normalize_rank(t["share_change_trend"], flow_vals) if flow_vals else 50.0
-            consistency_score = _normalize_rank(t["consistency_5d"], cons_vals) if cons_vals else 50.0
+            # ── 统一机会评分（主题聚合，带缓存） ──
+            cache_key = f"{cat}|{t['theme']}"
+            now = time.time()
+            cached_theme = _theme_score_cache.get(cache_key)
+            if cached_theme and (now - cached_theme["timestamp"]) < _THEME_SCORE_CACHE_TTL:
+                theme_opp = cached_theme["score"]
+                opportunity_score = theme_opp["opportunity_score"]
+                unified_dimensions = {
+                    k: ETFDimensionScore(score=v["score"], breakdown=v["breakdown"])
+                    for k, v in theme_opp.get("dimensions", {}).items()
+                }
+                dispersion_adj = theme_opp.get("dispersion_adjustment")
+            else:
+                # 对主题内 ETF 逐个计算统一评分，再聚合为主题级评分
+                unified_etf_scores = []
+                unified_weights = []
+                g_latest = df_latest[(df_latest["category"] == cat) & (df_latest["theme"] == t["theme"])]
+                # 按成交额取前10只，避免全量计算过慢
+                active_etfs = g_latest.nlargest(10, "amount")["ts_code"].tolist() if "amount" in g_latest.columns else g_latest["ts_code"].tolist()[:10]
+                for etc in active_etfs:
+                    # 检查单只 ETF 评分缓存
+                    cached_etf = _etf_score_cache.get(etc)
+                    if cached_etf and (now - cached_etf["timestamp"]) < _ETF_SCORE_CACHE_TTL:
+                        sc = cached_etf["score"]
+                    else:
+                        etf_hist = history_daily[history_daily["ts_code"] == etc].copy() if not history_daily.empty else pd.DataFrame()
+                        if len(etf_hist) < 20:
+                            continue
+                        etf_hist = etf_hist.sort_values("trade_date").reset_index(drop=True)
+                        for col in ["open", "high", "low"]:
+                            if col not in etf_hist.columns:
+                                etf_hist[col] = etf_hist["close"]
+                        etf_share = history_share[history_share["ts_code"] == etc].copy() if not history_share.empty else pd.DataFrame()
+                        try:
+                            sc = calc_etf_opportunity_score(etf_hist, etf_share if not etf_share.empty else None)
+                            _etf_score_cache[etc] = {"score": sc, "timestamp": now}
+                        except Exception as e:
+                            log.warning(f"主题 {cat}/{t['theme']} ETF {etc} 统一评分失败: {e}")
+                            continue
 
-            opportunity_score = float(np.clip(
-                momentum_score * 0.30
-                + reversal_score * 0.25
-                + flow_score * 0.25
-                + consistency_score * 0.20,
-                0, 100,
-            ))
+                    unified_etf_scores.append(sc)
+                    amt = g_latest[g_latest["ts_code"] == etc]["amount"].values
+                    unified_weights.append(float(amt[0]) if len(amt) > 0 and pd.notna(amt[0]) else 1.0)
 
-            if opportunity_score >= 60:
+                if unified_etf_scores:
+                    theme_opp = calc_theme_opportunity_score(unified_etf_scores, unified_weights)
+                    opportunity_score = theme_opp["opportunity_score"]
+                    unified_dimensions = {
+                        k: ETFDimensionScore(score=v["score"], breakdown=v["breakdown"])
+                        for k, v in theme_opp.get("dimensions", {}).items()
+                    }
+                    dispersion_adj = theme_opp.get("dispersion_adjustment")
+                    _theme_score_cache[cache_key] = {"score": theme_opp, "timestamp": now}
+                else:
+                    # 回退到旧版相对排名评分
+                    momentum_score = _normalize_rank(t["momentum_5d"], mom5_vals) if mom5_vals else 50.0
+                    reversal_score = _normalize_rank(t["deviation_ma20"], dev_vals, invert=True) if dev_vals else 50.0
+                    flow_score = _normalize_rank(t["share_change_trend"], flow_vals) if flow_vals else 50.0
+                    consistency_score = _normalize_rank(t["consistency_5d"], cons_vals) if cons_vals else 50.0
+                    opportunity_score = float(np.clip(
+                        momentum_score * 0.30 + reversal_score * 0.25 + flow_score * 0.25 + consistency_score * 0.20,
+                        0, 100,
+                    ))
+                    unified_dimensions = None
+                    dispersion_adj = None
+
+            if opportunity_score >= 65:
                 opportunity_label = "🟢 高机会"
+            elif opportunity_score >= 50:
+                opportunity_label = "🟡 关注"
             elif opportunity_score >= 35:
-                opportunity_label = "🟡 中性"
+                opportunity_label = "🟠 中性"
             else:
                 opportunity_label = "🔴 低机会"
 
@@ -1966,6 +2072,8 @@ async def get_industry_analysis(
                     risk_return_ratio=round(risk_return_ratio, 2),
                     opportunity_score=round(opportunity_score, 1),
                     opportunity_label=opportunity_label,
+                    unified_dimensions=unified_dimensions,
+                    dispersion_adjustment=round(dispersion_adj, 2) if dispersion_adj is not None else None,
                     top_etfs=top_etfs,
                     reliability=round(reliability, 2),
                     momentum_5d=round(t["momentum_5d"], 2),

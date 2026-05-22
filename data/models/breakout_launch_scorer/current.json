@@ -1,9 +1,9 @@
 {
-  "production": "v3.0.0-xgb-flat",
-  "staging": "v3.0.0-xgb-flat",
-  "testing": "v3.0.0-xgb-flat",
-  "development": "v3.0.0-xgb-flat",
-  "updated_at": "2026-05-10T08:55:00",
+  "production": "v3.1.0-breakout-only",
+  "staging": "v3.1.0-breakout-only",
+  "testing": "v3.1.0-breakout-only",
+  "development": "v3.1.0-breakout-only",
+  "updated_at": "2026-05-22T08:00:00",
   "latest_train": {
     "version": "v3.0.0-xgb-flat",
     "model": "xgb_flat",
@@ -50,5 +50,41 @@
       "profit_loss_ratio": 1.08
     }
   },
-  "notes": "主力策略已升级至 v3.0.0-xgb-flat (2026-05-10)。\n模型: XGB-Flat, 5882维(173特征×34天), 验证AUC=0.8455, 71轮迭代。\n回测(20260105~20260508, RealisticBacktester含交易成本): top10收益+2.25%/回撤13.17%/胜率44.9%; top20收益+3.26%/回撤15.54%/胜率43.8%。\n前任主力: v2.9.6-ensemble (AUC=0.8536, Brier=0.1246)。"
+  "notes": "主力策略已升级至 v3.1.0-breakout-only (2026-05-22)。\nBreakout模型: AUC=0.916, 夏普=1.37, 2024年回测收益+32.49%。\nBounce模型: AUC=0.885, 但2024回测负收益, 暂不独立上线。\nEqual融合: 夏普0.77, 不如Breakout独立。",
+  "v310_latest_train": {
+    "version": "v3.1.0-breakout",
+    "model": "xgb_flat",
+    "val_auc": 0.9167,
+    "brier": 0.099,
+    "feature_count": 8432,
+    "n_days": 34,
+    "train_samples": 9442,
+    "top5_gain_pct": 10.69,
+    "model_path": "data/models/v310/breakout/20260517_223735/",
+    "notes": "Breakout专属特征+平台识别，AUC=0.916达标，Top5=10.69%"
+  },
+  "backtest_v310_breakout_2024": {
+    "period": "20240101~20241231",
+    "trading_days": 242,
+    "strategy": "breakout_only",
+    "top_k": 20,
+    "hold_days": 3,
+    "qlib": {
+      "total_return_pct": 32.49,
+      "annual_return_pct": 34.04,
+      "sharpe_ratio": 1.37,
+      "max_drawdown_pct": -9.96,
+      "win_rate_pct": 54.13
+    }
+  },
+  "v310_bounce": {
+    "version": "v3.1.0-bounce",
+    "val_auc": 0.8847,
+    "brier": 0.126,
+    "feature_count": 10480,
+    "n_days": 40,
+    "model_path": "data/models/v310/bounce/20260520_001821/",
+    "status": "trained_but_not_deployed",
+    "reason": "2024回测负收益(-1.73%)，市场环境不适用"
+  }
 }

@@ -185,3 +185,9 @@ catboost_info/
 # - README.md, docs/*.md（文档文件）
 # - *.sh（脚本文件）
 # - pytest.ini（测试配置）
+
+# 历史模型备份（二进制文件）
+archive/models/
+
+# 临时分析脚本
+tmp_*.py

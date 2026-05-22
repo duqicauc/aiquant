@@ -9,16 +9,16 @@
     python scripts/predict_with_calibration.py --predict-date 20251212 --eval-date 20251231
 """
 
-import sys
+import argparse
 import json
 import pickle
-import argparse
+import sys
 import warnings
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import xgboost as xgb
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -26,9 +26,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 warnings.filterwarnings("ignore")
 
-from src.utils.logger import log
 from src.data.data_manager import DataManager
-
+from src.utils.logger import log
 
 # 风险过滤阈值
 RISK_THRESHOLD = 0.7
@@ -473,12 +472,12 @@ def main():
     if stats_raw and stats_filtered:
         log.info("\n| 指标 | 无过滤 | 带风险过滤 | 变化 |")
         log.info("|------|--------|------------|------|")
+        avg_diff = stats_filtered["avg_return"] - stats_raw["avg_return"]
         log.info(
-            f"| 平均收益率 | {stats_raw['avg_return']:.2f}% | {stats_filtered['avg_return']:.2f}% | {stats_filtered['avg_return'] - stats_raw['avg_return']:+.2f}% |"
+            f"| 平均收益率 | {stats_raw['avg_return']:.2f}% | {stats_filtered['avg_return']:.2f}% | {avg_diff:+.2f}% |"
         )
-        log.info(
-            f"| 胜率 | {stats_raw['win_rate']:.1f}% | {stats_filtered['win_rate']:.1f}% | {stats_filtered['win_rate'] - stats_raw['win_rate']:+.1f}% |"
-        )
+        wr_diff = stats_filtered["win_rate"] - stats_raw["win_rate"]
+        log.info(f"| 胜率 | {stats_raw['win_rate']:.1f}% | {stats_filtered['win_rate']:.1f}% | {wr_diff:+.1f}% |")
         log.info(f"| 最大亏损 | {stats_raw['min_return']:.2f}% | {stats_filtered['min_return']:.2f}% | - |")
 
     # 保存结果

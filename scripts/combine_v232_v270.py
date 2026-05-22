@@ -28,23 +28,24 @@
 详细使用指南：docs/guides/COMBINE_V232_V270_USAGE.md
 """
 
-import sys
 import argparse
+import sys
 import warnings
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 warnings.filterwarnings("ignore")
 
-from src.utils.logger import log
+from collections import defaultdict
+
 from src.data.data_manager import DataManager
 from src.models.screening.fundamental_screener import FundamentalScreener
-from collections import defaultdict
+from src.utils.logger import log
 
 
 def load_predictions(date, version):
@@ -829,7 +830,10 @@ def strategy_complementary(
                     heat_data = hot_sectors_data["concepts"][sector]
                     # 优先显示热度值和涨幅（同花顺热榜）
                     if "hot" in heat_data:
-                        heat_info = f" (热度{heat_data.get('hot', 0):.0f}, 涨幅{heat_data.get('pct_chg', 0):.2f}%, 排名{heat_data.get('rank', 999)})"
+                        hot_val = heat_data.get("hot", 0)
+                        pct = heat_data.get("pct_chg", 0)
+                        rank = heat_data.get("rank", 999)
+                        heat_info = f" (热度{hot_val:.0f}, 涨幅{pct:.2f}%, 排名{rank})"
                     # 备选：显示涨停数和涨幅
                     elif "up_nums" in heat_data:
                         heat_info = f" (涨停{heat_data.get('up_nums', 0)}只, 涨幅{heat_data.get('pct_chg', 0):.2f}%)"
@@ -1089,7 +1093,8 @@ def strategy_complementary(
 
     if len(result_df) > 0:
         log.info(
-            f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'来源':<8} {'风险':<8} {'热门板块':<15} {'综合得分':<10} {'收盘价':<10}"
+            f"\n{'排名':<4} {'代码':<12} {'名称':<10} {'来源':<8} "
+            f"{'风险':<8} {'热门板块':<15} {'综合得分':<10} {'收盘价':<10}"
         )
         log.info("-" * 100)
 

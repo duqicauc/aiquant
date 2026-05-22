@@ -12,6 +12,7 @@
 
 import re
 from pathlib import Path
+
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -280,13 +281,17 @@ def main():
             v270_row = df_summary[df_summary["version"] == "v2.7.0"].iloc[0]
             v232_row = df_summary[df_summary["version"] == "v2.3.2"]
             v232_row = v232_row.iloc[0] if len(v232_row) else None
-            f.write(
-                f"- **v2.7.0**：共 {v270_row['sell_count']} 笔卖出，胜率 {v270_row['win_rate_pct']}%，平均盈亏 {v270_row['avg_profit_pct']:+.2f}%，总盈亏 {v270_row['total_profit']:+,.0f} 元。\n"
-            )
+            sc = v270_row["sell_count"]
+            wr = v270_row["win_rate_pct"]
+            ap = v270_row["avg_profit_pct"]
+            tp = v270_row["total_profit"]
+            f.write(f"- **v2.7.0**：共 {sc} 笔卖出，胜率 {wr}%，平均盈亏 {ap:+.2f}%，总盈亏 {tp:+,.0f} 元。\n")
             if v232_row is not None:
-                f.write(
-                    f"- **v2.3.2**：共 {v232_row['sell_count']} 笔卖出，胜率 {v232_row['win_rate_pct']}%，平均盈亏 {v232_row['avg_profit_pct']:+.2f}%，总盈亏 {v232_row['total_profit']:+,.0f} 元。\n"
-                )
+                sc2 = v232_row["sell_count"]
+                wr2 = v232_row["win_rate_pct"]
+                ap2 = v232_row["avg_profit_pct"]
+                tp2 = v232_row["total_profit"]
+                f.write(f"- **v2.3.2**：共 {sc2} 笔卖出，胜率 {wr2}%，平均盈亏 {ap2:+.2f}%，总盈亏 {tp2:+,.0f} 元。\n")
             else:
                 f.write("- **v2.3.2**：回测区间内无来自 v2.3.2 的卖出记录（互补策略下多为 v2.7.0 入选）。\n")
         f.write("\n明细见 `prediction_vs_actual_detail.csv`，按日统计见 `prediction_vs_actual_by_day.csv`。\n")

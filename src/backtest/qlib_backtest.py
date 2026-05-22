@@ -34,15 +34,17 @@ class QlibStyleBacktest:
         self,
         prediction_dir: str,
         initial_capital: float = 10_000_000,
+        prediction_prefix: str = "predictions_",
     ):
         self.prediction_dir = Path(prediction_dir)
         self.initial_capital = initial_capital
+        self.prediction_prefix = prediction_prefix
         self.provider = ArcticDataProvider()
 
     def load_predictions(self, date: str) -> pd.DataFrame:
         """加载某日的预测结果"""
-        for suffix in ["_all", "_top100", "_top50", ""]:
-            path = self.prediction_dir / f"predictions_{date}{suffix}.csv"
+        for suffix in ["_all", "_top100", "_top50", "_top20", ""]:
+            path = self.prediction_dir / f"{self.prediction_prefix}{date}{suffix}.csv"
             if path.exists():
                 return pd.read_csv(path)
         return pd.DataFrame()
@@ -139,9 +141,17 @@ class QlibStyleBacktest:
         portfolio_records = []
         current_positions: Dict[str, dict] = {}  # ts_code -> {entry_date, hold_days}
 
+        # 优先使用校准后概率 prob_cal，然后是 prob_fused（融合结果）
+        if "prob_cal" in pred_df.columns:
+            prob_col = "prob_cal"
+        elif "prob_fused" in pred_df.columns:
+            prob_col = "prob_fused"
+        else:
+            prob_col = "prob"
+
         for i, date in enumerate(trade_dates):
             # 当日预测
-            day_pred = pred_df[pred_df["trade_date"] == date].sort_values("prob", ascending=False)
+            day_pred = pred_df[pred_df["trade_date"] == date].sort_values(prob_col, ascending=False)
             top_stocks = set(day_pred.head(top_k)["ts_code"].tolist())
             keep_stocks = set(day_pred.head(top_k + drop_n)["ts_code"].tolist())
 

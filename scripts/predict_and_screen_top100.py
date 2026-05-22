@@ -11,24 +11,24 @@
 用法：
     python scripts/predict_and_screen_top100.py --date 20260119 --market-cap-max 200
 """
-import sys
 import argparse
+import sys
 from pathlib import Path
+
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.logger import log
-from src.data.data_manager import DataManager
-from src.models.screening.fundamental_screener import FundamentalScreener
-
 # 导入预测函数
 from scripts.predict_v270_ensemble_top50 import (
+    get_valid_stocks,
     load_ensemble_model,
     process_single_stock,
-    get_valid_stocks,
 )
+from src.data.data_manager import DataManager
+from src.models.screening.fundamental_screener import FundamentalScreener
+from src.utils.logger import log
 
 
 def predict_and_screen_top100(predict_date: str, market_cap_max: int = 200):
@@ -117,8 +117,8 @@ def predict_and_screen_top100(predict_date: str, market_cap_max: int = 200):
     top100_screened = fundamental_screener.screen_stocks(top100, predict_date)
 
     # 统计结果
-    passed = top100_screened[top100_screened["fundamental_pass"] == True]
-    failed = top100_screened[top100_screened["fundamental_pass"] == False]
+    passed = top100_screened[top100_screened["fundamental_pass"]]
+    failed = top100_screened[~top100_screened["fundamental_pass"]]
 
     log.info("\n" + "=" * 80)
     log.info("筛选结果统计")

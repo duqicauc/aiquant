@@ -47,11 +47,12 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 class UnifiedFeatureExtractor:
     """统一特征提取器 —— 三类样本完全一致的计算逻辑"""
 
-    def __init__(self, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True, feature_engineer=None):
         self.provider = TushareDataProvider()
-        self.engineer = FeatureEngineer()
+        self.engineer = feature_engineer if feature_engineer is not None else FeatureEngineer()
         self.use_cache = use_cache
         self._index_daily_df: Optional[pd.DataFrame] = None  # 缓存上证指数全量数据
+        self._market_data_cache: Dict[str, Dict[str, pd.DataFrame]] = {}  # 跨调用复用市场数据
 
     # ------------------------------------------------------------------
     # 公共入口
@@ -127,7 +128,18 @@ class UnifiedFeatureExtractor:
             return pd.DataFrame()
 
         df_features = pd.concat(all_features, ignore_index=True)
-        df_features["label"] = label
+        # 优先从 samples_df 读取 label，否则使用传入的默认值
+        if "label" in samples_df.columns:
+            # 按 (ts_code, t1_date) 映射 label（samples_df 中没有 sample_id）
+            samples_df["_tmp_key"] = (
+                samples_df["ts_code"].astype(str) + "_"
+                + pd.to_datetime(samples_df["t1_date"].astype(str)).dt.strftime("%Y%m%d")
+            )
+            label_map = samples_df.groupby("_tmp_key")["label"].first().to_dict()
+            df_features["label"] = df_features["sample_id"].map(label_map)
+            df_features["label"] = df_features["label"].fillna(label).astype(int)
+        else:
+            df_features["label"] = label
 
         # 统一添加 sample_id（如果原表没有）
         if "sample_id" not in df_features.columns:
@@ -157,25 +169,40 @@ class UnifiedFeatureExtractor:
 
     def _prefetch_market_data(self, dates: List[str]) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
-        按日期批量预取市场数据
+        按日期批量预取市场数据（支持跨调用实例缓存复用）
 
         Returns:
             {date_str: {'daily': df, 'basic': df, 'factor': df}}
         """
         cache = {}
-        total = len(dates)
-        log.info(f"预取市场数据: {total} 个日期...")
+        missing_dates = []
 
-        for i, date_str in enumerate(dates):
+        # 1. 先从实例缓存中复用
+        for d in dates:
+            if d in self._market_data_cache:
+                cache[d] = self._market_data_cache[d]
+            else:
+                missing_dates.append(d)
+
+        if not missing_dates:
+            log.debug(f"市场数据全部命中实例缓存: {len(dates)} 天")
+            return cache
+
+        total = len(missing_dates)
+        log.info(f"预取市场数据: {total} 个新日期 (已缓存 {len(dates)-total} 天)...")
+
+        for i, date_str in enumerate(missing_dates):
             if (i + 1) % 100 == 0 or i == 0:
                 log.info(f"  预取进度: {i+1}/{total}")
 
-            # 检查本地缓存
+            # 检查本地磁盘缓存
             cache_file = CACHE_DIR / f"{date_str}.pkl"
             if cache_file.exists() and self.use_cache:
                 try:
                     with open(cache_file, "rb") as f:
-                        cache[date_str] = pickle.load(f)
+                        day_cache = pickle.load(f)
+                    cache[date_str] = day_cache
+                    self._market_data_cache[date_str] = day_cache
                     continue
                 except Exception:
                     pass
@@ -191,8 +218,9 @@ class UnifiedFeatureExtractor:
                 "factor": factor_df,
             }
             cache[date_str] = day_cache
+            self._market_data_cache[date_str] = day_cache
 
-            # 写入本地缓存（仅当数据有效时）
+            # 写入本地磁盘缓存
             if self.use_cache:
                 has_data = (
                     daily_df is not None and not daily_df.empty
@@ -210,7 +238,7 @@ class UnifiedFeatureExtractor:
                 else:
                     log.debug(f"跳过空缓存: {date_str} (daily={len(daily_df) if daily_df is not None else 0}, basic={len(basic_df) if basic_df is not None else 0}, factor={len(factor_df) if factor_df is not None else 0})")
 
-        log.success(f"市场数据预取完成: {len(cache)} 天")
+        log.success(f"市场数据预取完成: {len(cache)} 天 (实例缓存累计 {len(self._market_data_cache)} 天)")
         return cache
 
     def _prefetch_index_daily(self, samples_df: pd.DataFrame, lookback_days: int) -> None:
@@ -292,7 +320,16 @@ class UnifiedFeatureExtractor:
         lookback_days: int,
         market_data_cache: Dict,
     ) -> pd.DataFrame:
-        """处理一批样本的特征提取"""
+        """处理一批样本的特征提取（支持向量化快速路径）"""
+
+        # 预测场景优化：所有样本共享相同T1时走向量化路径
+        n_unique_t1 = batch_df["t1_date"].nunique()
+        if n_unique_t1 == 1 and len(batch_df) > 1:
+            log.debug(f"向量化路径: {len(batch_df)} 样本, 相同T1")
+            return self._process_batch_vectorized(batch_df, lookback_days, market_data_cache)
+        log.debug(f"逐股票路径: {len(batch_df)} 样本, {n_unique_t1} 个不同T1")
+
+        # 训练场景：样本T1不同，走逐股票路径
         all_sample_features = []
 
         for _, sample in batch_df.iterrows():
@@ -328,6 +365,109 @@ class UnifiedFeatureExtractor:
             return pd.DataFrame()
 
         return pd.concat(all_sample_features, ignore_index=True)
+
+    def _process_batch_vectorized(
+        self,
+        batch_df: pd.DataFrame,
+        lookback_days: int,
+        market_data_cache: Dict,
+    ) -> pd.DataFrame:
+        """向量化快速路径：所有样本共享相同T1（预测场景）"""
+        from datetime import timedelta
+
+        batch_stocks = set(batch_df["ts_code"].unique())
+        t1 = batch_df["t1_date"].iloc[0]
+
+        # 1. 一次性组装所有股票的时序数据
+        start = t1 - timedelta(days=lookback_days + 20)
+        end = t1 - timedelta(days=1)
+
+        all_records = []
+        for d in pd.date_range(start=start, end=end, freq="D"):
+            date_str = d.strftime("%Y%m%d")
+            if date_str not in market_data_cache:
+                continue
+            day_cache = market_data_cache[date_str]
+
+            daily = day_cache.get("daily", pd.DataFrame())
+            if daily.empty:
+                continue
+
+            # 批量过滤股票
+            daily_batch = daily[daily["ts_code"].isin(batch_stocks)]
+            if daily_batch.empty:
+                continue
+
+            # 合并 basic
+            basic = day_cache.get("basic", pd.DataFrame())
+            if not basic.empty:
+                basic_batch = basic[basic["ts_code"].isin(batch_stocks)]
+                if not basic_batch.empty:
+                    daily_batch = daily_batch.merge(
+                        basic_batch, on=["ts_code", "trade_date"], how="left"
+                    )
+
+            # 合并 factor
+            factor = day_cache.get("factor", pd.DataFrame())
+            if not factor.empty:
+                factor_batch = factor[factor["ts_code"].isin(batch_stocks)]
+                if not factor_batch.empty:
+                    daily_batch = daily_batch.merge(
+                        factor_batch, on=["ts_code", "trade_date"], how="left"
+                    )
+
+            all_records.append(daily_batch)
+
+        if not all_records:
+            return pd.DataFrame()
+
+        batch_data = pd.concat(all_records, ignore_index=True)
+        batch_data = batch_data.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
+
+        # 为每只股票只保留最后 lookback_days 条
+        batch_data = batch_data.groupby("ts_code").tail(lookback_days).reset_index(drop=True)
+
+        # 过滤数据不足的股票
+        stock_counts = batch_data.groupby("ts_code").size()
+        valid_stocks = set(stock_counts[stock_counts >= lookback_days * 0.5].index)
+        batch_data = batch_data[batch_data["ts_code"].isin(valid_stocks)]
+
+        if batch_data.empty:
+            return pd.DataFrame()
+
+        # 2. 获取市场环境数据（所有样本共享）
+        market_data = self._get_market_data_for_sample(
+            batch_df["ts_code"].iloc[0], t1, lookback_days, market_data_cache
+        )
+
+        # 3. 批量计算特征（一次性处理所有股票）
+        try:
+            df_features = self.engineer.compute_all_features(batch_data, market_data)
+        except Exception as e:
+            log.warning(f"FeatureEngineer批量计算失败: {e}")
+            return pd.DataFrame()
+
+        # 4. 批量添加元数据
+        # sample_id 映射
+        if "sample_id" in batch_df.columns:
+            sample_id_map = batch_df.set_index("ts_code")["sample_id"].to_dict()
+            df_features["sample_id"] = df_features["ts_code"].map(sample_id_map)
+        else:
+            df_features["sample_id"] = df_features["ts_code"] + "_" + t1.strftime("%Y%m%d")
+
+        if "name" in batch_df.columns:
+            name_map = batch_df.set_index("ts_code")["name"].to_dict()
+            df_features["name"] = df_features["ts_code"].map(name_map)
+
+        # days_to_t1: 按 ts_code 分组，每组从 -len(group) 到 -1
+        def _add_days_to_t1(group):
+            group = group.copy()
+            group["days_to_t1"] = range(-len(group), 0)
+            return group
+
+        df_features = df_features.groupby("ts_code", group_keys=False).apply(_add_days_to_t1)
+
+        return df_features.reset_index(drop=True)
 
     def _assemble_time_series(
         self,

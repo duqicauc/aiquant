@@ -44,11 +44,11 @@ def load_model_features():
     path = '/app/data/models/breakout_launch_scorer/versions/v3.0.0/xgb_flat_final.json'
     with open(path) as f:
         model_json = json.load(f)
-    
+
     # 从XGBoost dump中提取特征使用频率
     feature_counts = defaultdict(int)
     feature_names = set()
-    
+
     def extract_features(node_str):
         """递归提取特征名"""
         for line in node_str.split('\n'):
@@ -58,7 +58,7 @@ def load_model_features():
                     feat = bracket.split('<')[0].strip()
                     feature_names.add(feat)
                     feature_counts[feat] += 1
-    
+
     if 'learner' in model_json:
         learner = model_json['learner']
         if 'gradient_booster' in learner:
@@ -76,7 +76,7 @@ def load_model_features():
                     elif 'tree_param' in tree:
                         # Another format
                         pass
-    
+
     return feature_counts, feature_names
 
 def main():
@@ -104,12 +104,12 @@ def main():
             continue
         sell_close = price_map[code][sell_date]
         ret = (sell_close / buy_close - 1) * 100
-        
+
         # 行业信息
         info = industry_df.loc[code] if code in industry_df.index else None
         industry = info['industry'] if info is not None else '未知'
         market = info['market'] if info is not None else '未知'
-        
+
         results.append({
             'ts_code': code, 'name': row.get('name',''), 'pred_date': pd_date,
             'prob': prob, 'ret_1d': ret, 'industry': industry, 'market': market,

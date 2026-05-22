@@ -5,12 +5,12 @@
     python scripts/predict_and_compare.py --dates 20251225 20250919
 """
 
-import sys
+import argparse
+import json
 import os
 import subprocess
-import json
+import sys
 from pathlib import Path
-import argparse
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -132,7 +132,7 @@ def compare_predictions_for_date(date_str):
             return None
 
         # 读取旧的结果（旧模型）
-        df_old = pd.read_csv(old_file, encoding="utf-8-sig")
+        pd.read_csv(old_file, encoding="utf-8-sig")
         old_metadata = {
             "prediction_date": date_str,
             "model_path": "旧模型(232545)",
@@ -141,7 +141,7 @@ def compare_predictions_for_date(date_str):
         }
 
         # 读取最新的结果（新模型）
-        df_new = pd.read_csv(new_file, encoding="utf-8-sig")
+        pd.read_csv(new_file, encoding="utf-8-sig")
         new_metadata = {
             "prediction_date": date_str,
             "model_path": "最新模型(v1.0.0)",

@@ -222,28 +222,77 @@ class TushareFetcher(BaseFetcher):
             log.warning(f"获取每日指标失败: {e}")
             return pd.DataFrame()
 
-    def get_stk_factor(self, ts_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def get_stk_factor(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
         """
-        获取技术因子（MACD、KDJ、RSI等）
+        获取技术因子（MACD、KDJ、RSI、DMI、MFI、TAQ等）
 
         Args:
-            ts_code: 股票代码
+            ts_code: 股票代码（ETF也可用，如 510300.SH）
             start_date: 开始日期
             end_date: 结束日期
+            fields: 可选，自定义字段列表；默认返回完整常用因子
 
         Returns:
             技术因子DataFrame
         """
         self.rate_limiter.wait_if_needed()
 
+        if fields is None:
+            # 完整常用因子字段（覆盖趋势/动量/量价/波动/超买超卖）
+            fields = (
+                "ts_code,trade_date,close,"
+                # 趋势
+                "macd_dif,macd_dea,macd,"
+                "ma5,ma10,ma_20d,ma30,ma60,ma90,"
+                "ema_5,ema_10,ema_20,ema_60,"
+                "expma_12,expma_50,"
+                "trix,trma,"
+                "dfma_dif,dfma_difma,"
+                # 动量/超买超卖
+                "kdj_k,kdj_d,kdj_j,"
+                "rsi_6,rsi_12,rsi_24,"
+                "wr,wr1,"
+                "cci,"
+                "psy,psyma,"
+                # 波动/通道
+                "boll_upper,boll_mid,boll_lower,"
+                "atr,"
+                "ktn_upper,ktn_mid,ktn_down,"
+                "taq_up,taq_mid,taq_down,"
+                # 量价
+                "obv,"
+                "mfi,"
+                "emv,maemv,"
+                "vr,"
+                "volume_ratio,"
+                # 趋势强度
+                "dmi_pdi,dmi_mdi,dmi_adx,dmi_adxr,"
+                # 偏离
+                "bias_short,bias_mid,bias_long,"
+                # 其他
+                "roc,maroc,"
+                "cr,"
+                "brar_br,brar_ar,"
+                "bbi,"
+                "dpo,madpo,"
+                "asi,asit,"
+                "mass,ma_mass,"
+                "mtm,mtmma,"
+                "xsii_td1,xsii_td2,xsii_td3,xsii_td4"
+            )
+
         try:
             df = self.pro.stk_factor(
                 ts_code=ts_code,
                 start_date=start_date,
                 end_date=end_date,
-                fields="ts_code,trade_date,close,macd_dif,macd_dea,macd,"
-                "kdj_k,kdj_d,kdj_j,rsi_6,rsi_12,rsi_24,boll_upper,"
-                "boll_mid,boll_lower,cci",
+                fields=fields,
             )
 
             if df is not None and not df.empty:
@@ -254,6 +303,51 @@ class TushareFetcher(BaseFetcher):
 
         except Exception as e:
             log.warning(f"获取技术因子失败 {ts_code}: {e}")
+            return pd.DataFrame()
+
+    def get_etf_daily_basic(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取 ETF 每日指标（换手率、量比等）
+        复用 daily_basic 接口，ETF 作为场内品种同样适用
+
+        Args:
+            ts_code: ETF 代码，如 '510300.SH'
+            trade_date: 交易日期（YYYYMMDD）
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame 含 turnover_rate, turnover_rate_f, volume_ratio 等
+        """
+        self.rate_limiter.wait_if_needed()
+        try:
+            params = {
+                "fields": "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
+                "total_share,float_share,total_mv,circ_mv"
+            }
+            if trade_date:
+                params["trade_date"] = self.format_date(trade_date)
+            if start_date:
+                params["start_date"] = self.format_date(start_date)
+            if end_date:
+                params["end_date"] = self.format_date(end_date)
+            if ts_code:
+                params["ts_code"] = ts_code
+
+            df = self.pro.daily_basic(**params)
+            if df is not None and not df.empty:
+                if "trade_date" in df.columns:
+                    df["trade_date"] = pd.to_datetime(df["trade_date"])
+                    df = df.sort_values("trade_date").reset_index(drop=True)
+            return df if df is not None else pd.DataFrame()
+        except Exception as e:
+            log.warning(f"获取ETF每日指标失败 {ts_code}: {e}")
             return pd.DataFrame()
 
     def get_suspend_info(self, ts_code: str = None, trade_date: str = None, suspend_type: str = None) -> pd.DataFrame:

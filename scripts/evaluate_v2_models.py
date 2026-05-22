@@ -7,14 +7,15 @@ V2模型预测评估脚本
     python scripts/evaluate_v2_models.py --predict-date 20251212 --eval-date 20251231
 """
 
-import sys
 import argparse
 import json
+import sys
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 import xgboost as xgb
 
 PROJECT_ROOT = Path(__file__).parent.parent

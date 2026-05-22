@@ -5,19 +5,20 @@
 直接使用旧路径：data/training/models/xgboost_timeseries_v2_20251225_205905.json
 """
 
-import sys
 import os
-from pathlib import Path
-import xgboost as xgb
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import xgboost as xgb
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from scripts.score_current_stocks import get_all_stocks
 from src.data.data_manager import DataManager
 from src.utils.logger import log
-from scripts.score_current_stocks import get_all_stocks
 
 
 def load_old_model():
