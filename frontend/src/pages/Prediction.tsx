@@ -22,6 +22,7 @@ interface PipelineStatus {
   latest_prediction_date: string | null
   latest_prediction_count: number
   prediction_file_exists: boolean
+  prediction_source?: string | null
   has_run_today: boolean
   today_report: any
   monitor: any
@@ -152,6 +153,8 @@ export default function Prediction() {
   const [pipelineLoading, setPipelineLoading] = useState(false)
   const [pipelineRunning, setPipelineRunning] = useState(false)
   const [fullDist, setFullDist] = useState<FullDistribution | null>(null)
+  const [predictionSource, setPredictionSource] = useState<string | null>(null)
+  const [isFallback, setIsFallback] = useState(false)
 
   // ── Tab: Today ──
   const [todayData, setTodayData] = useState<any[]>([])
@@ -206,6 +209,9 @@ export default function Prediction() {
     try {
       const res = await predictionApi.latest(todayTopN)
       setTodayData(res.data?.data || [])
+      const source = res.data?.prediction_source || null
+      setPredictionSource(source)
+      setIsFallback(!source?.startsWith('v3.1.0'))
       if (res.data?.distribution) {
         setFullDist({ total: res.data.distribution.total, bins: res.data.distribution.bins })
       }
@@ -222,6 +228,9 @@ export default function Prediction() {
     try {
       const res = await predictionApi.pipelineStatus().catch(() => ({ data: null }))
       setPipelineStatus(res.data)
+      const source = res.data?.prediction_source || null
+      setPredictionSource(source)
+      setIsFallback(!source?.startsWith('v3.1.0'))
       if (res.data?.distribution) {
         setFullDist({ total: res.data.distribution.total, bins: res.data.distribution.bins })
       }
@@ -389,6 +398,14 @@ export default function Prediction() {
 
 
 
+  // ── Version tag helper ──
+  const versionTag = (source?: string | null) => {
+    if (!source) return <Tag style={{ fontSize: '0.7rem', background: '#30363d', color: '#8b949e', borderColor: '#30363d' }}>unknown</Tag>
+    if (source.startsWith('v3.1.0')) return <Tag color="success" style={{ fontSize: '0.7rem' }}>v3.1.0-breakout</Tag>
+    if (source.startsWith('v3.0.0')) return <Tag color="warning" style={{ fontSize: '0.7rem' }}>v3.0.0 (legacy)</Tag>
+    return <Tag style={{ fontSize: '0.7rem', background: '#30363d', color: '#8b949e', borderColor: '#30363d' }}>{source}</Tag>
+  }
+
   // ── Pipeline status bar ──
   const pipelineBar = (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -405,6 +422,9 @@ export default function Prediction() {
         <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
           ⚙️ Pipeline: {pipelineStatus?.has_run_today ? <span style={{ color: '#3fb950' }}>已执行</span> : <span style={{ color: '#d29922' }}>未执行</span>}
         </span>
+        <span style={{ color: '#8b949e', fontSize: '0.8rem' }}>
+          📦 模型: {versionTag(predictionSource)}
+        </span>
       </Space>
       <Space>
         <Button size="small" loading={pipelineRunning} onClick={handleRunPipeline}
@@ -418,6 +438,22 @@ export default function Prediction() {
       </Space>
     </div>
   )
+
+  // ── Fallback alert banner ──
+  const fallbackAlert = isFallback && predictionSource ? (
+    <div style={{
+      marginBottom: 12, padding: '10px 14px', borderRadius: 6,
+      background: '#2d1b00', border: '1px solid #d29922',
+      color: '#d29922', fontSize: '0.875rem',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    }}>
+      <span>⚠️ 当前展示 {predictionSource} 预测数据，v3.1.0 数据未生成。请执行 Pipeline 生成最新 v3.1.0 预测。</span>
+      <Button size="small" loading={pipelineRunning} onClick={handleRunPipeline}
+        style={{ background: '#d29922', borderColor: 'transparent', color: '#fff' }}>
+        {pipelineRunning ? '执行中...' : '一键执行 Pipeline'}
+      </Button>
+    </div>
+  ) : null
 
   // ── Pipeline alert banner ──
   const alertBanner = pipelineStatus?.pipeline_alert ? (
@@ -675,7 +711,8 @@ export default function Prediction() {
         <h2 style={{ color: '#c9d1d9', margin: 0 }}>📊 选股中心</h2>
       </div>
 
-      {/* Pipeline alert */}
+      {/* Fallback + Pipeline alerts */}
+      {fallbackAlert}
       {alertBanner}
 
       {/* Pipeline status bar */}
@@ -707,7 +744,11 @@ export default function Prediction() {
         items={[
           {
             key: 'today',
-            label: '📈 今日预测',
+            label: (
+              <span>
+                📈 今日预测 {versionTag(predictionSource)}
+              </span>
+            ),
             children: (
               <div>
                 <ProbabilityDistribution dist={fullDist} />

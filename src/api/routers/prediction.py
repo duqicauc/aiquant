@@ -131,10 +131,12 @@ async def get_latest_predictions(
 
         df = None
         filename = ""
+        pred_source = "unknown"
         for cand in candidates:
             try:
                 df = pd.read_csv(cand)
                 filename = cand.name
+                pred_source = cand.parent.name
                 break
             except Exception:
                 continue
@@ -259,6 +261,7 @@ async def get_latest_predictions(
             "period": formatted_period,
             "display_period": display_period,
             "full_distribution": full_dist,
+            "prediction_source": pred_source,
             "data": records,
         }
     except HTTPException:
@@ -512,15 +515,19 @@ async def get_pipeline_status():
             is_data_fresh = False
 
         # ---------- Latest prediction ----------
-        # 优先检查 v3.0.0，回退到旧目录
+        # 优先检查 v3.1.0，回退到 v3.0.0 及旧目录
         pred_dirs_check = [
+            project_root / "data" / "prediction" / "v3.1.0_daily",
+            project_root / "data" / "prediction" / "v3.1.0",
             project_root / "data" / "prediction" / "v3.0.0",
+            project_root / "data" / "prediction" / "v3.0.0_daily",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v294_stk_factor",
         ]
         latest_prediction_date = None
         latest_prediction_count = 0
         prediction_file_exists = False
+        prediction_source = None
         try:
             for pred_dir in pred_dirs_check:
                 if not pred_dir.exists():
@@ -533,6 +540,7 @@ async def get_pipeline_status():
                     df_pred = pd.read_csv(latest_file)
                     latest_prediction_count = len(df_pred)
                     prediction_file_exists = True
+                    prediction_source = pred_dir.name
                     break
         except Exception:
             pass
@@ -617,6 +625,7 @@ async def get_pipeline_status():
             "latest_prediction_date": latest_prediction_date,
             "latest_prediction_count": latest_prediction_count,
             "prediction_file_exists": prediction_file_exists,
+            "prediction_source": prediction_source,
             "has_run_today": has_run_today,
             "today_report": today_report,
             "monitor": monitor,
