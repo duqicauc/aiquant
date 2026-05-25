@@ -176,8 +176,10 @@ class BreakoutPredictor:
         return aligned
 
     def _get_stock_list(self, date: str) -> List[str]:
-        """获取某交易日的全市场股票列表（排除 ST、退市）"""
+        """获取某交易日的全市场股票列表（排除 ST/北交所/退市/上市不足300天）"""
         import os
+        from datetime import datetime, timedelta
+
         import tushare as ts
         from dotenv import load_dotenv
 
@@ -187,11 +189,42 @@ class BreakoutPredictor:
             ts.set_token(token)
         pro = ts.pro_api(token)
 
+        # 1. 获取上市股票基本信息（含 name/list_date）
+        stock_basic = pro.stock_basic(
+            exchange="", list_status="L", fields="ts_code,name,list_date"
+        )
+        if stock_basic is None or stock_basic.empty:
+            log.warning(f"未获取到股票基本信息")
+            return []
+
+        # 2. 排除 ST、北交所、退市整理期
+        st_mask = stock_basic["name"].str.contains("ST", na=False, case=False)
+        bj_mask = stock_basic["ts_code"].str.endswith(".BJ")
+        delisting_mask = stock_basic["name"].str.contains("退", na=False)
+        stock_basic = stock_basic[~st_mask & ~bj_mask & ~delisting_mask]
+
+        # 3. 排除上市不足 300 天
+        stock_basic["list_date"] = pd.to_datetime(
+            stock_basic["list_date"].astype(str), format="%Y%m%d", errors="coerce"
+        )
+        t1_dt = pd.to_datetime(date, format="%Y%m%d")
+        min_list_date = t1_dt - timedelta(days=300)
+        stock_basic = stock_basic[stock_basic["list_date"] <= min_list_date]
+
+        eligible = set(stock_basic["ts_code"].tolist())
+        if not eligible:
+            log.warning(f"过滤后无符合条件的股票")
+            return []
+
+        # 4. 与 daily_basic 取交集（确认当日有交易数据）
         df = pro.daily_basic(trade_date=date, fields="ts_code")
         if df is None or df.empty:
             log.warning(f"未获取到 {date} 的股票列表")
             return []
-        return df["ts_code"].tolist()
+        daily_codes = set(df["ts_code"].tolist())
+        result = list(eligible & daily_codes)
+        log.info(f"股票池过滤: {len(daily_codes)} → {len(result)} 只 (排除ST/北交/退市/新股)")
+        return result
 
 
 if __name__ == "__main__":
