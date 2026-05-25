@@ -5,8 +5,9 @@ AIQuant 每日自动流水线（交易日感知版）
 执行流程:
 1. 检查今日是否为交易日，非交易日直接跳过
 2. 数据补全: 补全 quant_data.db 中缺失的最新交易日数据
-3. 预测生成: 运行 v2.9.4 模型生成下一交易日预测
-4. 日志记录: 记录执行结果到 logs/auto_pipeline/
+3. 预测生成(v3.0.0): 运行 v2.9.4 模型生成下一交易日预测（保留作 backup）
+4. 预测生成(v3.1.0): 运行 Breakout 模型生成下一交易日预测（主输出）
+5. 日志记录: 记录执行结果到 logs/auto_pipeline/
 
 用法:
     python scripts/batch/auto_daily_pipeline.py
@@ -206,7 +207,7 @@ def main():
     enrich_result = run_command(enrich_cmd, f"Enrich ({next_date})")
     report["steps"]["enrich"] = enrich_result
 
-    # ========== Step 3: 归档到 v294_daily ==========
+    # ========== Step 3: 归档到 v3.0.0_daily ==========
     daily_dir = PROJECT_ROOT / "data" / "prediction" / "v3.0.0_daily"
     daily_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ["all.csv", "top100.csv", "top50.csv"]:
@@ -222,7 +223,34 @@ def main():
         if src.exists():
             import shutil
             shutil.copy2(str(src), str(dst))
-    log.info(f"预测结果已归档到: {daily_dir}")
+    log.info(f"v3.0.0 预测结果已归档到: {daily_dir}")
+
+    # ========== Step 3.5: v3.1.0 预测生成（Breakout 主模型）==========
+    log.info(f"开始 v3.1.0 预测生成: {next_date}")
+    v310_result = {"success": False, "elapsed": 0, "stdout": "", "stderr": ""}
+    try:
+        from scripts.run_v310_prediction import run_v310_prediction
+        start = datetime.now()
+        run_v310_prediction(next_date, top_k=50)
+        elapsed = (datetime.now() - start).total_seconds()
+        v310_result = {"success": True, "elapsed": elapsed, "stdout": "", "stderr": ""}
+        log.info(f"[完成] v3.1.0 预测生成 ({elapsed:.1f}s)")
+
+        # 检查 v3.1.0 文件是否生成
+        v310_daily = PROJECT_ROOT / "data" / "prediction" / "v3.1.0_daily"
+        v310_top = v310_daily / f"predictions_{next_date}_top50.csv"
+        v310_all = v310_daily / f"predictions_{next_date}_all.csv"
+        report["v310_prediction_file_exists"] = v310_top.exists() or v310_all.exists()
+        if v310_top.exists():
+            import pandas as pd
+            df_v310 = pd.read_csv(v310_top)
+            report["v310_prediction_count"] = len(df_v310)
+            log.info(f"v3.1.0 预测文件: {v310_top} ({len(df_v310)} 只股票)")
+    except Exception as e:
+        v310_result = {"success": False, "elapsed": 0, "stdout": "", "stderr": str(e)}
+        log.error(f"[失败] v3.1.0 预测生成: {e}")
+        report["v310_prediction_file_exists"] = False
+    report["steps"]["v310_prediction"] = v310_result
 
     # ========== Step 4: 模型漂移检测 ==========
     monitor = ModelMonitor(
