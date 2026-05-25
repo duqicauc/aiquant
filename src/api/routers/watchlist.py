@@ -17,8 +17,8 @@ sys.path.insert(0, str(project_root))
 
 router = APIRouter()
 
-PREDICTION_DIR = project_root / "data" / "prediction" / "v3.0.0"
-DAILY_DIR = project_root / "data" / "prediction" / "v3.0.0"
+PREDICTION_DIR = project_root / "data" / "prediction" / "v3.1.0_daily"
+DAILY_DIR = project_root / "data" / "prediction" / "v3.1.0_daily"
 DB_PATH = project_root / "data" / "cache" / "quant_data.db"
 
 
@@ -26,7 +26,10 @@ def _get_prediction_dirs():
     """获取所有预测目录，按优先级排序（v3.0.0优先），去重"""
     dirs = []
     candidates = [
+        project_root / "data" / "prediction" / "v3.1.0_daily",
+        project_root / "data" / "prediction" / "v3.1.0",
         project_root / "data" / "prediction" / "v3.0.0",
+        project_root / "data" / "prediction" / "v3.0.0_daily",
         project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
         project_root / "data" / "prediction" / "v295_stk_factor",
         project_root / "data" / "prediction" / "v294_stk_factor",
@@ -559,7 +562,7 @@ async def get_watchlist_performance(
         if df_pred is None or df_pred.empty:
             raise HTTPException(status_code=404, detail=f"No prediction data for {date}")
 
-        # 从 ArcticDB 补充 close 和 pct_chg（v3.0.0 预测文件可能缺失）
+        # 从 ArcticDB 补充 close 和 pct_chg（预测文件可能缺失）
         try:
             from src.data.arctic_provider import ArcticDataProvider
             arctic = ArcticDataProvider()

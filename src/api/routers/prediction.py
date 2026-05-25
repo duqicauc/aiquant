@@ -84,9 +84,12 @@ async def get_latest_predictions(
     try:
         import pandas as pd
 
-        # Try multiple directories for prediction data (v294优先)
+        # Try multiple directories for prediction data (v3.1.0优先)
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.1.0_daily",
+            project_root / "data" / "prediction" / "v3.1.0",
             project_root / "data" / "prediction" / "v3.0.0",
+            project_root / "data" / "prediction" / "v3.0.0_daily",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
@@ -337,7 +340,10 @@ async def get_prediction_distribution(
         import sqlite3
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.1.0_daily",
+            project_root / "data" / "prediction" / "v3.1.0",
             project_root / "data" / "prediction" / "v3.0.0",
+            project_root / "data" / "prediction" / "v3.0.0_daily",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
@@ -669,7 +675,10 @@ async def get_strategy_pool(
         import pandas as pd
 
         pred_dirs = [
+            project_root / "data" / "prediction" / "v3.1.0_daily",
+            project_root / "data" / "prediction" / "v3.1.0",
             project_root / "data" / "prediction" / "v3.0.0",
+            project_root / "data" / "prediction" / "v3.0.0_daily",
             project_root / "data" / "prediction" / "v295_stk_factor_2026q1q2",
             project_root / "data" / "prediction" / "v295_stk_factor",
             project_root / "data" / "prediction" / "v294_stk_factor",
