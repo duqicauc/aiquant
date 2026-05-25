@@ -20,10 +20,9 @@ Usage:
 
 import json
 import shutil
-import subprocess
 import sys
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -54,7 +53,20 @@ def _get_current_model_dir() -> Path:
     if current_json.exists():
         try:
             data = json.loads(current_json.read_text(encoding="utf-8"))
-            version = data.get("current_version", version)
+            model_family = data.get("model_family", "")
+            if model_family == "v310":
+                # v310: 自动取 breakout 最新子目录
+                v310_dir = PROJECT_ROOT / "data" / "models" / "v310" / "breakout"
+                if v310_dir.exists():
+                    version_dirs = sorted(
+                        [d for d in v310_dir.iterdir() if d.is_dir()], reverse=True
+                    )
+                    if version_dirs:
+                        return version_dirs[0]
+                log.warning("v310 breakout 目录不存在，回退到 legacy 路径")
+                version = data.get("legacy", {}).get("current_version", "v3.0.0")
+            else:
+                version = data.get("current_version", version)
         except Exception:
             pass
     return (

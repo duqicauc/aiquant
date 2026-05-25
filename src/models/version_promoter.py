@@ -21,7 +21,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from src.utils.logger import log
 
@@ -71,7 +71,8 @@ class VersionPromoter:
     }
 
     def __init__(self, current_file: Optional[Path] = None):
-        self.current_file = current_file or (PROJECT_ROOT / "data" / "models" / "breakout_launch_scorer" / "current.json")
+        default_file = PROJECT_ROOT / "data" / "models" / "breakout_launch_scorer" / "current.json"
+        self.current_file = current_file or default_file
         self.current = self._load_current()
 
     def _load_current(self) -> dict:
@@ -237,6 +238,16 @@ class VersionPromoter:
 
     # ==================== 版本操作 ====================
 
+    # ==================== v310 兼容辅助方法 ====================
+
+    def _is_v310_version(self, version: str) -> bool:
+        """判断是否为 v310 系列版本"""
+        return version.startswith("v3.1.0") or version.startswith("v310")
+
+    def _get_v310_model_type(self, version: str) -> str:
+        """从版本号推断模型类型 (breakout / bounce)"""
+        return "bounce" if "bounce" in version.lower() else "breakout"
+
     def update_development(self, version: str, metrics: dict):
         """更新 development 版本"""
         self.current["development"] = version
@@ -268,8 +279,56 @@ class VersionPromoter:
             log.error(f"不支持晋升到 {target_stage}")
             return False
 
-        # 检查版本目录是否存在
-        model_dir = PROJECT_ROOT / "data" / "models" / "breakout_launch_scorer" / "versions" / version / "model"
+        # ── v310 版本处理 ──
+        if self._is_v310_version(version):
+            model_type = self._get_v310_model_type(version)
+            v310_base = PROJECT_ROOT / "data" / "models" / "v310" / model_type
+            if not v310_base.exists():
+                log.error(f"v310 {model_type} 模型目录不存在: {v310_base}")
+                return False
+            version_dirs = sorted(
+                [d for d in v310_base.iterdir() if d.is_dir()], reverse=True
+            )
+            if not version_dirs:
+                log.error(f"v310 {model_type} 目录下没有模型子目录")
+                return False
+
+            latest_dir = version_dirs[0]
+            current_key = f"v310_{model_type}"
+
+            # 备份当前配置到 _previous
+            if current_key in self.current:
+                backup_key = f"{current_key}_previous"
+                self.current[backup_key] = self.current[current_key].copy()
+
+            # 更新 v310 配置
+            self.current[current_key] = {
+                "version": version,
+                "model_path": f"data/models/v310/{model_type}/{latest_dir.name}/",
+                "updated_at": datetime.now().isoformat(),
+            }
+
+            # 更新环境指针
+            self.current[target_stage] = version
+            if target_stage == "production":
+                self.current["staging"] = version
+                log.info(f"staging 同步为 {version}（production 镜像）")
+
+            self.current["updated_at"] = datetime.now().isoformat()
+            self._save_current()
+            log.success(f"✓ {version} 已晋升到 {target_stage} (v310 {model_type})")
+            return True
+
+        # ── legacy 版本处理（原有逻辑） ──
+        model_dir = (
+            PROJECT_ROOT
+            / "data"
+            / "models"
+            / "breakout_launch_scorer"
+            / "versions"
+            / version
+            / "model"
+        )
         if not model_dir.exists():
             log.error(f"版本目录不存在: {model_dir}")
             return False
@@ -277,8 +336,21 @@ class VersionPromoter:
         # 备份旧版本
         old_version = self.current.get(target_stage)
         if old_version and target_stage == "production":
-            backup_dir = PROJECT_ROOT / "data" / "models_backup" / f"{old_version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            old_model_dir = PROJECT_ROOT / "data" / "models" / "breakout_launch_scorer" / "versions" / old_version / "model"
+            backup_dir = (
+                PROJECT_ROOT
+                / "data"
+                / "models_backup"
+                / f"{old_version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            old_model_dir = (
+                PROJECT_ROOT
+                / "data"
+                / "models"
+                / "breakout_launch_scorer"
+                / "versions"
+                / old_version
+                / "model"
+            )
             if old_model_dir.exists():
                 backup_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(old_model_dir, backup_dir)
@@ -303,6 +375,29 @@ class VersionPromoter:
             log.error("仅支持 production 回滚")
             return False
 
+        current_prod = self.current.get("production", "")
+
+        # ── v310 回滚 ──
+        if self._is_v310_version(current_prod):
+            model_type = self._get_v310_model_type(current_prod)
+            current_key = f"v310_{model_type}"
+            backup_key = f"{current_key}_previous"
+
+            if backup_key not in self.current:
+                log.warning(f"v310 {model_type} 没有 previous 备份，无法回滚")
+                return False
+
+            self.current[current_key] = self.current[backup_key]
+            self.current["production"] = self.current[backup_key].get(
+                "version", current_prod
+            )
+            self.current["updated_at"] = datetime.now().isoformat()
+            self._save_current()
+            prev_version = self.current[backup_key].get("version", "unknown")
+            log.success(f"✓ v310 {model_type} 已回滚到 {prev_version}")
+            return True
+
+        # ── legacy 回滚（原有逻辑） ──
         staging_version = self.current.get("staging")
         production_version = self.current.get("production")
 
@@ -317,11 +412,16 @@ class VersionPromoter:
         return True
 
     def get_status(self) -> dict:
-        """获取当前版本状态"""
-        return {
+        """获取当前版本状态（包含 v310）"""
+        status = {
             "production": self.current.get("production"),
             "staging": self.current.get("staging"),
             "testing": self.current.get("testing"),
             "development": self.current.get("development"),
             "latest_train": self.current.get("latest_train"),
         }
+        # 追加 v310 状态（兼容两种字段命名）
+        for key in ["v310_breakout", "v310_bounce", "v310_latest_train"]:
+            if key in self.current:
+                status[key] = self.current[key]
+        return status
