@@ -52,7 +52,7 @@ log_ok "数据库检查完成"
 
 # 5. 重启服务
 log_info "重启服务..."
-systemctl restart aiquant-api
+sudo systemctl restart aiquant-api
 sleep 2
 
 if systemctl is-active --quiet aiquant-api; then
@@ -63,7 +63,7 @@ else
 fi
 
 # 6. 重载 Nginx
-systemctl reload nginx
+sudo systemctl reload nginx
 log_ok "Nginx 已重载"
 
 echo ""
