@@ -150,32 +150,54 @@ def main():
             else:
                 log.info(f"[{i}/{total}] {date} daily_data: 跳过（ArcticDB 已存在）")
 
-            # daily_basic → 写入 SQLite + ArcticDB
+            # ── 第一步：统一从 Tushare fetch（不受 SQLite 影响）───────────────
             if date not in existing["daily_basic"]:
                 try:
                     df_basic = provider.fetch_daily_basic(date)
-                    n = write_daily_basic(conn, df_basic, now)
-                    log.info(f"[{i}/{total}] {date} daily_basic: {n} 条")
                 except Exception as e:
-                    log.error(f"[{i}/{total}] {date} daily_basic 失败: {e}")
+                    log.warning(f"[{i}/{total}] {date} daily_basic fetch 失败，跳过: {e}")
+                    df_basic = pd.DataFrame()
             else:
-                log.info(f"[{i}/{total}] {date} daily_basic: 跳过")
+                df_basic = pd.DataFrame()   # 已有，跳过 fetch
 
-            # stk_factor → 写入 SQLite + ArcticDB
             if date not in existing["stk_factor"]:
                 try:
                     df_factor = provider.fetch_stk_factor_pro(date)
-                    n = write_stk_factor(conn, df_factor, now)
-                    log.info(f"[{i}/{total}] {date} stk_factor: {n} 条")
                 except Exception as e:
-                    log.error(f"[{i}/{total}] {date} stk_factor 失败: {e}")
+                    log.warning(f"[{i}/{total}] {date} stk_factor fetch 失败，跳过: {e}")
+                    df_factor = pd.DataFrame()
             else:
-                log.info(f"[{i}/{total}] {date} stk_factor: 跳过")
+                df_factor = pd.DataFrame()  # 已有，跳过 fetch
+
+            # ── 第二步：写 SQLite（失败不影响 ArcticDB）─────────────────────
+            if not df_basic.empty:
+                try:
+                    n = write_daily_basic(conn, df_basic, now)
+                    log.info(f"[{i}/{total}] {date} daily_basic: {n} 条 → SQLite ✓")
+                except Exception as e:
+                    log.warning(f"[{i}/{total}] {date} daily_basic → SQLite 失败（表可能不存在）: {e}")
+            elif date in existing["daily_basic"]:
+                log.info(f"[{i}/{total}] {date} daily_basic: 跳过（已有）")
+
+            if not df_factor.empty:
+                try:
+                    n = write_stk_factor(conn, df_factor, now)
+                    log.info(f"[{i}/{total}] {date} stk_factor: {n} 条 → SQLite ✓")
+                except Exception as e:
+                    log.warning(f"[{i}/{total}] {date} stk_factor → SQLite 失败（表可能不存在）: {e}")
+            elif date in existing["stk_factor"]:
+                log.info(f"[{i}/{total}] {date} stk_factor: 跳过（已有）")
 
             conn.commit()
 
-            # 统一写入 ArcticDB
+            # ── 第三步：统一写入 ArcticDB（与 SQLite 成败无关）─────────────
             write_to_arctic(arctic, df_daily, df_basic, df_factor)
+            if not df_daily.empty:
+                log.info(f"[{i}/{total}] {date} daily_data: {len(df_daily)} 条 → ArcticDB ✓")
+            if not df_basic.empty:
+                log.info(f"[{i}/{total}] {date} daily_basic: {len(df_basic)} 条 → ArcticDB ✓")
+            if not df_factor.empty:
+                log.info(f"[{i}/{total}] {date} stk_factor: {len(df_factor)} 条 → ArcticDB ✓")
 
             if i < total:
                 time.sleep(6)
